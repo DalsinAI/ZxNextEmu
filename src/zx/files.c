@@ -1,0 +1,76 @@
+/*
+ * Host-side helpers that read files for the core: ROMs from a folder, the
+ * Next's boot ROM, SD cards from an image or a folder. The core itself
+ * (zx.c, next/) never touches the file system, so it builds to WebAssembly
+ * unchanged; native front ends link this file as well.
+ */
+#include "zx.h"
+#include "../next/next.h"
+#include "../storage/blockdev.h"
+
+#include <stdio.h>
+
+static int load_rom(uint8_t *dst, const char *dir, const char *name)
+{
+    char path[1024];
+    FILE *fp;
+    size_t n;
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    fp = fopen(path, "rb");
+    if (!fp) {
+        fprintf(stderr, "zx: cannot open ROM %s\n", path);
+        return -1;
+    }
+    n = fread(dst, 1, 0x4000, fp);
+    fclose(fp);
+    if (n != 0x4000) {
+        fprintf(stderr, "zx: ROM %s is not 16K\n", path);
+        return -1;
+    }
+    return 0;
+}
+
+int zx_init(zx *m, zx_model model, const char *roms_dir)
+{
+    static uint8_t rom[4][0x4000];
+    const uint8_t *roms[4] = { NULL, NULL, NULL, NULL };
+    const char *name;
+    int i;
+    for (i = 0; i < 4; i++) {
+        if ((name = zx_rom_file(model, i)) == NULL)
+            continue;
+        if (load_rom(rom[i], roms_dir, name))
+            return -1;
+        roms[i] = rom[i];
+    }
+    return zx_create(m, model, roms);
+}
+
+int zx_attach_sd(zx *m, int slot, const char *path)
+{
+    zx_blockdev *bd;
+    if (m->model != ZX_NEXT)
+        return -1;
+    if ((bd = zx_bd_open(path)) == NULL)
+        return -1;
+    if (zx_attach_sd_dev(m, slot, bd)) {
+        zx_bd_close(bd);
+        return -1;
+    }
+    return 0;
+}
+
+int nx_load_bootrom(zx *m, const char *path)
+{
+    uint8_t data[0x2000];
+    FILE *fp = fopen(path, "rb");
+    size_t got;
+    if (!fp)
+        return -1;
+    got = fread(data, 1, sizeof data, fp);
+    fclose(fp);
+    if (got != sizeof data)
+        return -1;
+    nx_set_bootrom(m, data);
+    return 0;
+}
