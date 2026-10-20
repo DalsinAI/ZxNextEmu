@@ -108,6 +108,9 @@ void zx_run_frame(zx *m);
 
 /* Keyboard matrix: row 0..7 (port bit A8..A15), bit 0..4. */
 void zx_key(zx *m, int row, int bit, int down);
+/* Kempston mouse (Next): host movement in pixels, dy down is positive;
+   buttons 1 left, 2 right, 4 middle. */
+void zx_mouse(zx *m, int dx, int dy, int dz, int buttons);
 
 /* Write a byte without timing or video side effects (snapshots, traps). */
 void zx_poke(zx *m, uint16_t addr, uint8_t v);
