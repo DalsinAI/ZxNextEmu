@@ -1,7 +1,7 @@
 /*
  * zxrun: headless runner for tests and scripting.
  *
- *   zxrun [-m model] [-r romdir] [-c sd.img] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
  *
  * -c attaches an SD card image (ZX Spectrum Next, -m next).
  */
@@ -12,6 +12,9 @@
 #include "../zx/zx.h"
 #include "../zx/tape.h"
 #include "media.h"
+#include "net_posix.h"
+#include "../next/next.h"
+#include "../devices/esp8266.h"
 
 static void save_ppm(const zx *m, const char *path)
 {
@@ -42,6 +45,7 @@ int main(int argc, char **argv)
     const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL;
     long frames = 100, delay = 120, i;
     FILE *wf = NULL;
+    zx_net *net = NULL;
     uint32_t wav_samples = 0;
     int a, noscroll = 0;
 
@@ -61,12 +65,16 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-n")) noscroll = 1; /* keep BASIC from asking "scroll?" */
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd.img] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
             return 2;
         }
     }
     if (zx_init(&m, model, romdir))
         return 1;
+    if (model == ZX_NEXT) {
+        net = zx_net_posix_new();
+        nx_attach_serial(&m, 0, zx_esp8266_new(net));   /* the wifi module */
+    }
     if (sd && zx_attach_sd(&m, 0, sd)) {
         fprintf(stderr, "cannot attach SD card image %s\n", sd);
         return 1;
@@ -104,5 +112,6 @@ int main(int argc, char **argv)
         save_ppm(&m, shot);
     printf("%s: %ld frames, PC=%04X\n", zx_timings[model].name, frames, m.cpu.pc);
     zx_free(&m);
+    zx_net_posix_free(net);
     return 0;
 }

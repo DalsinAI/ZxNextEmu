@@ -4,6 +4,7 @@
  */
 #include "next.h"
 #include "../zx/zx.h"
+#include "../devices/serial.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -386,6 +387,10 @@ static int source_enabled(const zxn *n, int src)
         return (n->nr_c6 & 3) != 0;
     if (src == SRC_UART1_RX)
         return (n->nr_c6 >> 4 & 3) != 0;
+    if (src == 12)
+        return n->nr_c6 >> 2 & 1;
+    if (src == 13)
+        return n->nr_c6 >> 6 & 1;
     return 0;
 }
 
@@ -405,6 +410,11 @@ static void raise_int_at(zxn *n, int src, int unq, uint64_t t)
     } else {
         start_pulse(n, t);
     }
+}
+
+void nx_raise_int(zxn *n, int src, uint64_t t)
+{
+    raise_int_at(n, src, 0, t);
 }
 
 static void raise_int(zxn *n, int src, int unq)
@@ -1143,6 +1153,8 @@ static void events(zxn *n)
         copper_run(n, n->clk);
     if (ctc_next_event(n) <= n->clk)
         ctc_advance(n, n->clk);
+    if (n->uart_next <= n->clk)
+        nx_uart_run(n, n->clk);
 }
 
 /* ---- divMMC automap on opcode fetches (device/divmmc.vhd) --------------- */
@@ -1343,6 +1355,8 @@ static void port_write(zxn *n, uint16_t port, uint8_t v)
         } else if ((msb & 0xf8) == 0x18 && port_enabled(n, 27)) {
             if ((msb & 7) < 4)
                 ctc_write(n, msb & 7, v);
+        } else if ((msb >> 3) == 2 && ((msb >> 2 & 1) ^ ((msb >> 1) & msb & 1)) && port_enabled(n, 12)) {
+            nx_uart_write(n, msb & 3, v);
         }
         break;
     case 0x57:
@@ -1470,8 +1484,7 @@ static uint8_t port_read(zxn *n, uint16_t port)
             r |= (uint8_t)(n->l2_segment << 6 | n->l2_shadow << 3 | n->l2_map_rd << 2 | n->l2_en << 1 | n->l2_map_wr);
             hit = 1;
         } else if ((msb >> 3) == 2 && ((msb >> 2 & 1) ^ ((msb >> 1) & msb & 1)) && port_enabled(n, 12)) {
-            if ((msb & 3) == 3)
-                r |= 0x10;  /* UART status: transmitter empty, nothing received */
+            r |= nx_uart_read(n, msb & 3);
             hit = 1;
         } else if (msb == 0x30 && port_enabled(n, 14)) {
             r |= n->spr_status;
@@ -1940,6 +1953,7 @@ void nx_soft_reset(zx *m)
     n->pulse_start = n->pulse_end = 0;
     ctc_reset(n);
     nx_dma_reset(n);
+    nx_uart_reset(n);
     for (i = 0; i < 3; i++) {
         ay_reset(&n->ay[i]);
         n->ay_pan[i] = 3;
@@ -1985,6 +1999,7 @@ void nx_power_on(zx *m)
     set_timing(n);
     palette_defaults(n);
     memset(n->copper, 0, sizeof n->copper);
+    nx_uart_power_on(n);
     nx_soft_reset(m);
 }
 
@@ -2031,10 +2046,14 @@ int nx_init(zx *m)
 void nx_free(zx *m)
 {
     zxn *n = m->next;
+    int i;
     if (!n)
         return;
     nx_sd_close(n->sd[0]);
     nx_sd_close(n->sd[1]);
+    for (i = 0; i < 2; i++)
+        if (n->uart[i].dev && n->uart[i].dev->close)
+            n->uart[i].dev->close(n->uart[i].dev);
     free(n->sram);
     free(n);
     m->next = NULL;
@@ -2049,6 +2068,16 @@ int nx_attach_sd(zx *m, int slot, const char *path)
     nx_sd_close(n->sd[slot & 1]);
     n->sd[slot & 1] = sd;
     return 0;
+}
+
+void nx_attach_serial(zx *m, int uart, struct zx_serial *dev)
+{
+    zxn *n = m->next;
+    nx_uart *u = &n->uart[uart & 1];
+    if (u->dev && u->dev->close)
+        u->dev->close(u->dev);
+    u->dev = dev;
+    u->rx_free = n->clk;
 }
 
 int nx_load_bootrom(zx *m, const char *path)
@@ -2110,6 +2139,7 @@ void nx_run_frame(zx *m)
     nx_video_run(n, end);
     nx_video_frame_end(n);
     audio_run(n, end);
+    nx_uart_poll(n, end);
     nx_sd_tick(n->sd[0]);
     nx_sd_tick(n->sd[1]);
 

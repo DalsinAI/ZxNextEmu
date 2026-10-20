@@ -43,6 +43,14 @@ gets its own folder, the way Amiga Cradle gives each machine its own
 storage. `-c` also accepts a raw image file, and `tools/mksd.sh` builds one
 from a folder.
 
+### Wifi
+
+The Next's ESP8266 module is emulated with Espressif's AT command set, and
+its connections go out through the computer running the emulator, so
+NextZXOS's network tools work as they do on a real Next with wifi set up.
+In NextBASIC, `.http get -h example.com -u /file.txt -f file.txt` saves the
+file to the SD card folder.
+
 ## How the timing works
 
 The Z80 core never counts T-states itself. Every machine cycle (opcode
@@ -63,8 +71,9 @@ timing-sensitive loaders behave as on the hardware.
 | Tape | TAP and TZX (all common blocks), instant ROM load + real-time pulses |
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
-| Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs. Still to come: UART (ESP wifi, Pi Zero), Kempston mouse, multiface |
+| Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse. Still to come: Pi Zero, multiface |
 | SD card | a host folder seen as a live FAT32 card, or an image file |
+| Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Front ends | headless `zxrun`; desktop (SDL2) and Amiga next |
 
 ## Tests
@@ -74,6 +83,7 @@ timing-sensitive loaders behave as on the hardware.
 | ZEXDOC, ZEXALL | all pass (`make test`) |
 | SingleStepTests/z80, every opcode: registers, memory, exact T-states | all pass (`make sst`) |
 | Folder-backed SD card: fsck.fat, then write back changes made with mtools | all pass (`make vfat`) |
+| ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
 The test programs are downloaded into `tests-data/`, see

@@ -60,6 +60,21 @@ typedef struct nx_dma {
     uint64_t next_clk;     /* burst mode: when the next byte may go */
 } nx_dma;
 
+typedef struct nx_uart {
+    uint32_t prescaler;    /* master ticks per bit, 17 bits */
+    uint8_t framing;       /* port 0x163B */
+    uint16_t rx[512];      /* bit 8: an error was pending when it came */
+    uint16_t rx_head, rx_count;
+    uint8_t tx[64];
+    uint8_t tx_head, tx_count;
+    uint8_t tx_busy, tx_byte;
+    uint64_t tx_done;      /* when the byte going out has gone */
+    uint64_t rx_free;      /* when the last byte in finished arriving */
+    uint8_t err_overflow, err_framing;
+    uint8_t req_rx, req_tx;  /* interrupt request levels */
+    struct zx_serial *dev; /* ESP (0), Pi (1), or nothing */
+} nx_uart;
+
 typedef struct nx_ctc {
     uint8_t control;       /* control word bits 7..3 */
     uint8_t tc;            /* time constant */
@@ -176,6 +191,9 @@ typedef struct zxn {
     nx_ctc ctc[4];
     uint8_t ctc_int_en;
     nx_sd *sd[2];
+    nx_uart uart[2];
+    uint8_t uart_sel;
+    uint64_t uart_next;       /* next UART event, or ~0 */
 
     /* sprites */
     uint8_t spr_attr[NX_SPRITES][5];
@@ -216,6 +234,8 @@ void nx_power_on(struct zx *m);
 void nx_soft_reset(struct zx *m);
 void nx_run_frame(struct zx *m);
 int nx_attach_sd(struct zx *m, int slot, const char *path);
+/* Connect a device to UART 0 (ESP wifi) or 1 (Pi); the machine closes it. */
+void nx_attach_serial(struct zx *m, int uart, struct zx_serial *dev);
 /* Host mouse movement (dy down is positive) and buttons (1 left, 2 right,
    4 middle). */
 void nx_mouse(zxn *n, int dx, int dy, int dz, int buttons);
@@ -238,6 +258,15 @@ uint8_t nx_sd_xfer(nx_sd *sd, uint8_t out);
 void nx_sd_deselect(nx_sd *sd);
 void nx_sd_tick(nx_sd *sd);          /* once per frame: folder write-back */
 int nx_sd_flush(nx_sd *sd);
+
+void nx_uart_power_on(zxn *n);
+void nx_uart_reset(zxn *n);
+void nx_uart_run(zxn *n, uint64_t upto);
+void nx_uart_poll(zxn *n, uint64_t now);
+uint8_t nx_uart_read(zxn *n, int reg);
+void nx_uart_write(zxn *n, int reg, uint8_t v);
+/* Raise an IM2 peripheral interrupt (0 line .. 13 UART 1 Tx) at tick t. */
+void nx_raise_int(zxn *n, int src, uint64_t t);
 
 void nx_dma_reset(zxn *n);
 void nx_dma_write(zxn *n, uint8_t v);
