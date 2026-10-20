@@ -12,7 +12,7 @@ ZX Cradle 0.1  ·  3 instances, 1 running
 K> ls
   NAME          MACHINE   STATE     SLOTS
   jetpac-48     zx48      running   tape: jetpac.tzx
-  next-dev      next      stopped   sd: media/sd/
+  next-dev      next      stopped   sd: sd/main
   plus3-work    plus3     paused    disk.a: work.dsk
 K> use jetpac-48
 jetpac-48 K> snap save before-level-3
@@ -78,8 +78,8 @@ are ZX Cradle's own and do not match the ROM's messages.
 
 | Command | Does |
 | --- | --- |
-| `media` | List files in the media folder and what is in each slot |
-| `insert SLOT FILE` | Insert media; the file is copied into `media/` unless already there |
+| `media ...` | Create, fetch, copy, convert and commit media; see [storage.md](storage.md#commands) |
+| `insert SLOT NAME\|FILE` | Insert a medium; a bare file becomes a new medium folder first |
 | `eject SLOT` | |
 | `tape play\|stop\|rewind\|block N` | Tape deck controls |
 | `tape mode instant\|real` | |

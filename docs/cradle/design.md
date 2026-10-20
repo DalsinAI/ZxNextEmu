@@ -29,7 +29,8 @@
 | Runtime | The process (or WebAssembly module) that runs one instance. |
 | Host | `zxcradled`, the background service that keeps the instance registry and supervises runtimes. |
 | Slot | A place media goes: `tape`, `disk.a`, `disk.b`, `cart`, `sd`. Each machine declares its slots. |
-| Media changer | The per-instance list of media files and which one is in each slot. |
+| Medium | One SD card, Microdrive cartridge, disk, tape or cartridge, kept in its own folder, image-backed or folder-backed. See [storage.md](storage.md). |
+| Media changer | The instance's media and which one is in each slot. |
 | State | A full snapshot of an instance (`.zxcs`), exact to the T-state. |
 | Patch | A `.zxpatch` archive queued against an instance and applied on its next verified restart. |
 | Field report | A `.zip` of everything needed to reproduce a problem with an instance. |
@@ -203,11 +204,12 @@ the reply carries the path, so the protocol stays line based.
 ~/.zxcradle/
   zxcradled.sock
   machines/            user-added machine manifests (built-in ones are compiled in)
+  library/             media shared between instances: the NextZXOS card, esxDOS, system disks
   roms/                shared ROM sets, by machine id
   instances/
     jetpac-48/
       instance.toml    the instance manifest
-      media/           tapes, disks, cartridges, the SD card image or folder
+      media/           one folder per medium: sd/main/, microdrive/work/, disk/side-a/, tape/jetpac/
       snapshots/       name.zxcs + name.png
       patches/queue/   .zxpatch files waiting for the next restart
       patches/applied/
@@ -220,12 +222,11 @@ the reply carries the path, so the protocol stays line based.
 An instance folder is self-contained except for shared ROMs, which are found
 by checksum; `zxc export` copies the ROMs in so the folder runs anywhere.
 
-**Folder-backed SD card (Next).** The Next boots NextZXOS from an SD card.
-The `sd` slot takes either a FAT image file or a host folder. For a folder,
-the runtime presents a FAT32 view built on the fly, writes changes back to
-the folder, and keeps the FAT image only in memory, so you can edit files on
-the SD card from the host while the instance is stopped. The +3 and the
-Pentagon's Beta Disk do the same for `.dsk` and `.trd` images.
+**Media.** Every SD card, Microdrive cartridge, disk and tape is a folder
+of its own with a `medium.toml`, backed either by an image file or by plain
+host files that the runtime presents as the machine's file system. Shared
+masters such as the NextZXOS card live in the library and are used through
+per-instance overlays. All of this is in [storage.md](storage.md).
 
 ## Security
 

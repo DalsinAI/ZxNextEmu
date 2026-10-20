@@ -28,7 +28,8 @@ Options: `--instances a,b` limits the server to those instances,
 | `start_instance`, `stop_instance`, `pause_instance`, `resume_instance` | `name` | new state |
 | `restart_instance` | `name`, `cold?`, `verify?` | new state, boot check result |
 | `reset_instance` | `name`, `kind`: `soft`, `hard` or `nmi` | |
-| `insert_media` | `name`, `slot`, `path` | slot contents |
+| `list_media`, `create_medium`, `add_medium`, `fetch_system_medium`, `commit_overlay`, `reset_overlay` | see [storage.md](storage.md#commands) | |
+| `insert_media` | `name`, `slot`, `medium` or `path` | slot contents |
 | `eject_media` | `name`, `slot` | |
 | `type_text` | `name`, `text` | frames taken |
 | `press_keys` | `name`, `keys` (e.g. `["caps+5"]`), `hold_ms?` | |
@@ -81,4 +82,6 @@ changes made from the shell or the web UI.
   `queue_patch`.
 - Memory reads are capped at 4 KB per call and `run_frames` at 3000 frames
   (one minute) per call, so one tool call cannot stall the agent.
-- The server does not download software. Agents pass local paths.
+- The server downloads nothing except system media (`fetch_system_medium`)
+  from the official sources named in the built-in machine manifests.
+  Software is passed as local paths.

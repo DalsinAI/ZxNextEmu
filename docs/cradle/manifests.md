@@ -70,8 +70,8 @@ scale  = 3
 border = "full"             # "full", "small", "none"
 filter = "none"             # "none", "scanlines", "crt"
 
-[media]
-tape = "media/jetpac.tzx"
+[media]                     # slot = medium folder under media/ (see storage.md)
+tape      = "tape/jetpac"
 tape_mode = "instant"       # "instant" through the ROM, or "real" pulses
 
 [input]
@@ -132,7 +132,7 @@ value = 0x00
 
 [[file]]
 src   = "jetpac-fixed.tzx"
-dest  = "media/jetpac.tzx"
+dest  = "media/tape/jetpac/image.tzx"
 ```
 
 `rom` patches change the instance's copy of the ROM. Pokes are applied once
