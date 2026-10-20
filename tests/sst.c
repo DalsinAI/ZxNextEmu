@@ -144,7 +144,7 @@ static void b_out(void *c, uint16_t p, uint8_t v) { (void)c; (void)p; (void)v; t
 static void b_internal(void *c, uint16_t a, unsigned n) { (void)c; (void)a; tstates += n; }
 static void b_tick(void *c, unsigned n) { (void)c; tstates += n; }
 
-static const z80_bus bus = { 0, b_fetch, b_read, b_write, b_in, b_out, b_internal, b_tick, 0, 0, 0 };
+static const z80_bus bus = { 0, b_fetch, b_read, b_write, b_in, b_out, b_internal, b_tick, 0, 0, 0, 0 };
 
 static void load(z80 *z, jval *s)
 {

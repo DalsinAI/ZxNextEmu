@@ -44,6 +44,7 @@ typedef struct z80_bus {
     uint8_t (*int_ack)(void *ctx);
     void (*nextreg_write)(void *ctx, uint8_t reg, uint8_t val);
     void (*reti)(void *ctx);
+    void (*retn)(void *ctx);
 } z80_bus;
 
 typedef struct z80 {

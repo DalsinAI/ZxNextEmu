@@ -1,7 +1,9 @@
 /*
  * zxrun: headless runner for tests and scripting.
  *
- *   zxrun [-m model] [-r romdir] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *   zxrun [-m model] [-r romdir] [-c sd.img] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *
+ * -c attaches an SD card image (ZX Spectrum Next, -m next).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,10 +21,10 @@ static void save_ppm(const zx *m, const char *path)
         perror(path);
         return;
     }
-    fprintf(fp, "P6\n%d %d\n255\n", ZX_SCREEN_W, ZX_SCREEN_H);
-    for (y = 0; y < ZX_SCREEN_H; y++)
-        for (x = 0; x < ZX_SCREEN_W; x++) {
-            uint16_t c = m->screen[y][x];
+    fprintf(fp, "P6\n%d %d\n255\n", m->screen_w, m->screen_h);
+    for (y = 0; y < m->screen_h; y++)
+        for (x = 0; x < m->screen_w; x++) {
+            uint16_t c = m->pixels[y * m->pitch + x];
             fputc(((c >> 6) & 7) * 255 / 7, fp);
             fputc(((c >> 3) & 7) * 255 / 7, fp);
             fputc((c & 7) * 255 / 7, fp);
@@ -37,7 +39,7 @@ int main(int argc, char **argv)
 {
     static zx m;
     zx_model model = ZX_48K;
-    const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL;
+    const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL;
     long frames = 100, delay = 120, i;
     FILE *wf = NULL;
     uint32_t wav_samples = 0;
@@ -50,6 +52,7 @@ int main(int argc, char **argv)
                 return 2;
             }
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
+        else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
         else if (!strcmp(argv[a], "-f") && a + 1 < argc) frames = atol(argv[++a]);
         else if (!strcmp(argv[a], "-s") && a + 1 < argc) shot = argv[++a];
         else if (!strcmp(argv[a], "-w") && a + 1 < argc) wav = argv[++a];
@@ -58,12 +61,16 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-n")) noscroll = 1; /* keep BASIC from asking "scroll?" */
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd.img] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
             return 2;
         }
     }
     if (zx_init(&m, model, romdir))
         return 1;
+    if (sd && zx_attach_sd(&m, 0, sd)) {
+        fprintf(stderr, "cannot attach SD card image %s\n", sd);
+        return 1;
+    }
     if (file && media_load(&m, file))
         return 1;
     if (text) {
@@ -96,5 +103,6 @@ int main(int argc, char **argv)
     if (shot)
         save_ppm(&m, shot);
     printf("%s: %ld frames, PC=%04X\n", zx_timings[model].name, frames, m.cpu.pc);
+    zx_free(&m);
     return 0;
 }
