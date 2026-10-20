@@ -19,7 +19,7 @@ ZXM_SRC  = src/core/zxm.c
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
-.PHONY: all desktop test sst vfat esp nextpi state wasm wasmtest clean
+.PHONY: all desktop test sst vfat esp nextpi ulaplus state wasm wasmtest clean
 
 all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
 
@@ -74,6 +74,12 @@ nextpi: $(BUILD)/zxrun
 
 $(BUILD)/zxm: tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
+
+$(BUILD)/ulaplus: tests/ulaplus.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/ulaplus.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
+
+ulaplus: $(BUILD)/ulaplus
+	$(BUILD)/ulaplus roms
 
 # Save, run on, load, run again: every machine must repeat itself exactly.
 state: $(BUILD)/zxm
