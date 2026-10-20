@@ -11,13 +11,14 @@ CFLAGS  += -std=c99 -Wall -Wextra -pedantic
 BUILD   ?= build
 
 CORE_SRC = src/z80/z80.c
-NEXT_SRC = src/next/next.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
+STORE_SRC = src/storage/blockdev.c src/storage/vfat.c
+NEXT_SRC = $(STORE_SRC) src/next/next.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 ZX_SRC   = src/zx/zx.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
-ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/frontend/*.h)
+ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/frontend/*.h)
 
-.PHONY: all desktop test sst clean
+.PHONY: all desktop test sst vfat clean
 
-all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst
+all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool
 
 $(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zex.c $(CORE_SRC)
@@ -49,3 +50,10 @@ $(BUILD)/sst: tests/sst.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 
 sst: $(BUILD)/sst
 	tests/run-sst.sh
+
+$(BUILD)/vfattool: tests/vfattool.c $(STORE_SRC) src/storage/blockdev.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/vfattool.c $(STORE_SRC)
+
+# Folder-backed SD cards (needs mtools and dosfstools).
+vfat: $(BUILD)/vfattool
+	tests/vfat.sh $(BUILD)/vfattool

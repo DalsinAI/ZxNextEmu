@@ -1,11 +1,13 @@
 /*
- * SD card in SPI mode, backed by a disk image file.
+ * SD card in SPI mode, backed by a block device: an image file or a host
+ * folder shown as a FAT32 volume (../storage/).
  *
  * Behaves as an SDHC card (block addressing, CMD8 and ACMD41 with HCS,
  * CCS set in the OCR), which is what the boot ROM, the firmware and
- * NextZXOS expect. Writes go straight to the image.
+ * NextZXOS expect.
  */
 #include "next.h"
+#include "../storage/blockdev.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +15,7 @@
 enum { SD_IDLE, SD_CMD, SD_RESP, SD_READ, SD_WRITE_WAIT, SD_WRITE_DATA, SD_WRITE_RESP };
 
 struct nx_sd {
-    FILE *fp;
+    zx_blockdev *bd;
     uint64_t blocks;
     int state;
     uint8_t cmd[6];
@@ -32,21 +34,16 @@ struct nx_sd {
 nx_sd *nx_sd_open(const char *path)
 {
     nx_sd *sd;
-    FILE *fp = fopen(path, "r+b");
-    long size;
-    if (!fp)
-        fp = fopen(path, "rb");
-    if (!fp)
+    zx_blockdev *bd = zx_bd_open(path);
+    if (!bd)
         return NULL;
-    fseek(fp, 0, SEEK_END);
-    size = ftell(fp);
     sd = calloc(1, sizeof *sd);
     if (!sd) {
-        fclose(fp);
+        zx_bd_close(bd);
         return NULL;
     }
-    sd->fp = fp;
-    sd->blocks = (uint64_t)size / 512;
+    sd->bd = bd;
+    sd->blocks = bd->blocks;
     sd->idle = 1;
     return sd;
 }
@@ -55,7 +52,7 @@ void nx_sd_close(nx_sd *sd)
 {
     if (!sd)
         return;
-    fclose(sd->fp);
+    zx_bd_close(sd->bd);
     free(sd);
 }
 
@@ -82,11 +79,8 @@ static void queue_block(nx_sd *sd)
 {
     uint8_t blk[512];
     memset(blk, 0xff, sizeof blk);
-    if (sd->addr < sd->blocks) {
-        fseek(sd->fp, (long)sd->addr * 512, SEEK_SET);
-        if (fread(blk, 1, 512, sd->fp) != 512)
-            memset(blk, 0, sizeof blk);
-    }
+    if (sd->addr < sd->blocks)
+        sd->bd->read(sd->bd, sd->addr, blk);
     queue1(sd, 0xff);
     queue1(sd, 0xfe);           /* start block token */
     queue(sd, blk, 512);
@@ -263,11 +257,8 @@ uint8_t nx_sd_xfer(nx_sd *sd, uint8_t in)
     case SD_WRITE_DATA:
         sd->buf[sd->buf_len++] = in;
         if (sd->buf_len == 514) {               /* data + CRC */
-            if (sd->addr < sd->blocks) {
-                fseek(sd->fp, (long)sd->addr * 512, SEEK_SET);
-                fwrite(sd->buf, 1, 512, sd->fp);
-                fflush(sd->fp);
-            }
+            if (sd->addr < sd->blocks)
+                sd->bd->write(sd->bd, sd->addr, sd->buf);
             sd->addr++;
             sd->out_len = sd->out_pos = 0;
             queue1(sd, 0x05);                   /* data accepted */
@@ -297,4 +288,15 @@ uint8_t nx_sd_xfer(nx_sd *sd, uint8_t in)
         return r;
     }
     return next_out(sd);
+}
+
+void nx_sd_tick(nx_sd *sd)
+{
+    if (sd && sd->bd->tick)
+        sd->bd->tick(sd->bd);
+}
+
+int nx_sd_flush(nx_sd *sd)
+{
+    return sd && sd->bd->flush ? sd->bd->flush(sd->bd) : 0;
 }
