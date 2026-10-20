@@ -1103,8 +1103,12 @@ static void exec_ed(z80 *z, const z80_bus *bus, uint8_t op)
         z->iff1 = z->iff2;
         z->pc = pop16(z, bus);
         z->memptr = z->pc;
-        if (y == 1 && bus->reti)
-            bus->reti(bus->ctx);
+        if (y == 1) {
+            if (bus->reti)
+                bus->reti(bus->ctx);
+        } else if (bus->retn) {
+            bus->retn(bus->ctx);
+        }
         break;
     case 6:
         z->im = (uint8_t)((y & 3) < 2 ? 0 : (y & 3) - 1);

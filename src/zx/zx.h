@@ -21,6 +21,7 @@ typedef enum {
     ZX_PLUS2A,
     ZX_PLUS3,
     ZX_PENTAGON,
+    ZX_NEXT,
     ZX_MODEL_COUNT
 } zx_model;
 
@@ -89,6 +90,14 @@ typedef struct zx {
     uint32_t ay_half;
 
     struct zx_tape *tape;
+
+    /* The picture to show: RGB333, screen_w x screen_h, pitch in pixels.
+     * 320x256 on the classic models; 640x256 on the Next, whose pixels are
+     * half as wide (each classic pixel is two). */
+    const uint16_t *pixels;
+    int screen_w, screen_h, pitch;
+
+    struct zxn *next;      /* ZX Spectrum Next state (ZX_NEXT only) */
 } zx;
 
 /* Create a machine; roms_dir holds the ROM files (see roms/README.md). */
@@ -107,7 +116,13 @@ uint8_t zx_peek(const zx *m, uint16_t addr);
 int zx_load_sna(zx *m, const uint8_t *data, size_t len);
 int zx_load_z80(zx *m, const uint8_t *data, size_t len);
 
-/* Model by short name: 48, 128, plus2, plus2a, plus3, pentagon. */
+/* Release memory owned by the machine (the Next allocates its RAM). */
+void zx_free(zx *m);
+
+/* Attach an SD card image (Next only); slot 0 or 1. */
+int zx_attach_sd(zx *m, int slot, const char *path);
+
+/* Model by short name: 48, 128, plus2, plus2a, plus3, pentagon, next. */
 int zx_model_from_name(const char *name, zx_model *out);
 
 #endif

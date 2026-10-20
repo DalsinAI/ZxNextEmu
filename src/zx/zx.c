@@ -1,5 +1,6 @@
 #include "zx.h"
 #include "tape.h"
+#include "../next/next.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -14,12 +15,16 @@ const zx_timing zx_timings[ZX_MODEL_COUNT] = {
     { "+2A",       70908, 228, 32, 14364, 14365, { 1, 0, 7, 6, 5, 4, 3, 2 }, 0, 0, 3546900, 1773450 },
     { "+3",        70908, 228, 32, 14364, 14365, { 1, 0, 7, 6, 5, 4, 3, 2 }, 0, 0, 3546900, 1773450 },
     { "Pentagon",  71680, 224, 32, 17988, NOCONT, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 3500000, 1750000 },
+    /* The Next keeps its own timing (src/next); this row names it and gives
+     * the 3.5 MHz frame for pacing. */
+    { "Next",      69888, 224, 32, 14336, NOCONT, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 3500000, 1750000 },
 };
 
 static const struct { const char *name; zx_model model; } model_names[] = {
     { "48", ZX_48K }, { "48k", ZX_48K }, { "128", ZX_128K }, { "128k", ZX_128K },
     { "plus2", ZX_PLUS2 }, { "+2", ZX_PLUS2 }, { "plus2a", ZX_PLUS2A }, { "+2a", ZX_PLUS2A },
     { "plus3", ZX_PLUS3 }, { "+3", ZX_PLUS3 }, { "pentagon", ZX_PENTAGON },
+    { "next", ZX_NEXT }, { "tbblue", ZX_NEXT },
 };
 
 int zx_model_from_name(const char *name, zx_model *out)
@@ -419,12 +424,24 @@ int zx_init(zx *m, zx_model model, const char *roms_dir)
         { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
         { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
         { "128-0.rom", "128-1.rom" },
+        { NULL },
     };
     int i;
 
     memset(m, 0, sizeof *m);
     m->model = model;
     m->tm = &zx_timings[model];
+    m->pixels = &m->screen[0][0];
+    m->screen_w = ZX_SCREEN_W;
+    m->screen_h = ZX_SCREEN_H;
+    m->pitch = ZX_SCREEN_W;
+    if (model == ZX_NEXT) {
+        /* Everything the Next needs comes from its SD card. */
+        (void)roms_dir;
+        for (i = 0; i < 8; i++)
+            m->keys[i] = 0x1f;
+        return nx_init(m);
+    }
     for (i = 0; i < 4; i++) {
         memset(m->rom[i], 0xff, sizeof m->rom[i]);
         if (roms[model][i] && load_rom(m->rom[i], roms_dir, roms[model][i]))
@@ -443,9 +460,26 @@ int zx_init(zx *m, zx_model model, const char *roms_dir)
     return 0;
 }
 
+void zx_free(zx *m)
+{
+    if (m->model == ZX_NEXT)
+        nx_free(m);
+}
+
+int zx_attach_sd(zx *m, int slot, const char *path)
+{
+    if (m->model != ZX_NEXT)
+        return -1;
+    return nx_attach_sd(m, slot, path);
+}
+
 void zx_reset(zx *m)
 {
     int i;
+    if (m->model == ZX_NEXT) {
+        nx_soft_reset(m);
+        return;
+    }
     z80_reset(&m->cpu);
     m->port_7ffd = 0;
     m->port_1ffd = 0;
@@ -463,13 +497,20 @@ void zx_reset(zx *m)
 
 void zx_poke(zx *m, uint16_t addr, uint8_t v)
 {
-    uint8_t *p = m->wr[addr >> 14];
+    uint8_t *p;
+    if (m->model == ZX_NEXT) {
+        m->next->slot[addr >> 13].wr[addr & 0x1fff] = v;
+        return;
+    }
+    p = m->wr[addr >> 14];
     if (p)
         p[addr & 0x3fff] = v;
 }
 
 uint8_t zx_peek(const zx *m, uint16_t addr)
 {
+    if (m->model == ZX_NEXT)
+        return m->next->slot[addr >> 13].rd[addr & 0x1fff];
     return m->rd[addr >> 14][addr & 0x3fff];
 }
 
@@ -484,6 +525,10 @@ void zx_key(zx *m, int row, int bit, int down)
 void zx_run_frame(zx *m)
 {
     const uint32_t frame_t = m->tm->frame_t;
+    if (m->model == ZX_NEXT) {
+        nx_run_frame(m);
+        return;
+    }
     m->audio_samples = 0;
 
     while (m->t < frame_t) {

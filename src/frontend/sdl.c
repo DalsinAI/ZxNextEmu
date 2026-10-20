@@ -1,7 +1,9 @@
 /*
  * zxnextemu: desktop front end (SDL2).
  *
- *   zxnextemu [-m model] [-r romdir] [-z scale] [file]
+ *   zxnextemu [-m model] [-r romdir] [-c sd.img] [-z scale] [file]
+ *
+ * -m next runs the ZX Spectrum Next; give it an SD card image with -c.
  *
  * Keys: PC keyboard maps onto the Spectrum's; Left Shift = CAPS SHIFT,
  * Right Shift / Ctrl = SYMBOL SHIFT, Backspace = DELETE. Arrow keys and
@@ -76,14 +78,14 @@ int main(int argc, char **argv)
 {
     static zx m;
     zx_model model = ZX_128K;
-    const char *romdir = "roms", *file = NULL;
+    const char *romdir = "roms", *file = NULL, *sd = NULL;
     int scale = 3, a, running = 1, turbo = 0;
     SDL_Window *win;
     SDL_Renderer *ren;
     SDL_Texture *tex;
     SDL_AudioDeviceID dev;
     SDL_AudioSpec want, have;
-    static uint32_t pixels[ZX_SCREEN_H][ZX_SCREEN_W];
+    static uint32_t pixels[256 * 640];
     uint32_t pal[512];
     char title[64];
 
@@ -95,14 +97,19 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
         else if (!strcmp(argv[a], "-z") && a + 1 < argc) scale = atoi(argv[++a]);
+        else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-z scale] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd.img] [-z scale] [file]\n", argv[0]);
             return 2;
         }
     }
     if (zx_init(&m, model, romdir))
         return 1;
+    if (sd && zx_attach_sd(&m, 0, sd)) {
+        fprintf(stderr, "cannot attach SD card image %s\n", sd);
+        return 1;
+    }
     if (file)
         load(&m, file);
 
@@ -115,8 +122,9 @@ int main(int argc, char **argv)
                            ZX_SCREEN_W * scale, ZX_SCREEN_H * scale, SDL_WINDOW_RESIZABLE);
     ren = SDL_CreateRenderer(win, -1, 0);
     SDL_RenderSetLogicalSize(ren, ZX_SCREEN_W, ZX_SCREEN_H);
+    /* The Next's picture is 640 wide (half-width pixels); it still shows as 320x256. */
     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                            ZX_SCREEN_W, ZX_SCREEN_H);
+                            m.screen_w, m.screen_h);
     for (a = 0; a < 512; a++)
         pal[a] = 0xff000000u | (uint32_t)(((a >> 6) & 7) * 255 / 7) << 16 |
                  (uint32_t)(((a >> 3) & 7) * 255 / 7) << 8 | (uint32_t)((a & 7) * 255 / 7);
@@ -171,10 +179,10 @@ int main(int argc, char **argv)
         if (turbo && (m.frames % 10))
             continue;
 
-        for (y = 0; y < ZX_SCREEN_H; y++)
-            for (x = 0; x < ZX_SCREEN_W; x++)
-                pixels[y][x] = pal[m.screen[y][x] & 511];
-        SDL_UpdateTexture(tex, NULL, pixels, ZX_SCREEN_W * 4);
+        for (y = 0; y < m.screen_h; y++)
+            for (x = 0; x < m.screen_w; x++)
+                pixels[y * m.screen_w + x] = pal[m.pixels[y * m.pitch + x] & 511];
+        SDL_UpdateTexture(tex, NULL, pixels, m.screen_w * 4);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
@@ -182,5 +190,6 @@ int main(int argc, char **argv)
             SDL_Delay(20);
     }
     SDL_Quit();
+    zx_free(&m);
     return 0;
 }

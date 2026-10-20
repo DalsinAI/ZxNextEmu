@@ -23,7 +23,7 @@ static void b_tick(void *c, unsigned n) { (void)c; tstates += n; }
 int main(int argc, char **argv)
 {
     z80 cpu;
-    z80_bus bus = { 0, b_fetch, b_read, b_write, b_in, b_out, b_internal, b_tick, 0, 0, 0 };
+    z80_bus bus = { 0, b_fetch, b_read, b_write, b_in, b_out, b_internal, b_tick, 0, 0, 0, 0 };
     FILE *fp;
     size_t n;
     int failed = 0;
