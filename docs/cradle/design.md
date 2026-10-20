@@ -31,7 +31,7 @@
 | Instance | A configured machine with a name, a folder and a state: `jetpac-48`, `next-dev`. |
 | Runtime | The worker that runs one instance: the core's WebAssembly module plus a little JavaScript around it. |
 | Host | `zxcradled`, the JavaScript service (Node.js, or the page itself in a browser-only setup) that keeps the instance registry and supervises runtimes. |
-| Slot | A place media goes: `tape`, `disk.a`, `disk.b`, `cart`, `sd`. Each machine declares its slots. |
+| Slot | A place media goes: `tape`, `snapshot`, `sd0`, `uart0`, `disk.a`, `cart`. Each machine declares its slots. |
 | Medium | One SD card, Microdrive cartridge, disk, tape or cartridge, kept in its own folder, image-backed or folder-backed. See [storage.md](storage.md). |
 | Media changer | The instance's media and which one is in each slot. |
 | State | A full snapshot of an instance (`.zxcs`), exact to the T-state. |
@@ -75,49 +75,33 @@ modules run in two places:
 
 ### Core: `libzxcore`
 
-The existing C code in `src/z80` and `src/zx`, compiled to `zxcore.wasm`.
-Today it exposes the Spectrum family through `zx.h`. For ZX Cradle it grows
-one generic interface, `zxm.h`, that every machine module implements and
-that the WebAssembly module exports, so the JavaScript runtime never needs
-to know a machine's own structures:
+The C code in `src/z80`, `src/zx` and `src/core`, compiled to one
+`zxcore.wasm` (about 150 KB with every machine) that exports one generic
+interface, [`src/core/zxm.h`](../../src/core/zxm.h) (PR #1). Every machine
+implements it, so the JavaScript runtime never needs to know a machine's own
+structures:
 
-```c
-typedef struct zxm zxm;                   /* opaque machine instance */
+| Call | Does |
+| --- | --- |
+| `zxm_lookup(id)` | Machine description: name, clock, T-states per frame, framebuffer size and format (RGB333), audio rate, ROM file names, media slots, inputs |
+| `zxm_size`, `zxm_create` | The caller allocates the instance in linear memory and creates it from ROM bytes |
+| `zxm_reset` | Power on, reset button or NMI |
+| `zxm_run_frame` | Exactly one video frame; the picture and stereo int16 audio are then read straight out of the instance |
+| `zxm_input` | Typed input events: keyboard matrix, Kempston joystick, Kempston mouse, release all; each carries its T-state in the frame |
+| `zxm_media_insert`, `zxm_media_eject` | Media as bytes (tape, snapshot), as a block device (SD card) or as a serial device (UART) |
+| `zxm_state_size`, `zxm_state_save`, `zxm_state_load` | Complete machine state, for `.zxcs` |
+| `zxm_debugger` | Registers, peek and poke as the CPU sees memory, frame count |
 
-typedef struct zxm_info {
-    const char *id;                       /* "zx128", "next", "cpc6128" */
-    const char *name;                     /* "ZX Spectrum 128K" */
-    uint32_t cpu_hz, frame_t;             /* nominal clock, T-states per frame */
-    uint16_t fb_w, fb_h;                  /* framebuffer size in pixels */
-    zxm_pixfmt fb_format;                 /* RGB333, RGB565, palette index... */
-    uint32_t audio_rate;
-    const zxm_slot *slots;                /* media slots, NULL-terminated */
-    const zxm_input *inputs;              /* keyboard matrix, joysticks, mouse */
-} zxm_info;
-
-const zxm_info *zxm_lookup(const char *id);
-size_t zxm_size(const zxm_info *info);           /* caller allocates */
-int    zxm_create(zxm *m, const zxm_info *info, const zxm_rom_set *roms);
-void   zxm_reset(zxm *m, zxm_reset_kind kind);   /* power-on, soft, NMI */
-void   zxm_run_frame(zxm *m);                    /* exactly one video frame */
-const void *zxm_framebuffer(const zxm *m);
-const int16_t *zxm_audio(const zxm *m, int *samples);
-void   zxm_input(zxm *m, const zxm_input_event *ev);
-int    zxm_media_insert(zxm *m, const char *slot, const zxm_media *media);
-int    zxm_media_eject(zxm *m, const char *slot);
-size_t zxm_state_size(const zxm *m);
-int    zxm_state_save(const zxm *m, void *buf, size_t len);
-int    zxm_state_load(zxm *m, const void *buf, size_t len);
-/* Debug: registers, memory, breakpoints, a per-T-state trace hook. */
-const zxm_debug *zxm_debugger(zxm *m);
-```
+Machine-specific slots and inputs are listed in `zxm_info`, so the runtime
+builds its media changer and input mapping from data. Input events are
+applied at the next frame start today; applying them at their exact T-state
+is a later step that the event format already allows for.
 
 Rules the core keeps so the host can do what it needs:
 
 - **No hidden state.** Everything that affects emulation is in the machine
   struct, so `zxm_state_save` is a complete snapshot and two instances never
-  interfere. (The typing queue in `src/frontend/media.c` is a global today;
-  it moves into the runtime.)
+  interfere. Typing text is the runtime's job, done with `zxm_input`.
 - **No I/O.** Media arrives as byte buffers or as callbacks (`zxm_media`
   carries read/write/seek for disks and SD cards); the core never opens a
   file. The JavaScript runtime supplies these callbacks as WebAssembly
@@ -129,8 +113,7 @@ Rules the core keeps so the host can do what it needs:
   memory without copying.
 - **No libc beyond freestanding.** The wasm build uses no Emscripten and no
   WASI: `memcpy`, `memset` and friends come from a tiny bundled
-  implementation, so the module stays small (target: under 300 KB for all
-  Spectrum models) and loads the same in browsers and Node.
+  implementation, so the module stays small (about 150 KB for every machine today) and loads the same in browsers and Node.
 - **Deterministic.** Same state, same inputs at the same T-states, same
   output, on every host. Inputs are timestamped in T-states, so a recorded
   session (`.zxcr`, see [manifests.md](manifests.md)) replays exactly.
@@ -266,18 +249,21 @@ per-instance overlays. All of this is in [storage.md](storage.md).
 
 | Phase | Delivers |
 | --- | --- |
-| 0 | The core: Z80/Z80N, classic Spectrums, tape, snapshots (in progress, PR #1). Spectrum Next machine. |
-| 1 | `zxm.h` interface, full state save/load, the `zxcore.wasm` build, the JavaScript runtime in a browser page running one instance. |
+| 0 | The core: Z80/Z80N, classic Spectrums, Spectrum Next, tape, snapshots, `zxm.h`, full state save/load and the `zxcore.wasm` build (PR #1). |
+| 1 | The JavaScript runtime in a browser page running one instance. |
 | 2 | Host, ZCP, instance folders (OPFS and File System Access), media changer, folder-backed SD card, snapshots, Cradle Setup. |
 | 3 | The Node host, the `zxc` shell, the MCP server, field reports, patch queue, verified restart. |
 | 4 | Machines beyond the Spectrum family, in the order in [machines.md](machines.md). |
 
+## Performance
+
+Measured on PR #1's `zxcore.wasm`: one Spectrum Next frame takes about
+3 ms, against a 20 ms budget at 50 Hz, so the WebAssembly core keeps up even
+at the Next's 28 MHz with room for several instances at once. The classic
+Spectrums cost much less. No native fallback is needed.
+
 ## Open questions
 
-- Does the WebAssembly core keep up? A 3.5 MHz Spectrum stepped per
-  T-state is cheap, but a 28 MHz Next is not; measure early, and if a
-  browser cannot hold 50 Hz, look at the core's hot loop before any native
-  fallback.
 - When, if ever, native builds of Cradle come back. Not for now.
 - Which input recording granularity keeps files small enough to attach to
   every field report: every T-state change, or per frame with T-state

@@ -11,7 +11,7 @@ to another instance.
 
 | Kind | Machines | Slot ids | Image formats | Folder-backed as |
 | --- | --- | --- | --- | --- |
-| `sd` | Next; divMMC on the 48K/128K/+3 | `sd`, `sd.1` | `.img` (FAT16/FAT32), `.mmc` | FAT32, built on the fly |
+| `sd` | Next; divMMC on the 48K/128K/+3 | `sd0`, `sd1` | `.img` (FAT16/FAT32), `.mmc` | FAT32, built on the fly |
 | `ide` | divIDE, +3e, ZXATASP | `ide.0`, `ide.1` | `.hdf`, `.img` | FAT32 or +3DOS partition |
 | `microdrive` | Interface 1 (up to 8 drives) | `md.1` to `md.8` | `.mdr` | Microdrive cartridge, built on the fly |
 | `disk` | +3, +2A with drive, CPC | `disk.a`, `disk.b` | `.dsk` (standard and extended) | +3DOS / AMSDOS (CP/M 2.2 layout) |
@@ -55,7 +55,7 @@ assigns them to slots:
 
 ```toml
 [media]
-sd     = "sd/main"
+sd0    = "sd/main"
 "md.1" = "microdrive/work"
 "md.2" = "microdrive/games"
 tape   = "tape/jetpac"
