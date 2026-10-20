@@ -1,0 +1,129 @@
+/*
+ * ZX Cradle design tokens. See ../style-guide.md for how to use them.
+ *
+ * Dark ("case") is the default theme; light ("paper") is the alternative.
+ * The stripe colours and the Spectrum palette are the same in both themes.
+ * Text in a signal colour uses the --zxc-text-* tokens, which meet 4.5:1
+ * on their theme's background; the --zxc-stripe-* tokens are for graphics.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Stripe: always in this order, left to right. */
+  --zxc-stripe-red:    #E3262A;
+  --zxc-stripe-yellow: #F7C51E;
+  --zxc-stripe-green:  #36A852;
+  --zxc-stripe-cyan:   #1C9AD6;
+
+  /* Neutrals: the case, the rubber keys, the legends. */
+  --zxc-bg:        #0E0F11;   /* case black */
+  --zxc-surface:   #181A1E;   /* panels */
+  --zxc-surface-2: #22252B;   /* raised panels, inputs */
+  --zxc-line:      #2E323A;   /* hairlines, dividers */
+  --zxc-key:       #5C6670;   /* rubber key grey-blue */
+  --zxc-fg:        #E9EBEE;   /* key legend white */
+  --zxc-muted:     #9AA3AD;   /* secondary text */
+
+  /* Text-safe signal colours (4.5:1 or better on --zxc-bg and --zxc-surface). */
+  --zxc-text-red:    #FF5A52;
+  --zxc-text-yellow: #F7C51E;
+  --zxc-text-green:  #4CC266;
+  --zxc-text-cyan:   #3FB2E8;
+
+  /* Roles. */
+  --zxc-accent:      var(--zxc-stripe-yellow); /* primary action */
+  --zxc-focus:       #F7C51E;                  /* focus ring: 3:1 or better on every surface */
+  --zxc-on-accent:   #0E0F11;
+  --zxc-link:        var(--zxc-text-cyan);
+  --zxc-danger:      var(--zxc-text-red);
+
+  /* Instance states. Never shown by colour alone: pair with the state letter. */
+  --zxc-state-running:  var(--zxc-text-green);
+  --zxc-state-paused:   var(--zxc-text-yellow);
+  --zxc-state-starting: var(--zxc-text-cyan);
+  --zxc-state-failed:   var(--zxc-text-red);
+  --zxc-state-stopped:  var(--zxc-muted);
+
+  /* Type. */
+  --zxc-font-display: "Chakra Petch", "Bahnschrift", "DIN Alternate", system-ui, sans-serif;
+  --zxc-font-body:    "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --zxc-font-mono:    "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  --zxc-size-xs: 0.75rem;   /* 12px: captions, table heads */
+  --zxc-size-sm: 0.875rem;  /* 14px: UI text */
+  --zxc-size-md: 1rem;      /* 16px: body */
+  --zxc-size-lg: 1.25rem;   /* 20px: panel titles */
+  --zxc-size-xl: 1.75rem;   /* 28px: page titles */
+  --zxc-size-2xl: 2.5rem;   /* 40px: the wordmark */
+
+  /* Space: one Spectrum character cell is 8 pixels. */
+  --zxc-cell: 8px;
+  --zxc-space-1: 4px;
+  --zxc-space-2: 8px;
+  --zxc-space-3: 16px;
+  --zxc-space-4: 24px;
+  --zxc-space-5: 32px;
+  --zxc-space-6: 48px;
+
+  --zxc-radius: 2px;        /* panels, buttons, chips */
+  --zxc-radius-key: 4px;    /* keycaps only */
+
+  /* FLASH: the Spectrum swaps ink and paper every 16 frames; ZX Cradle uses
+   * 32 frames (0.64 s) to stay under three changes a second. */
+  --zxc-flash-period: 1.28s;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --zxc-bg:        #EDEFF2;
+    --zxc-surface:   #FFFFFF;
+    --zxc-surface-2: #F6F7F9;
+    --zxc-line:      #D3D7DD;
+    --zxc-key:       #5C6670;
+    --zxc-fg:        #141519;
+    --zxc-muted:     #5A626B;
+    --zxc-text-red:    #C0181C;
+    --zxc-text-yellow: #7A5D00;
+    --zxc-text-green:  #1E7A36;
+    --zxc-text-cyan:   #0B6FA8;
+    --zxc-focus:       #141519;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --zxc-bg:        #EDEFF2;
+  --zxc-surface:   #FFFFFF;
+  --zxc-surface-2: #F6F7F9;
+  --zxc-line:      #D3D7DD;
+  --zxc-key:       #5C6670;
+  --zxc-fg:        #141519;
+  --zxc-muted:     #5A626B;
+  --zxc-text-red:    #C0181C;
+  --zxc-text-yellow: #7A5D00;
+  --zxc-text-green:  #1E7A36;
+  --zxc-text-cyan:   #0B6FA8;
+  --zxc-focus:       #141519;
+}
+
+/* The Spectrum's own 15 colours (black appears once), for emulated output
+ * and for anything that shows what the machine shows: border swatches,
+ * attribute editors, palette pickers. Not for UI chrome. */
+:root {
+  --zx-black:          #000000;
+  --zx-blue:           #0000D7;
+  --zx-red:            #D70000;
+  --zx-magenta:        #D700D7;
+  --zx-green:          #00D700;
+  --zx-cyan:           #00D7D7;
+  --zx-yellow:         #D7D700;
+  --zx-white:          #D7D7D7;
+  --zx-bright-blue:    #0000FF;
+  --zx-bright-red:     #FF0000;
+  --zx-bright-magenta: #FF00FF;
+  --zx-bright-green:   #00FF00;
+  --zx-bright-cyan:    #00FFFF;
+  --zx-bright-yellow:  #FFFF00;
+  --zx-bright-white:   #FFFFFF;
+}
