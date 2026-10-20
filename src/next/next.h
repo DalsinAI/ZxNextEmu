@@ -233,14 +233,22 @@ void nx_free(struct zx *m);
 void nx_power_on(struct zx *m);
 void nx_soft_reset(struct zx *m);
 void nx_run_frame(struct zx *m);
-int nx_attach_sd(struct zx *m, int slot, const char *path);
+struct zx_blockdev;
+int nx_attach_sd_dev(struct zx *m, int slot, struct zx_blockdev *bd);
 /* Connect a device to UART 0 (ESP wifi) or 1 (Pi); the machine closes it. */
 void nx_attach_serial(struct zx *m, int uart, struct zx_serial *dev);
 /* Host mouse movement (dy down is positive) and buttons (1 left, 2 right,
    4 middle). */
 void nx_mouse(zxn *n, int dx, int dy, int dz, int buttons);
-/* Load an 8K boot ROM to use instead of the built-in one. */
+/* An 8K boot ROM to use instead of the built-in one. */
+void nx_set_bootrom(struct zx *m, const uint8_t data[0x2000]);
+/* Host side (files.c): read it from a file. */
 int nx_load_bootrom(struct zx *m, const char *path);
+
+/* internal: zx_state_save/load's share */
+size_t nx_state_size(const struct zx *m);
+void nx_state_save(const struct zx *m, uint8_t *out);
+void nx_state_load(struct zx *m, const uint8_t *in, int has_sd[2]);
 
 /* internal, shared between the next/ files */
 void nx_video_reset(zxn *n);
@@ -252,12 +260,15 @@ void nx_sprite_port_5b(zxn *n, uint8_t v);
 void nx_sprite_port_303b(zxn *n, uint8_t v);
 void nx_sprite_mirror(zxn *n, uint8_t reg, uint8_t v);
 
-nx_sd *nx_sd_open(const char *path);
+nx_sd *nx_sd_new(struct zx_blockdev *bd);  /* owns bd once it succeeds */
 void nx_sd_close(nx_sd *sd);
 uint8_t nx_sd_xfer(nx_sd *sd, uint8_t out);
 void nx_sd_deselect(nx_sd *sd);
 void nx_sd_tick(nx_sd *sd);          /* once per frame: folder write-back */
 int nx_sd_flush(nx_sd *sd);
+size_t nx_sd_state_size(void);
+void nx_sd_state_save(const nx_sd *sd, uint8_t *out);
+void nx_sd_state_load(nx_sd *sd, const uint8_t *in);
 
 void nx_uart_power_on(zxn *n);
 void nx_uart_reset(zxn *n);

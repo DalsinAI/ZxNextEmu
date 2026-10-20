@@ -1,6 +1,7 @@
 #include "tape.h"
 #include "zx.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -436,4 +437,31 @@ int zx_tape_trap(zx_tape *t, struct zx *m)
     c->pc = (uint16_t)(zx_peek(m, c->sp) | zx_peek(m, (uint16_t)(c->sp + 1)) << 8);
     c->sp = (uint16_t)(c->sp + 2);
     return 1;
+}
+
+/* ---- state --------------------------------------------------------------- */
+
+/* The play position: everything from `cur` on. The blocks themselves come
+ * from the tape file, so a state only loads into the same tape. */
+#define TAPE_STATE_AT offsetof(zx_tape, cur)
+
+size_t zx_tape_state_size(void)
+{
+    return sizeof(int) + sizeof(zx_tape) - TAPE_STATE_AT;
+}
+
+void zx_tape_state_save(const zx_tape *t, uint8_t *out)
+{
+    memcpy(out, &t->n, sizeof(int));
+    memcpy(out + sizeof(int), (const uint8_t *)t + TAPE_STATE_AT, sizeof(zx_tape) - TAPE_STATE_AT);
+}
+
+int zx_tape_state_load(zx_tape *t, const uint8_t *in)
+{
+    int n;
+    memcpy(&n, in, sizeof n);
+    if (n != t->n)
+        return -1;
+    memcpy((uint8_t *)t + TAPE_STATE_AT, in + sizeof(int), sizeof(zx_tape) - TAPE_STATE_AT);
+    return 0;
 }

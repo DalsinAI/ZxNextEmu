@@ -28,4 +28,10 @@ int zx_tape_trap(zx_tape *t, struct zx *m);
  * start real-time playback if the trap was in use. */
 void zx_tape_custom_loader(zx_tape *t);
 
+/* Play position, for machine state (zx_state_save). Loading fails if the
+ * tape is not the one the state was saved with. */
+size_t zx_tape_state_size(void);
+void zx_tape_state_save(const zx_tape *t, uint8_t *out);
+int zx_tape_state_load(zx_tape *t, const uint8_t *in);
+
 #endif

@@ -100,7 +100,12 @@ typedef struct zx {
     struct zxn *next;      /* ZX Spectrum Next state (ZX_NEXT only) */
 } zx;
 
-/* Create a machine; roms_dir holds the ROM files (see roms/README.md). */
+/* Create a machine from its ROM images: roms[i] is 16K for each name
+ * zx_rom_file(model, i) gives (the Next needs none). No file I/O. */
+int zx_create(zx *m, zx_model model, const uint8_t *const roms[4]);
+const char *zx_rom_file(zx_model model, int i);
+/* Host side (files.c): create with the ROM files read from roms_dir
+ * (see roms/README.md). */
 int zx_init(zx *m, zx_model model, const char *roms_dir);
 void zx_reset(zx *m);
 /* Run one video frame. Video and audio for it are then in m->screen/audio. */
@@ -122,8 +127,19 @@ int zx_load_z80(zx *m, const uint8_t *data, size_t len);
 /* Release memory owned by the machine (the Next allocates its RAM). */
 void zx_free(zx *m);
 
-/* Attach an SD card image (Next only); slot 0 or 1. */
+/* Attach an SD card (Next only), slot 0 or 1. The machine closes the
+ * device when it is replaced or the machine is freed. */
+struct zx_blockdev;
+int zx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd);
+/* Host side (files.c): an image file or a folder, see storage/blockdev.h. */
 int zx_attach_sd(zx *m, int slot, const char *path);
+
+/* Full machine state, media contents excepted (they stay attached). Load
+ * into a machine of the same model built by the same core; returns 0 on
+ * success, -1 if the state does not fit this machine. */
+size_t zx_state_size(const zx *m);
+int zx_state_save(const zx *m, void *buf, size_t len);
+int zx_state_load(zx *m, const void *buf, size_t len);
 
 /* Model by short name: 48, 128, plus2, plus2a, plus3, pentagon, next. */
 int zx_model_from_name(const char *name, zx_model *out);

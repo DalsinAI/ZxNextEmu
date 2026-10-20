@@ -30,11 +30,20 @@ struct zx_blockdev {
     void (*close)(zx_blockdev *bd);
 };
 
-/* Open an image file, or a folder as a FAT32 volume of the default size. */
+/* Host side (blockdev.c, vfat.c). Open an image file, or a folder as a FAT32 volume of the default size. */
 zx_blockdev *zx_bd_open(const char *path);
 zx_blockdev *zx_bd_open_image(const char *path);
 /* size_mb 0 picks a size with room to spare for the folder's contents. */
 zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb);
-void zx_bd_close(zx_blockdev *bd);
+
+/* Flush and close (inline: the core uses it without the host-side code). */
+static inline void zx_bd_close(zx_blockdev *bd)
+{
+    if (!bd)
+        return;
+    if (bd->flush)
+        bd->flush(bd);
+    bd->close(bd);
+}
 
 #endif

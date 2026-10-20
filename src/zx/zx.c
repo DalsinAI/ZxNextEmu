@@ -2,7 +2,6 @@
 #include "tape.h"
 #include "../next/next.h"
 
-#include <stdio.h>
 #include <string.h>
 
 #define NOCONT 0xffffffffu
@@ -393,39 +392,123 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
     }
 }
 
-/* ---- setup ------------------------------------------------------------- */
+/* ---- state --------------------------------------------------------------- */
 
-static int load_rom(uint8_t *dst, const char *dir, const char *name)
+#define STATE_MAGIC   0x534d585au  /* "ZXMS" */
+#define STATE_VERSION 1
+#define ST_SD0  1
+#define ST_SD1  2
+#define ST_TAPE 4
+
+/* Header, the zx struct, the Next's part, the tape position. The structs
+ * are stored as they are in memory, so a state belongs to one build of the
+ * core (native or WebAssembly); the sizes in the header catch a mismatch. */
+typedef struct state_hdr {
+    uint32_t magic, version, model, flags;
+    uint32_t zx_size, nx_size, tape_size, reserved;
+} state_hdr;
+
+size_t zx_state_size(const zx *m)
 {
-    char path[1024];
-    FILE *fp;
-    size_t n;
-    snprintf(path, sizeof path, "%s/%s", dir, name);
-    fp = fopen(path, "rb");
-    if (!fp) {
-        fprintf(stderr, "zx: cannot open ROM %s\n", path);
+    return sizeof(state_hdr) + sizeof(zx)
+        + (m->model == ZX_NEXT ? nx_state_size(m) : 0)
+        + zx_tape_state_size();
+}
+
+int zx_state_save(const zx *m, void *buf, size_t len)
+{
+    uint8_t *p = buf;
+    state_hdr h;
+    if (len < zx_state_size(m))
         return -1;
+    memset(&h, 0, sizeof h);
+    h.magic = STATE_MAGIC;
+    h.version = STATE_VERSION;
+    h.model = (uint32_t)m->model;
+    h.zx_size = sizeof(zx);
+    h.nx_size = m->model == ZX_NEXT ? (uint32_t)nx_state_size(m) : 0;
+    h.tape_size = (uint32_t)zx_tape_state_size();
+    if (m->next && m->next->sd[0])
+        h.flags |= ST_SD0;
+    if (m->next && m->next->sd[1])
+        h.flags |= ST_SD1;
+    if (m->tape)
+        h.flags |= ST_TAPE;
+    memcpy(p, &h, sizeof h);
+    p += sizeof h;
+    memcpy(p, m, sizeof *m);
+    p += sizeof *m;
+    if (m->model == ZX_NEXT) {
+        nx_state_save(m, p);
+        p += h.nx_size;
     }
-    n = fread(dst, 1, 0x4000, fp);
-    fclose(fp);
-    if (n != 0x4000) {
-        fprintf(stderr, "zx: ROM %s is not 16K\n", path);
-        return -1;
-    }
+    if (m->tape)
+        zx_tape_state_save(m->tape, p);
+    else
+        memset(p, 0, h.tape_size);
     return 0;
 }
 
-int zx_init(zx *m, zx_model model, const char *roms_dir)
+int zx_state_load(zx *m, const void *buf, size_t len)
 {
-    static const char *const roms[ZX_MODEL_COUNT][4] = {
-        { "48.rom" },
-        { "128-0.rom", "128-1.rom" },
-        { "plus2-0.rom", "plus2-1.rom" },
-        { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
-        { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
-        { "128-0.rom", "128-1.rom" },
-        { NULL },
-    };
+    const uint8_t *p = buf;
+    state_hdr h;
+    const zx_timing *tm = m->tm;
+    z80_bus bus = m->bus;
+    const uint16_t *pixels = m->pixels;
+    struct zxn *next = m->next;
+    struct zx_tape *tape = m->tape;
+    int has_sd[2];
+    if (len < sizeof h)
+        return -1;
+    memcpy(&h, p, sizeof h);
+    if (h.magic != STATE_MAGIC || h.version != STATE_VERSION
+        || h.model != (uint32_t)m->model || h.zx_size != sizeof(zx)
+        || h.nx_size != (m->model == ZX_NEXT ? nx_state_size(m) : 0)
+        || h.tape_size != zx_tape_state_size() || len < zx_state_size(m))
+        return -1;
+    p += sizeof h;
+    /* The live machine's pointers: the timing table, the bus callbacks,
+     * the picture, the Next's own state and the tape stay as they are. */
+    memcpy(m, p, sizeof *m);
+    p += sizeof *m;
+    m->tm = tm;
+    m->bus = bus;
+    m->pixels = pixels;
+    m->next = next;
+    m->tape = tape;
+    if (m->model == ZX_NEXT) {
+        has_sd[0] = (h.flags & ST_SD0) != 0;
+        has_sd[1] = (h.flags & ST_SD1) != 0;
+        nx_state_load(m, p, has_sd);
+        p += h.nx_size;
+    } else {
+        update_paging(m);
+    }
+    if (m->tape && (h.flags & ST_TAPE))
+        zx_tape_state_load(m->tape, p);
+    return 0;
+}
+
+/* ---- setup ------------------------------------------------------------- */
+
+static const char *const rom_files[ZX_MODEL_COUNT][4] = {
+    { "48.rom" },
+    { "128-0.rom", "128-1.rom" },
+    { "plus2-0.rom", "plus2-1.rom" },
+    { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
+    { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
+    { "128-0.rom", "128-1.rom" },
+    { NULL },
+};
+
+const char *zx_rom_file(zx_model model, int i)
+{
+    return model < ZX_MODEL_COUNT && i >= 0 && i < 4 ? rom_files[model][i] : NULL;
+}
+
+int zx_create(zx *m, zx_model model, const uint8_t *const roms[4])
+{
     int i;
 
     memset(m, 0, sizeof *m);
@@ -437,15 +520,17 @@ int zx_init(zx *m, zx_model model, const char *roms_dir)
     m->pitch = ZX_SCREEN_W;
     if (model == ZX_NEXT) {
         /* Everything the Next needs comes from its SD card. */
-        (void)roms_dir;
         for (i = 0; i < 8; i++)
             m->keys[i] = 0x1f;
         return nx_init(m);
     }
     for (i = 0; i < 4; i++) {
         memset(m->rom[i], 0xff, sizeof m->rom[i]);
-        if (roms[model][i] && load_rom(m->rom[i], roms_dir, roms[model][i]))
-            return -1;
+        if (rom_files[model][i]) {
+            if (!roms || !roms[i])
+                return -1;
+            memcpy(m->rom[i], roms[i], sizeof m->rom[i]);
+        }
     }
     z80_init(&m->cpu, 0);
     m->bus.ctx = m;
@@ -466,11 +551,11 @@ void zx_free(zx *m)
         nx_free(m);
 }
 
-int zx_attach_sd(zx *m, int slot, const char *path)
+int zx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd)
 {
     if (m->model != ZX_NEXT)
         return -1;
-    return nx_attach_sd(m, slot, path);
+    return nx_attach_sd_dev(m, slot, bd);
 }
 
 void zx_reset(zx *m)

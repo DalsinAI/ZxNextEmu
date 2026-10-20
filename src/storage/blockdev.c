@@ -78,12 +78,3 @@ zx_blockdev *zx_bd_open(const char *path)
         return zx_bd_open_folder(path, 0);
     return zx_bd_open_image(path);
 }
-
-void zx_bd_close(zx_blockdev *bd)
-{
-    if (!bd)
-        return;
-    if (bd->flush)
-        bd->flush(bd);
-    bd->close(bd);
-}
