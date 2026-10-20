@@ -1,0 +1,50 @@
+# ZxNextEmu
+#
+#   make                 host build (any GCC; the project compiler is
+#                        GCC 16.2.0-open3)
+#   make test            CPU exercisers (needs tests-data/, see tests/README.md)
+#   make amiga           AmigaOS 3.x build with m68k-amigaos-gcc 16.2.0-open3
+
+CC      ?= gcc
+CFLAGS  ?= -O2 -g
+CFLAGS  += -std=c99 -Wall -Wextra -pedantic
+BUILD   ?= build
+
+CORE_SRC = src/z80/z80.c
+ZX_SRC   = src/zx/zx.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c
+ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/frontend/*.h)
+
+.PHONY: all desktop test sst clean
+
+all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst
+
+$(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/zex.c $(CORE_SRC)
+
+$(BUILD)/zxrun: src/frontend/headless.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ src/frontend/headless.c $(CORE_SRC) $(ZX_SRC)
+
+# Desktop front end (needs SDL2 development files).
+SDL_CFLAGS ?= $(shell sdl2-config --cflags)
+SDL_LIBS   ?= $(shell sdl2-config --libs)
+
+desktop: $(BUILD)/zxnextemu
+
+$(BUILD)/zxnextemu: src/frontend/sdl.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) -o $@ src/frontend/sdl.c $(CORE_SRC) $(ZX_SRC) $(SDL_LIBS)
+
+$(BUILD):
+	mkdir -p $@
+
+test: $(BUILD)/zex
+	$(BUILD)/zex tests-data/zexdoc.com
+	$(BUILD)/zex tests-data/zexall.com
+
+clean:
+	rm -rf $(BUILD)
+
+$(BUILD)/sst: tests/sst.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/sst.c $(CORE_SRC)
+
+sst: $(BUILD)/sst
+	tests/run-sst.sh
