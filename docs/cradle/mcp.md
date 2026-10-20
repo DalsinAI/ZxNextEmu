@@ -14,7 +14,8 @@ starting it if needed, and every tool is one ZCP operation.
 }
 ```
 
-Options: `--instances a,b` limits the server to those instances,
+Options: `--http` serves MCP over HTTP on `127.0.0.1:7090` instead of stdio,
+`--instances a,b` limits the server to those instances,
 `--read-only` removes every tool that changes an instance, and
 `--no-debug` removes the debugger tools.
 
