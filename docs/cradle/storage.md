@@ -63,6 +63,12 @@ tape   = "tape/jetpac"
 
 ## Image-backed and folder-backed
 
+**Folder-backed is the default for SD cards** (Dale, 2026-10-20): each
+instance has one folder per SD card, which the guest sees as a live FAT32
+volume synthesised on the fly, with the guest's writes mapped back to host
+files. Microdrives and disks follow the same model as they arrive. The core
+work for this is being done in the emulator itself.
+
 **Image-backed** media are bit-exact: the runtime reads and writes the image
 file and nothing else. Use them for copy-protected disks, for testing, and
 for anything that must match a real medium byte for byte.
