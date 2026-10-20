@@ -1,7 +1,7 @@
 /*
  * zxnextemu: desktop front end (SDL2).
  *
- *   zxnextemu [-m model] [-r romdir] [-c sd-folder-or-image] [-z scale] [file]
+ *   zxnextemu [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-z scale] [file]
  *
  * -m next runs the ZX Spectrum Next; give it an SD card image with -c.
  *
@@ -24,6 +24,7 @@
 #include "net_posix.h"
 #include "../next/next.h"
 #include "../devices/esp8266.h"
+#include "../devices/nextpi.h"
 
 typedef struct { SDL_Scancode sc; int row, bit; } keymap;
 
@@ -82,7 +83,7 @@ int main(int argc, char **argv)
     zx_net *net = NULL;
     static zx m;
     zx_model model = ZX_128K;
-    const char *romdir = "roms", *file = NULL, *sd = NULL;
+    const char *romdir = "roms", *file = NULL, *sd = NULL, *pidir = NULL;
     int scale = 3, a, running = 1, turbo = 0;
     SDL_Window *win;
     SDL_Renderer *ren;
@@ -102,16 +103,20 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
         else if (!strcmp(argv[a], "-z") && a + 1 < argc) scale = atoi(argv[++a]);
         else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
+        else if (!strcmp(argv[a], "-p") && a + 1 < argc) pidir = argv[++a];
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-z scale] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-z scale] [file]\n", argv[0]);
             return 2;
         }
     }
     if (zx_init(&m, model, romdir))
         return 1;
-    if (model == ZX_NEXT)
+    if (model == ZX_NEXT) {
         nx_attach_serial(&m, 0, zx_esp8266_new(net = zx_net_posix_new()));
+        if (pidir)
+            nx_attach_serial(&m, 1, zx_nextpi_new(pidir));
+    }
     if (sd && zx_attach_sd(&m, 0, sd)) {
         fprintf(stderr, "cannot attach SD card image %s\n", sd);
         return 1;

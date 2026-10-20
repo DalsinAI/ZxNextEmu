@@ -1,9 +1,10 @@
 /*
  * zxrun: headless runner for tests and scripting.
  *
- *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
  *
- * -c attaches an SD card image (ZX Spectrum Next, -m next).
+ * -c attaches an SD card (ZX Spectrum Next, -m next): a folder or an image.
+ * -p fits the Next's Raspberry Pi, keeping its files in a folder.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,7 @@
 #include "net_posix.h"
 #include "../next/next.h"
 #include "../devices/esp8266.h"
+#include "../devices/nextpi.h"
 
 static void save_ppm(const zx *m, const char *path)
 {
@@ -42,7 +44,7 @@ int main(int argc, char **argv)
 {
     static zx m;
     zx_model model = ZX_48K;
-    const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL;
+    const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL, *pidir = NULL;
     long frames = 100, delay = 120, i;
     FILE *wf = NULL;
     zx_net *net = NULL;
@@ -57,6 +59,7 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
         else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
+        else if (!strcmp(argv[a], "-p") && a + 1 < argc) pidir = argv[++a];
         else if (!strcmp(argv[a], "-f") && a + 1 < argc) frames = atol(argv[++a]);
         else if (!strcmp(argv[a], "-s") && a + 1 < argc) shot = argv[++a];
         else if (!strcmp(argv[a], "-w") && a + 1 < argc) wav = argv[++a];
@@ -65,7 +68,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-n")) noscroll = 1; /* keep BASIC from asking "scroll?" */
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
             return 2;
         }
     }
@@ -74,6 +77,8 @@ int main(int argc, char **argv)
     if (model == ZX_NEXT) {
         net = zx_net_posix_new();
         nx_attach_serial(&m, 0, zx_esp8266_new(net));   /* the wifi module */
+        if (pidir)
+            nx_attach_serial(&m, 1, zx_nextpi_new(pidir));
     }
     if (sd && zx_attach_sd(&m, 0, sd)) {
         fprintf(stderr, "cannot attach SD card image %s\n", sd);
