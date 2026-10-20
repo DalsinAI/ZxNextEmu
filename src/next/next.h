@@ -194,6 +194,10 @@ typedef struct zxn {
     uint8_t flash;
     uint8_t keys_ext[2];      /* nr_b0, nr_b1 extended keys (active high) */
 
+    /* Kempston mouse */
+    uint8_t mouse_x, mouse_y, mouse_z, mouse_btn;
+    int mouse_fx, mouse_fy;   /* movement left over from DPI scaling */
+
     /* audio */
     ay_chip ay[3];
     uint8_t ay_select, ay_pan[3];
@@ -212,6 +216,9 @@ void nx_power_on(struct zx *m);
 void nx_soft_reset(struct zx *m);
 void nx_run_frame(struct zx *m);
 int nx_attach_sd(struct zx *m, int slot, const char *path);
+/* Host mouse movement (dy down is positive) and buttons (1 left, 2 right,
+   4 middle). */
+void nx_mouse(zxn *n, int dx, int dy, int dz, int buttons);
 /* Load an 8K boot ROM to use instead of the built-in one. */
 int nx_load_bootrom(struct zx *m, const char *path);
 

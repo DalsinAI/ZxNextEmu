@@ -1373,6 +1373,38 @@ static void port_write(zxn *n, uint16_t port, uint8_t v)
     }
 }
 
+/*
+ * Kempston mouse (ps2_mouse.v): X counts up to the right, Y counts up
+ * going up, the wheel is a 4-bit count, buttons read 0 when pressed.
+ */
+void nx_mouse(zxn *n, int dx, int dy, int dz, int buttons)
+{
+    int shift = n->nr_0a & 3;             /* DPI: x2, x1, /2, /4 */
+    int x = n->mouse_fx + dx * 4, y = n->mouse_fy - dy * 4;
+    int unit = shift == 0 ? 2 : shift == 1 ? 4 : shift == 2 ? 8 : 16;
+    n->mouse_x = (uint8_t)(n->mouse_x + x / unit);
+    n->mouse_y = (uint8_t)(n->mouse_y + y / unit);
+    n->mouse_fx = x % unit;
+    n->mouse_fy = y % unit;
+    n->mouse_z = (uint8_t)(n->mouse_z + dz);
+    n->mouse_btn = (uint8_t)(buttons & 7);
+}
+
+static uint8_t mouse_port(const zxn *n, int hi)
+{
+    int l = n->mouse_btn & 1, r = n->mouse_btn >> 1 & 1, mid = n->mouse_btn >> 2 & 1;
+    if (n->nr_0a & 8) {                   /* button reverse */
+        int t = l;
+        l = r;
+        r = t;
+    }
+    if (hi == 0x0b)
+        return n->mouse_x;
+    if (hi == 0x0f)
+        return n->mouse_y;
+    return (uint8_t)((n->mouse_z & 15) << 4 | 8 | !mid << 2 | !l << 1 | !r);
+}
+
 static uint8_t port_read(zxn *n, uint16_t port)
 {
     zx *m = n->m;
@@ -1468,7 +1500,7 @@ static uint8_t port_read(zxn *n, uint16_t port)
         break;
     case 0xdf:
         if (port_enabled(n, 13) && ((msb & 15) == 0x0a || (msb & 15) == 0x0b || (msb & 15) == 0x0f)) {
-            r |= (msb & 15) == 0x0a ? 0xff : 0x00;   /* no mouse: buttons up, still */
+            r |= mouse_port(n, msb & 15);
             hit = 1;
         }
         break;
@@ -1939,7 +1971,7 @@ void nx_power_on(zx *m)
     n->nr_05_scandouble = 1;
     n->nr_08 = 0x10;
     n->nr_09 = 0;
-    n->nr_0a = 0;
+    n->nr_0a = 0x01;          /* mouse DPI 01 */
     n->nr_06 = 0;
     n->nr_80 = n->nr_8c = 0;
     n->nr_81 = 0;

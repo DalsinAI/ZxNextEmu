@@ -157,6 +157,20 @@ int main(int argc, char **argv)
                 else
                     key_event(&m, ev.key.keysym.scancode, ev.type == SDL_KEYDOWN);
                 break;
+            case SDL_MOUSEMOTION: {
+                uint32_t b = ev.motion.state;
+                zx_mouse(&m, ev.motion.xrel, ev.motion.yrel, 0,
+                         (b & SDL_BUTTON_LMASK ? 1 : 0) | (b & SDL_BUTTON_RMASK ? 2 : 0) | (b & SDL_BUTTON_MMASK ? 4 : 0));
+                break;
+            }
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP:
+            case SDL_MOUSEWHEEL: {
+                uint32_t b = SDL_GetMouseState(NULL, NULL);
+                zx_mouse(&m, 0, 0, ev.type == SDL_MOUSEWHEEL ? -ev.wheel.y : 0,
+                         (b & SDL_BUTTON_LMASK ? 1 : 0) | (b & SDL_BUTTON_RMASK ? 2 : 0) | (b & SDL_BUTTON_MMASK ? 4 : 0));
+                break;
+            }
             case SDL_DROPFILE:
                 load(&m, ev.drop.file);
                 SDL_free(ev.drop.file);

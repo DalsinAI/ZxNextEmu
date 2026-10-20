@@ -522,6 +522,12 @@ void zx_key(zx *m, int row, int bit, int down)
         m->keys[row] |= (uint8_t)(1 << bit);
 }
 
+void zx_mouse(zx *m, int dx, int dy, int dz, int buttons)
+{
+    if (m->next)
+        nx_mouse(m->next, dx, dy, dz, buttons);
+}
+
 void zx_run_frame(zx *m)
 {
     const uint32_t frame_t = m->tm->frame_t;
