@@ -56,6 +56,13 @@ timing-sensitive loaders behave as on the hardware.
 The test programs are downloaded into `tests-data/`, see
 [tests/README.md](tests/README.md).
 
+## ZX Cradle
+
+This emulator is the core of ZX Cradle, a planned machine manager for every
+Z80 machine: named instances, media changer, snapshots, field reports, the
+`zxc` shell and an MCP server. The design and the style guide are in
+[docs/cradle/](docs/cradle/README.md).
+
 ## Licence
 
 GPL-3.0-or-later (see `LICENSE`). The ROMs in `roms/` are not covered by the
