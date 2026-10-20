@@ -16,6 +16,7 @@ own. ZX Cradle is everything around it.
 | --- | --- |
 | [design.md](design.md) | Architecture: core library, runtime, host, shell, MCP server, web UI |
 | [machines.md](machines.md) | The machine catalogue and the order machines arrive in |
+| [storage.md](storage.md) | Media: a folder per SD card, Microdrive, disk and tape; overlays; the shared library; the Next system card |
 | [manifests.md](manifests.md) | On-disk formats: machine and instance manifests, state files, patches, field reports |
 | [zxc-shell.md](zxc-shell.md) | The `zxc` command line and interactive shell |
 | [mcp.md](mcp.md) | The MCP server: tools and resources for driving instances from an AI agent |
