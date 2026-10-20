@@ -229,6 +229,8 @@ nx_sd *nx_sd_open(const char *path);
 void nx_sd_close(nx_sd *sd);
 uint8_t nx_sd_xfer(nx_sd *sd, uint8_t out);
 void nx_sd_deselect(nx_sd *sd);
+void nx_sd_tick(nx_sd *sd);          /* once per frame: folder write-back */
+int nx_sd_flush(nx_sd *sd);
 
 void nx_dma_reset(zxn *n);
 void nx_dma_write(zxn *n, uint8_t v);

@@ -2078,6 +2078,8 @@ void nx_run_frame(zx *m)
     nx_video_run(n, end);
     nx_video_frame_end(n);
     audio_run(n, end);
+    nx_sd_tick(n->sd[0]);
+    nx_sd_tick(n->sd[1]);
 
     n->frame_start = end;
     n->frames++;
