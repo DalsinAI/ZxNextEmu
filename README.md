@@ -17,7 +17,8 @@ build/zxrun -m 128 -f 500 -s shot.ppm game.tap
 ```
 
 `zxrun` options: `-m` model (`next`, `48`, `128`, `plus2`, `plus2a`, `plus3`,
-`pentagon`), `-c` SD card for the Next (a folder or an image file), `-f` frames to run, `-t` text to type (after `-d` frames),
+`pentagon`), `-c` SD card for the Next (a folder or an image file), `-p`
+a folder for the Next's Raspberry Pi, `-f` frames to run, `-t` text to type (after `-d` frames),
 `-s` screenshot (PPM), `-w` audio (WAV), and a `.sna`, `.z80`, `.tap` or
 `.tzx` file to load. Tapes load instantly through the ROM when they use the
 standard loader, and play in real time for custom loaders.
@@ -51,6 +52,13 @@ NextZXOS's network tools work as they do on a real Next with wifi set up.
 In NextBASIC, `.http get -h example.com -u /file.txt -f file.txt` saves the
 file to the SD card folder.
 
+### Raspberry Pi
+
+Give the Next a Raspberry Pi with `-p folder`: the folder holds the Pi's
+files (`/ram`, `/NextPi` and so on). The emulator answers as NextPi's
+supervisor shell does, so `.pisend -q` finds the Pi and `.piput`, `.piget`
+and `.pisend` move files between the SD card and the Pi.
+
 ## How the timing works
 
 The Z80 core never counts T-states itself. Every machine cycle (opcode
@@ -71,9 +79,10 @@ timing-sensitive loaders behave as on the hardware.
 | Tape | TAP and TZX (all common blocks), instant ROM load + real-time pulses |
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
-| Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse. Still to come: Pi Zero, multiface |
+| Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
+| Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Front ends | headless `zxrun`; desktop (SDL2) and Amiga next |
 
 ## Tests
@@ -84,6 +93,7 @@ timing-sensitive loaders behave as on the hardware.
 | SingleStepTests/z80, every opcode: registers, memory, exact T-states | all pass (`make sst`) |
 | Folder-backed SD card: fsck.fat, then write back changes made with mtools | all pass (`make vfat`) |
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
+| NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
 The test programs are downloaded into `tests-data/`, see

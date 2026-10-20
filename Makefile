@@ -12,12 +12,12 @@ BUILD   ?= build
 
 CORE_SRC = src/z80/z80.c
 STORE_SRC = src/storage/blockdev.c src/storage/vfat.c
-DEV_SRC  = src/devices/esp8266.c
+DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 ZX_SRC   = src/zx/zx.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
-.PHONY: all desktop test sst vfat esp clean
+.PHONY: all desktop test sst vfat esp nextpi clean
 
 all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool $(BUILD)/esp
 
@@ -65,3 +65,7 @@ $(BUILD)/esp: tests/esp.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC) $(ZX_HD
 # The ESP8266 wifi module on the Next's UART, against a local echo server.
 esp: $(BUILD)/esp
 	tests/esp.sh $(BUILD)/esp
+
+# NextZXOS's Pi tools against the emulated NextPi (TBBLUE=the Next software).
+nextpi: $(BUILD)/zxrun
+	tests/nextpi.sh $(BUILD)/zxrun
