@@ -2059,10 +2059,10 @@ void nx_free(zx *m)
     m->next = NULL;
 }
 
-int nx_attach_sd(zx *m, int slot, const char *path)
+int nx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd)
 {
     zxn *n = m->next;
-    nx_sd *sd = nx_sd_open(path);
+    nx_sd *sd = nx_sd_new(bd);
     if (!sd)
         return -1;
     nx_sd_close(n->sd[slot & 1]);
@@ -2080,15 +2080,61 @@ void nx_attach_serial(zx *m, int uart, struct zx_serial *dev)
     u->rx_free = n->clk;
 }
 
-int nx_load_bootrom(zx *m, const char *path)
+void nx_set_bootrom(zx *m, const uint8_t data[0x2000])
 {
-    FILE *fp = fopen(path, "rb");
-    size_t got;
-    if (!fp)
-        return -1;
-    got = fread(m->next->bootrom, 1, sizeof m->next->bootrom, fp);
-    fclose(fp);
-    return got == sizeof m->next->bootrom ? 0 : -1;
+    memcpy(m->next->bootrom, data, sizeof m->next->bootrom);
+}
+
+/* ---- state --------------------------------------------------------------- */
+
+/* zxn struct, SRAM, then each attached card's SPI state. Pointers in the
+ * saved struct are meaningless; load keeps the live ones and rebuilds the
+ * memory map from the saved registers. */
+size_t nx_state_size(const zx *m)
+{
+    (void)m;
+    return sizeof(zxn) + NX_SRAM_SIZE + 2 * nx_sd_state_size();
+}
+
+void nx_state_save(const zx *m, uint8_t *out)
+{
+    const zxn *n = m->next;
+    int i;
+    memcpy(out, n, sizeof *n);
+    out += sizeof *n;
+    memcpy(out, n->sram, NX_SRAM_SIZE);
+    out += NX_SRAM_SIZE;
+    for (i = 0; i < 2; i++, out += nx_sd_state_size())
+        if (n->sd[i])
+            nx_sd_state_save(n->sd[i], out);
+        else
+            memset(out, 0, nx_sd_state_size());
+}
+
+void nx_state_load(zx *m, const uint8_t *in, int has_sd[2])
+{
+    zxn *n = m->next;
+    uint8_t *sram = n->sram;
+    nx_sd *sd[2];
+    struct zx_serial *dev[2];
+    int i;
+    sd[0] = n->sd[0];
+    sd[1] = n->sd[1];
+    dev[0] = n->uart[0].dev;
+    dev[1] = n->uart[1].dev;
+    memcpy(n, in, sizeof *n);
+    in += sizeof *n;
+    n->m = m;
+    n->sram = sram;
+    memcpy(n->sram, in, NX_SRAM_SIZE);
+    in += NX_SRAM_SIZE;
+    for (i = 0; i < 2; i++, in += nx_sd_state_size()) {
+        n->sd[i] = sd[i];
+        n->uart[i].dev = dev[i];
+        if (sd[i] && has_sd[i])
+            nx_sd_state_load(sd[i], in);
+    }
+    remap(n);
 }
 
 /* ---- the frame loop ------------------------------------------------------- */

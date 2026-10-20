@@ -9,6 +9,7 @@
 #include "next.h"
 #include "../storage/blockdev.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,17 +32,14 @@ struct nx_sd {
     int busy;               /* busy bytes to send after a write */
 };
 
-nx_sd *nx_sd_open(const char *path)
+nx_sd *nx_sd_new(zx_blockdev *bd)
 {
     nx_sd *sd;
-    zx_blockdev *bd = zx_bd_open(path);
     if (!bd)
         return NULL;
     sd = calloc(1, sizeof *sd);
-    if (!sd) {
-        zx_bd_close(bd);
-        return NULL;
-    }
+    if (!sd)
+        return NULL;    /* the caller still owns bd */
     sd->bd = bd;
     sd->blocks = bd->blocks;
     sd->idle = 1;
@@ -299,4 +297,22 @@ void nx_sd_tick(nx_sd *sd)
 int nx_sd_flush(nx_sd *sd)
 {
     return sd && sd->bd->flush ? sd->bd->flush(sd->bd) : 0;
+}
+
+/* The card's SPI state: everything after the device and its size. */
+#define SD_STATE_AT offsetof(nx_sd, state)
+
+size_t nx_sd_state_size(void)
+{
+    return sizeof(nx_sd) - SD_STATE_AT;
+}
+
+void nx_sd_state_save(const nx_sd *sd, uint8_t *out)
+{
+    memcpy(out, (const uint8_t *)sd + SD_STATE_AT, nx_sd_state_size());
+}
+
+void nx_sd_state_load(nx_sd *sd, const uint8_t *in)
+{
+    memcpy((uint8_t *)sd + SD_STATE_AT, in, nx_sd_state_size());
 }

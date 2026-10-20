@@ -21,6 +21,7 @@
 #include "../zx/zx.h"
 #include "../zx/tape.h"
 #include "media.h"
+#include "../zx/keys.h"
 #include "net_posix.h"
 #include "../next/next.h"
 #include "../devices/esp8266.h"
@@ -65,6 +66,8 @@ static void key_event(zx *m, SDL_Scancode sc, int down)
     }
 }
 
+static zx_typer typer;
+
 static void load(zx *m, const char *path)
 {
     if (media_load(m, path) == 0 && m->tape) {
@@ -73,8 +76,8 @@ static void load(zx *m, const char *path)
         m->tape = NULL;
         zx_reset(m);
         m->tape = t;
-        media_type(m->model == ZX_48K ? "j\"\"\n" : "\n");
-        media_type_delay(m->model == ZX_48K ? 120 : 90);
+        zx_type(&typer, m->model == ZX_48K ? "j\"\"\n" : "\n");
+        zx_type_delay(&typer, m->model == ZX_48K ? 120 : 90);
     }
 }
 
@@ -190,7 +193,7 @@ int main(int argc, char **argv)
             }
         }
 
-        media_type_frame(&m);
+        zx_type_frame(&typer, &m);
         zx_run_frame(&m);
 
         if (dev && !turbo) {

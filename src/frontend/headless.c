@@ -13,6 +13,7 @@
 #include "../zx/zx.h"
 #include "../zx/tape.h"
 #include "media.h"
+#include "../zx/keys.h"
 #include "net_posix.h"
 #include "../next/next.h"
 #include "../devices/esp8266.h"
@@ -43,6 +44,7 @@ static void put16(FILE *fp, uint32_t v) { fputc(v & 255, fp); fputc(v >> 8 & 255
 int main(int argc, char **argv)
 {
     static zx m;
+    static zx_typer typer;
     zx_model model = ZX_48K;
     const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL, *pidir = NULL;
     long frames = 100, delay = 120, i;
@@ -87,8 +89,8 @@ int main(int argc, char **argv)
     if (file && media_load(&m, file))
         return 1;
     if (text) {
-        media_type(text);
-        media_type_delay((int)delay);
+        zx_type(&typer, text);
+        zx_type_delay(&typer, (int)delay);
     }
     if (wav) {
         wf = fopen(wav, "wb");
@@ -96,7 +98,7 @@ int main(int argc, char **argv)
             fseek(wf, 44, SEEK_SET);
     }
     for (i = 0; i < frames; i++) {
-        media_type_frame(&m);
+        zx_type_frame(&typer, &m);
         if (noscroll && i >= delay)
             zx_poke(&m, 23692, 255); /* SCR-CT; not before the ROM's RAM test */
         zx_run_frame(&m);
