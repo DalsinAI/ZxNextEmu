@@ -12,8 +12,6 @@
  * bit; 243 is 115200 baud).
  */
 #include "next.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include "../devices/serial.h"
 
 #define RX_SIZE   512
@@ -186,7 +184,6 @@ uint8_t nx_uart_read(zxn *n, int reg)
         if (!u->rx_count)
             return 0;
         r = (uint8_t)u->rx[u->rx_head];
-        if (getenv("UART_DEBUG")) fprintf(stderr, "{R%02x}", r);
         u->rx_head = (uint16_t)((u->rx_head + 1) % RX_SIZE);
         u->rx_count--;
         update_ints(n, n->uart_sel, n->clk);
@@ -205,7 +202,6 @@ uint8_t nx_uart_read(zxn *n, int reg)
             | ((u->tx_count == TX_SIZE) << 1)
             | (u->rx_count != 0));
         u->err_overflow = u->err_framing = 0;
-        if (getenv("UART_DEBUG") && n->uart_sel) { static int k; if (k++ < 400) fprintf(stderr, "{S%02x}", r); }
         return r;
     }
 }
