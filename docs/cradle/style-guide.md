@@ -6,8 +6,8 @@ stripe across one corner. Everything else stays quiet so the emulated screen,
 with its own loud colours, is the brightest thing on the page.
 
 The tokens below are in [tokens/zxcradle.css](tokens/zxcradle.css). Every
-ZX Cradle surface (Cradle Setup, the web runtime, the shell, the native
-front ends, documentation) uses them.
+ZX Cradle surface (Cradle Setup, the web runtime, the `zxc` shell,
+documentation) uses them.
 
 ## Principles
 
@@ -104,8 +104,8 @@ screen.)
 | Body | IBM Plex Sans, 400 / 600 | `--zxc-font-body` | All UI and documentation text |
 | Mono | IBM Plex Mono, 400 / 500 | `--zxc-font-mono` | The shell, addresses, registers, file names, tables of numbers |
 
-All three are open fonts (SIL OFL) on Google Fonts and can be bundled with the
-native builds.
+All three are open fonts (SIL OFL) on Google Fonts and can be bundled with
+Cradle Setup for offline use.
 
 Scale: 12, 14, 16, 20, 28, 40 px (`--zxc-size-xs` to `--zxc-size-2xl`). Body
 text is 16 px with a line height of 1.5; UI text is 14 px. Uppercase labels

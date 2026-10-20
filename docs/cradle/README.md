@@ -5,8 +5,9 @@ family, and later for every Z80A machine worth running, what Amiga Cradle
 does for the Amiga: you register machines as named instances, start, stop
 and restart them, swap their tapes and disks, snapshot them, queue patches
 for them and pull a field report when something goes wrong. Each instance
-keeps its whole world in one folder. The same instance runs natively or in a
-browser through WebAssembly.
+keeps its whole world in one folder. ZX Cradle is written in JavaScript and runs
+the emulator as WebAssembly, in a browser or under Node.js, with no native
+code of its own.
 
 The emulation itself is the ZxNextEmu core in this repository: a portable C99
 library, timed to the T-state, with no screen, sound or file system of its

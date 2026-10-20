@@ -14,11 +14,14 @@
    (no frame skipping inside the core, no "fast" paths that alter contention).
 4. **Scriptable from the first day.** Everything the UI can do, the `zxc`
    shell and the MCP server can do, through the same control protocol.
-5. **Easy to run.** One binary on Linux, Windows, macOS and AmigaOS, or one
-   web page. No installer, no runtime to download first.
-6. **C, built with GCC.** C99 for the core and runtime, built with GCC
-   16.2.0-open3 for AmigaOS and any GCC elsewhere. The WebAssembly build is
-   the one exception: it needs clang's wasm32 target, as in Amiga Cradle.
+5. **Easy to run.** Open a web page, or run one `npx`-style command. No
+   installer, no native binaries to build or download.
+6. **JavaScript and WebAssembly only, for now** (Dale, 2026-10-20). All of
+   ZX Cradle (host, runtime, shell, MCP server, UI) is JavaScript. The only
+   compiled code is the emulator core, which ZX Cradle loads as a
+   WebAssembly module. There are no native Cradle builds until this is
+   revisited. The core itself stays portable C99 in this repository and
+   keeps its own native front ends; ZX Cradle simply does not use them.
 
 ## Concepts
 
@@ -26,8 +29,8 @@
 | --- | --- |
 | Machine | A model the core can emulate: `zx48`, `zx128`, `plus3`, `next`, `cpc6128`... Described by a machine manifest. |
 | Instance | A configured machine with a name, a folder and a state: `jetpac-48`, `next-dev`. |
-| Runtime | The process (or WebAssembly module) that runs one instance. |
-| Host | `zxcradled`, the background service that keeps the instance registry and supervises runtimes. |
+| Runtime | The worker that runs one instance: the core's WebAssembly module plus a little JavaScript around it. |
+| Host | `zxcradled`, the JavaScript service (Node.js, or the page itself in a browser-only setup) that keeps the instance registry and supervises runtimes. |
 | Slot | A place media goes: `tape`, `disk.a`, `disk.b`, `cart`, `sd`. Each machine declares its slots. |
 | Medium | One SD card, Microdrive cartridge, disk, tape or cartridge, kept in its own folder, image-backed or folder-backed. See [storage.md](storage.md). |
 | Media changer | The instance's media and which one is in each slot. |
@@ -39,31 +42,44 @@
 
 ```
  ┌───────────────────────────────────────────────────────────────┐
- │  Cradle Setup (web UI)   zxc shell   MCP server   front ends  │  clients
+ │  Cradle Setup (web UI)      zxc shell        MCP server       │  clients (JS)
  └──────────────┬───────────────┬──────────────┬─────────────────┘
-                │   ZCP (JSON lines over a local socket / WebSocket)
+                │   ZCP (JSON messages over WebSocket, stdio or postMessage)
  ┌──────────────┴───────────────┴──────────────┴─────────────────┐
- │  zxcradled: instance registry, supervisor, media, snapshots,  │  host
+ │  zxcradled: instance registry, supervisor, media, snapshots,  │  host (JS)
  │  patch queue, field reports, event log                        │
  └──────────────┬────────────────────────────────────────────────┘
-                │   ZCP over the runtime's stdin/stdout (or postMessage)
+                │   ZCP over postMessage
  ┌──────────────┴────────────────────────────────────────────────┐
- │  zxc-run: one instance. Owns timing, video, audio, input,     │  runtime
- │  media I/O. Native (GCC) or WebAssembly (clang).              │
+ │  runtime: one Worker per instance. Pacing, video, audio,      │  runtime (JS)
+ │  input, media I/O.                                            │
  └──────────────┬────────────────────────────────────────────────┘
-                │   C API (zxm.h)
+                │   WebAssembly exports (the zxm.h API)
  ┌──────────────┴────────────────────────────────────────────────┐
- │  libzxcore: Z80/Z80N CPU + machine modules. No I/O, no        │  core
- │  globals, no allocation after create.                         │
+ │  zxcore.wasm: Z80/Z80N CPU + machine modules, built from the  │  core (C → wasm)
+ │  C sources with clang --target=wasm32. No I/O, no globals.    │
  └───────────────────────────────────────────────────────────────┘
 ```
 
+Everything above the core is plain JavaScript (ES modules, no build step
+needed to run it; TypeScript type declarations shipped alongside). The same
+modules run in two places:
+
+- **In the browser**, with nothing installed: the page is the host, each
+  instance runs in a Web Worker, and instance folders live in the Origin
+  Private File System, or in a real folder on disk the user picks through
+  the File System Access API.
+- **Under Node.js**, for the shell, the MCP server and folder-backed media
+  on the real file system: `zxcradled` runs in Node, each instance runs in a
+  `worker_threads` Worker, and Cradle Setup connects to it over a WebSocket.
+
 ### Core: `libzxcore`
 
-The existing code in `src/z80` and `src/zx`. Today it exposes the Spectrum
-family through `zx.h`. For ZX Cradle it grows one generic interface, `zxm.h`,
-that every machine module implements, so the runtime never includes a
-machine's own header:
+The existing C code in `src/z80` and `src/zx`, compiled to `zxcore.wasm`.
+Today it exposes the Spectrum family through `zx.h`. For ZX Cradle it grows
+one generic interface, `zxm.h`, that every machine module implements and
+that the WebAssembly module exports, so the JavaScript runtime never needs
+to know a machine's own structures:
 
 ```c
 typedef struct zxm zxm;                   /* opaque machine instance */
@@ -104,51 +120,52 @@ Rules the core keeps so the host can do what it needs:
   it moves into the runtime.)
 - **No I/O.** Media arrives as byte buffers or as callbacks (`zxm_media`
   carries read/write/seek for disks and SD cards); the core never opens a
-  file. This is what makes the WebAssembly build and folder-backed storage
-  possible.
-- **No allocation after create.** The caller allocates `zxm_size()` bytes.
-  Multi-megabyte machines (the Next's 2 MB RAM, an SD card's cache) still
-  come out of that one block.
+  file. The JavaScript runtime supplies these callbacks as WebAssembly
+  imports, which is what makes folder-backed storage possible.
+- **No allocation after create.** The caller allocates `zxm_size()` bytes
+  in the module's linear memory. Multi-megabyte machines (the Next's 2 MB
+  RAM, an SD card's cache) still come out of that one block, and the
+  runtime reads the framebuffer and audio buffer straight out of linear
+  memory without copying.
+- **No libc beyond freestanding.** The wasm build uses no Emscripten and no
+  WASI: `memcpy`, `memset` and friends come from a tiny bundled
+  implementation, so the module stays small (target: under 300 KB for all
+  Spectrum models) and loads the same in browsers and Node.
 - **Deterministic.** Same state, same inputs at the same T-states, same
   output, on every host. Inputs are timestamped in T-states, so a recorded
   session (`.zxcr`, see [manifests.md](manifests.md)) replays exactly.
 
-### Runtime: `zxc-run`
+### Runtime
 
-One process per running instance. It reads the instance manifest, loads the
-ROM set, creates the machine, inserts the media, and then paces frames
-against the host clock (50.08 Hz for a 48K, 50.02 Hz for a 128K, the
-machine's own rate for the others), with audio as the master clock when
-sound is on. It owns:
+One Worker per running instance (a Web Worker in the browser, a
+`worker_threads` Worker in Node). It loads `zxcore.wasm`, reads the instance
+manifest, loads the ROM set, creates the machine, inserts the media, and
+paces frames against the host clock (50.08 Hz for a 48K, 50.02 Hz for a
+128K, the machine's own rate for the others), with audio as the master clock
+when sound is on. It owns:
 
-- the video and audio output (SDL2 window, Amiga screen, a canvas in the
-  browser, or nothing when headless),
-- the input mapping from host keys, pads and mice to the machine's inputs,
-- media I/O: reading tape and disk files, writing back disk changes, and the
-  folder-backed SD card,
-- the control channel: ZCP commands from the host on stdin, events and
-  replies on stdout.
+- video and audio: frames go to an `OffscreenCanvas` transferred from the
+  page, audio to an `AudioWorklet` through a `SharedArrayBuffer` ring
+  buffer; headless instances (under Node, or hidden in the UI) skip both,
+- the input mapping from keys, pads and mice to the machine's inputs,
+- media I/O: the block, sector and stream callbacks the core imports,
+  backed by image files or by the folder-backed file systems in
+  [storage.md](storage.md),
+- the control channel: ZCP messages from the host over `postMessage`.
 
-Running each instance in its own process keeps a crash in one machine from
-taking down the others and lets the host kill and restart a runtime cleanly.
-On AmigaOS, where processes are cheap and share memory, the runtime is a
-task started by the host, with the same message protocol over a message port.
-
-**WebAssembly.** The core and runtime compile with clang to `wasm32` with no
-Emscripten runtime dependency beyond what the web front end needs. The
-module exports the ZCP entry points; the page feeds it frames through
-`requestAnimationFrame` and an `AudioWorklet`, and stores instance folders in
-the browser's Origin Private File System, with import and export as a zip.
+A Worker per instance keeps a hung machine from freezing the others or the
+UI, and lets the host terminate and restart an instance cleanly.
 
 ### Host: `zxcradled`
 
-A small C service, one per user, started on demand by the first client. It
-keeps the instance registry and is the only thing that writes to instance
+A JavaScript module, one per user. Under Node it is a small service started
+on demand by the first client; in a browser-only setup the page runs it
+itself. It keeps the instance registry and is the only thing that writes to instance
 folders other than the runtimes themselves.
 
 | Job | How |
 | --- | --- |
-| Registry | Scans `$ZXCRADLE_HOME/instances/*/instance.toml` (default `~/.zxcradle`). The folder is the source of truth; the host keeps no database. |
+| Registry | Scans `$ZXCRADLE_HOME/instances/*/instance.toml` (default `~/.zxcradle` under Node; the chosen folder or OPFS in the browser). The folder is the source of truth; the host keeps no database. |
 | Lifecycle | `create`, `start`, `pause`, `resume`, `stop`, `restart`, `destroy`. States: `stopped`, `starting`, `running`, `paused`, `stopping`, `failed`. |
 | Verified restart | Restart, then watch for the machine's boot check (see below) within a time limit. If the check fails, the instance goes to `failed` and the previous state is kept for a field report. |
 | Media changer | Keeps the instance's `media/` folder and slot assignments; inserting media while running sends it to the runtime. |
@@ -166,9 +183,10 @@ instance can override it, for a machine that autoboots straight into a game.
 ### Control protocol: ZCP
 
 Clients talk to the host, and the host talks to runtimes, in one protocol:
-JSON objects, one per line, over a Unix domain socket
-(`$ZXCRADLE_HOME/zxcradled.sock`), a named pipe on Windows, an Exec message
-port on AmigaOS, or a WebSocket for the browser.
+JSON messages. Between the host and its runtimes they travel over
+`postMessage`; between Node and its clients, over a WebSocket on
+`127.0.0.1` (Cradle Setup) or as JSON lines on stdio (the shell and the MCP
+server can also run the host in-process).
 
 ```json
 {"id":7,"op":"media.insert","instance":"jetpac-48","slot":"tape","file":"jetpac.tzx"}
@@ -184,25 +202,26 @@ the reply carries the path, so the protocol stays line based.
 
 ### Clients
 
-- **Cradle Setup.** The web UI, served by the host on `localhost` and also
-  shipped as a static page with the WebAssembly runtime built in. A grid of
+- **Cradle Setup.** The web UI: plain JavaScript and CSS using the tokens
+  and components in `tokens/`, served by the Node host on `localhost` or
+  opened as a static page that runs the host itself. A grid of
   instance cards, a machine catalogue for creating instances, and per
   instance: the live screen, the media changer, snapshots, the patch queue,
   logs and the debugger. Styled by [style-guide.md](style-guide.md).
-- **ZXC shell.** `zxc`, a command line tool and an interactive shell with a
-  Spectrum-flavoured prompt. See [zxc-shell.md](zxc-shell.md).
-- **MCP server.** `zxc mcp`, a Model Context Protocol server over stdio, so
+- **ZXC shell.** `zxc`, a Node.js command line tool and an interactive shell
+  with a Spectrum-flavoured prompt. See [zxc-shell.md](zxc-shell.md).
+- **MCP server.** `zxc mcp`, a Node.js Model Context Protocol server over stdio, so
   an AI agent can create instances, load software, type, take screenshots,
   read memory and file field reports. See [mcp.md](mcp.md).
-- **Front ends.** The existing headless `zxrun` and the SDL2 and Amiga front
-  ends stay as single-machine programs for people who want just an emulator.
-  They become thin wrappers around the runtime.
+- **Not used by ZX Cradle.** The emulator's own native front ends (`zxrun`,
+  SDL2, Amiga) stay in this repository as standalone emulators for people
+  who want just that. ZX Cradle neither builds nor depends on them.
 
 ## Instance folder
 
 ```
 ~/.zxcradle/
-  zxcradled.sock
+  token                WebSocket token (Node host)
   machines/            user-added machine manifests (built-in ones are compiled in)
   library/             media shared between instances: the NextZXOS card, esxDOS, system disks
   roms/                shared ROM sets, by machine id
@@ -230,9 +249,10 @@ per-instance overlays. All of this is in [storage.md](storage.md).
 
 ## Security
 
-- The host listens only on a local socket or `127.0.0.1`, never on a public
-  address. The WebSocket requires a token from `$ZXCRADLE_HOME/token`, which
-  only the user can read.
+- The Node host listens only on `127.0.0.1`, never on a public address, and
+  the WebSocket requires the token in `$ZXCRADLE_HOME/token`, which only the
+  user can read. In the browser, everything stays inside the page's origin
+  and the folders the user grants.
 - Instance names are restricted to `[a-z0-9-]{1,40}` and every file path in
   a request is resolved inside the instance folder; `..` and absolute paths
   are refused.
@@ -247,17 +267,18 @@ per-instance overlays. All of this is in [storage.md](storage.md).
 | Phase | Delivers |
 | --- | --- |
 | 0 | The core: Z80/Z80N, classic Spectrums, tape, snapshots (in progress, PR #1). Spectrum Next machine. |
-| 1 | `zxm.h` interface, full state save/load, `zxc-run` with SDL2, the instance folder, `zxc` without a host (runs one instance in the foreground). |
-| 2 | `zxcradled`, ZCP, lifecycle, media changer, snapshots, field reports, the MCP server. |
-| 3 | Cradle Setup web UI, WebAssembly runtime, patch queue, verified restart. |
+| 1 | `zxm.h` interface, full state save/load, the `zxcore.wasm` build, the JavaScript runtime in a browser page running one instance. |
+| 2 | Host, ZCP, instance folders (OPFS and File System Access), media changer, folder-backed SD card, snapshots, Cradle Setup. |
+| 3 | The Node host, the `zxc` shell, the MCP server, field reports, patch queue, verified restart. |
 | 4 | Machines beyond the Spectrum family, in the order in [machines.md](machines.md). |
 
 ## Open questions
 
-- Should the host be optional for good? Running `zxc run jetpac-48` without a
-  service is simpler for one machine; a service is needed only for several
-  machines and for the MCP server's event stream. The design above allows
-  both.
+- Does the WebAssembly core keep up? A 3.5 MHz Spectrum stepped per
+  T-state is cheap, but a 28 MHz Next is not; measure early, and if a
+  browser cannot hold 50 Hz, look at the core's hot loop before any native
+  fallback.
+- When, if ever, native builds of Cradle come back. Not for now.
 - Which input recording granularity keeps files small enough to attach to
   every field report: every T-state change, or per frame with T-state
   offsets? Per frame with offsets is the current proposal.

@@ -159,9 +159,16 @@ manifests.
 
 ## In the core
 
-The core never sees a folder. Every medium reaches it through `zxm_media`
-as a block device (SD, IDE), a sector device (disk, Beta, Microdrive) or a
-byte stream (tape, cartridge). The runtime implements those over an image
-file, over a folder (with the file system built in memory), or over browser
-storage in the WebAssembly build, which keeps the same folder layout in the
-Origin Private File System.
+The core never sees a folder. Every medium reaches the WebAssembly module
+through `zxm_media` imports as a block device (SD, IDE), a sector device
+(disk, Beta, Microdrive) or a byte stream (tape, cartridge). The JavaScript
+runtime implements those over an image file or over a folder, with the
+folder's file system built in memory:
+
+- **Under Node.js**, folders are real folders under `~/.zxcradle/`, read and
+  written with `node:fs`; `medium.lock` is a lock file.
+- **In the browser**, folders are in the Origin Private File System, or in a
+  real folder on disk the user grants through the File System Access API
+  (Chromium browsers). The lock is a Web Lock named after the medium.
+  Writes from the Worker use synchronous OPFS access handles, so a guest
+  write is on disk before the next frame.
