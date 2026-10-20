@@ -1,0 +1,215 @@
+@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;600&display=swap");
+
+/*
+ * ZX Cradle components. Needs the tokens in zxcradle.css.
+ * See ../style-guide.md for when to use each one.
+ */
+
+/* Stripe: four bands at 60 degrees, red, yellow, green, cyan. */
+.zxc-stripe {
+  display: block;
+  width: 96px;
+  height: 32px;
+  background: linear-gradient(120deg,
+    transparent 0 20%,
+    var(--zxc-stripe-red) 20% 40%,
+    var(--zxc-stripe-yellow) 40% 60%,
+    var(--zxc-stripe-green) 60% 80%,
+    var(--zxc-stripe-cyan) 80% 100%);
+}
+
+/* Wordmark */
+.zxc-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--zxc-space-3);
+  font: 600 var(--zxc-size-xl)/1 var(--zxc-font-display);
+  color: var(--zxc-fg);
+}
+.zxc-wordmark span { color: var(--zxc-muted); }
+
+/* Buttons: 32px tall, four character cells. */
+.zxc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--zxc-space-2);
+  height: 32px;
+  padding: 0 var(--zxc-space-3);
+  border: 1px solid var(--zxc-line);
+  border-radius: var(--zxc-radius);
+  background: var(--zxc-surface-2);
+  color: var(--zxc-fg);
+  font: 600 var(--zxc-size-sm)/1 var(--zxc-font-body);
+  cursor: pointer;
+}
+.zxc-btn:hover { border-color: var(--zxc-muted); }
+.zxc-btn:focus-visible,
+.zxc-key:focus-visible {
+  outline: 2px solid var(--zxc-focus);
+  outline-offset: 2px;
+}
+.zxc-btn--primary {
+  background: var(--zxc-accent);
+  border-color: var(--zxc-accent);
+  color: var(--zxc-on-accent);
+}
+.zxc-btn--danger {
+  background: transparent;
+  border-color: var(--zxc-danger);
+  color: var(--zxc-danger);
+}
+.zxc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* State chip: letter in an outlined square, then the word. */
+.zxc-chip {
+  --c: var(--zxc-state-stopped);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--zxc-space-2);
+  height: 24px;
+  padding: 0 var(--zxc-space-2) 0 var(--zxc-space-1);
+  border: 1px solid var(--zxc-line);
+  border-radius: var(--zxc-radius);
+  background: var(--zxc-surface);
+  color: var(--zxc-fg);
+  font: 400 var(--zxc-size-xs)/1 var(--zxc-font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.zxc-chip b {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--c);
+  border-radius: var(--zxc-radius);
+  color: var(--c);
+  font: 600 11px/1 var(--zxc-font-mono);
+  letter-spacing: 0;
+}
+.zxc-chip--running  { --c: var(--zxc-state-running); }
+.zxc-chip--paused   { --c: var(--zxc-state-paused); }
+.zxc-chip--starting { --c: var(--zxc-state-starting); }
+.zxc-chip--failed   { --c: var(--zxc-state-failed); }
+.zxc-chip--failed b { animation: zxc-flash var(--zxc-flash-period) steps(1) infinite; }
+
+/* FLASH: ink and paper swap, 0.64 s each way. */
+@keyframes zxc-flash {
+  50% { background: var(--c); color: var(--zxc-bg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zxc-chip--failed b { animation: none; background: var(--c); color: var(--zxc-bg); }
+}
+
+/* Keycap, after the 48K's rubber keys. */
+.zxc-key {
+  display: inline-grid;
+  grid-template-rows: auto auto auto;
+  justify-items: center;
+  gap: 2px;
+  font-family: var(--zxc-font-body);
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.zxc-key__above { color: var(--zxc-text-green); }
+.zxc-key__below { color: var(--zxc-text-red); }
+.zxc-key__cap {
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  height: 32px;
+  padding: 0 var(--zxc-space-1);
+  border-radius: var(--zxc-radius-key);
+  background: var(--zxc-key);
+  color: #FFFFFF; /* white legend on the fixed key grey: 5.9:1 */
+  font: 600 var(--zxc-size-sm)/1 var(--zxc-font-body);
+  text-transform: none;
+}
+.zxc-key__cap small {
+  display: block;
+  font: 400 8px/1 var(--zxc-font-body);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.zxc-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--zxc-space-1);
+  border-radius: var(--zxc-radius-key);
+  background: var(--zxc-key);
+  color: #FFFFFF;
+  font: 600 var(--zxc-size-xs)/1 var(--zxc-font-mono);
+}
+
+/* Panels and the instance card. */
+.zxc-panel {
+  border: 1px solid var(--zxc-line);
+  border-radius: var(--zxc-radius);
+  background: var(--zxc-surface);
+}
+.zxc-card {
+  display: grid;
+  gap: var(--zxc-space-2);
+  width: 320px;
+  max-width: 100%;
+  padding-bottom: var(--zxc-space-3);
+  border: 1px solid var(--zxc-line);
+  border-radius: var(--zxc-radius);
+  background: var(--zxc-surface);
+  color: var(--zxc-fg);
+  font: 400 var(--zxc-size-sm)/1.4 var(--zxc-font-body);
+}
+.zxc-card__screen {
+  display: block;
+  width: 100%;
+  aspect-ratio: 5 / 4;
+  image-rendering: pixelated;
+  border-bottom: 1px solid var(--zxc-line);
+}
+.zxc-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--zxc-space-2);
+  padding: 0 var(--zxc-space-3);
+}
+.zxc-card__name { font: 500 var(--zxc-size-md)/1.2 var(--zxc-font-mono); }
+.zxc-card__machine { color: var(--zxc-muted); }
+
+/* Media slot row. */
+.zxc-slot {
+  display: grid;
+  grid-template-columns: 16px 64px 1fr auto;
+  align-items: center;
+  gap: var(--zxc-space-2);
+  min-height: 40px;
+  padding: 0 var(--zxc-space-3);
+  border-top: 1px solid var(--zxc-line);
+  color: var(--zxc-fg);
+  font: 400 var(--zxc-size-sm)/1.3 var(--zxc-font-body);
+}
+.zxc-slot svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: square; }
+.zxc-slot__id { color: var(--zxc-muted); font-family: var(--zxc-font-mono); }
+.zxc-slot__file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--zxc-font-mono); }
+.zxc-slot--empty .zxc-slot__file { color: var(--zxc-muted); font-family: var(--zxc-font-body); }
+
+/* Shell transcript. Always dark: a terminal is a terminal. */
+.zxc-shell {
+  margin: 0;
+  padding: var(--zxc-space-3);
+  border-radius: var(--zxc-radius);
+  background: #0E0F11;
+  color: #E9EBEE;
+  font: 400 var(--zxc-size-sm)/1.45 var(--zxc-font-mono);
+  overflow-x: auto;
+  white-space: pre;
+}
+.zxc-shell .p   { color: #F7C51E; }  /* prompt K> */
+.zxc-shell .i   { color: #3FB2E8; }  /* instance names */
+.zxc-shell .ok  { color: #4CC266; }
+.zxc-shell .err { color: #FF5A52; }
+.zxc-shell .dim { color: #9AA3AD; }
