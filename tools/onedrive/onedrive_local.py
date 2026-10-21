@@ -328,7 +328,7 @@ def main():
         say(f'{len(failed)} files could not be downloaded; run this again to retry them.')
     if not recs:
         say('No records file found, so the files are downloaded but not filed into the library.')
-        sys.exit(1 if failed else 0)
+        sys.exit(3 if failed else 0)
     logp = os.path.join(dest, '_onedrive', 'filed.json')
     done = json.load(open(logp)) if os.path.exists(logp) else {}
     index_library(lib)
@@ -347,7 +347,7 @@ def main():
     say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing, '
         f'{c["unsupported"]} with no file the player can load.')
     if failed:
-        sys.exit(1)
+        sys.exit(3)  # 3, not 1, so a caller can tell failed downloads from a bad link
 
 if __name__ == '__main__':
     main()
