@@ -89,7 +89,8 @@ MAX_REL = int(os.environ.get('MAX_RELEASES') or 0)
 TODAY = datetime.date.today().isoformat()
 UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 LOCK = threading.Lock()
-LOG = open(os.path.join(LIB, 'fetch.log'), 'a', encoding='utf-8')
+LOG = open(os.path.join(LIB, 'fetch.log'), 'a', encoding='utf-8', errors='backslashreplace')
+sys.stdout.reconfigure(errors='backslashreplace')
 
 FAM48 = ['zx48', 'zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 FAM128 = ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
@@ -121,7 +122,7 @@ def fixurl(u):
     return urllib.parse.quote(u, safe=":/?=&%;#,+@!$'()*~[]")
 
 
-def fetch(url, data=None, headers=None, tries=5, timeout=180, opener=None):
+def fetch(url, data=None, headers=None, tries=5, timeout=180, opener=None, wait429=True):
     h = {'User-Agent': UA}
     h.update(headers or {})
     err = None
@@ -134,6 +135,12 @@ def fetch(url, data=None, headers=None, tries=5, timeout=180, opener=None):
             err = e
             if e.code in (400, 401, 403, 404, 410):
                 break
+            if e.code == 429 and not wait429:
+                break
+            if e.code == 429:   # rate limited (pouet.net): wait as asked, at least 30 s
+                ra = e.headers.get('Retry-After') or ''
+                time.sleep(min(300, int(ra)) if ra.isdigit() else 30 * (i + 1))
+                continue
         except Exception as e:
             err = e
         time.sleep(2 * (i + 1))
@@ -389,8 +396,25 @@ def get_files(tdir, url, name, charset=None, sub=None):
     out = []
     for root, _, fs in os.walk(dest):
         for f in sorted(fs):
-            out.append(os.path.relpath(os.path.join(root, f), tdir))
+            clean = clean_name(f)
+            if clean != f:   # undecodable bytes from an archive (7z/unar): give it a plain UTF-8 name
+                os.replace(os.path.join(root, f), os.path.join(root, clean))
+            out.append(os.path.relpath(os.path.join(root, clean), tdir))
     return sorted(out)
+
+
+def clean_name(f):
+    try:
+        f.encode('utf-8')
+        return f
+    except UnicodeEncodeError:
+        b = os.fsencode(f)
+        for cs in ('cp866', 'cp1251', 'cp437'):
+            try:
+                return safe_name(b.decode(cs))
+            except UnicodeDecodeError:
+                pass
+        return safe_name(b.decode('utf-8', 'replace').replace('\ufffd', '_'))
 
 
 def get_screens(tdir, urls, captions=None, limit=3):
@@ -1204,12 +1228,15 @@ POUET_KIND = {'demo': 'demo', 'intro': 'demo', '4k': 'demo', '1k': 'demo', '256b
               'slideshow': 'demo', 'artpack': 'demo', 'diskmag': 'application', 'game': 'game', 'cracktro': 'demo',
               'invitation': 'demo', 'report': 'demo', 'wild': 'demo', 'votedisk': 'demo', 'fastdemo': 'demo', 'bbstro': 'demo'}
 POUET_CACHE = {}
+POUET_LOCK = threading.Lock()
 
 
 def pouet_prod(pid):
     """The pouet prod with its comments (one API call), cached for the reviews pass."""
     if pid not in POUET_CACHE:
-        POUET_CACHE[pid] = json.loads(fetch(f'https://api.pouet.net/v1/prod/comments/?id={pid}'))['prod']
+        with POUET_LOCK:   # pouet.net rate-limits: one request at a time, a second apart
+            time.sleep(1)
+            POUET_CACHE[pid] = json.loads(fetch(f'https://api.pouet.net/v1/prod/comments/?id={pid}'))['prod']
     return POUET_CACHE[pid]
 
 
@@ -1252,6 +1279,7 @@ def demos(lib):
             ids, page = set(), 1
             while True:
                 try:
+                    time.sleep(1)
                     pg = fetch('https://www.pouet.net/prodlist.php?' + urllib.parse.urlencode({'platform[]': plat, 'page': page})).decode('utf-8', 'replace')
                 except Exception as e:
                     say(f'  pouet.net {plat} page {page}: {e}')
@@ -1325,6 +1353,10 @@ SC = 'https://spectrumcomputing.co.uk'
 REVIEWS_DAYS = int(os.environ.get('REVIEWS_DAYS') or 30)
 
 
+TR_LOCK = threading.Lock()
+TR_PAUSE = [0.0]
+
+
 def translate(text):
     """Returns (english, source language). Uses Google's free translate endpoint; on failure keeps the text."""
     if not text or not text.strip():
@@ -1349,8 +1381,17 @@ def translate(text):
     try:
         for c in chunks:
             q = urllib.parse.urlencode({'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't', 'q': c})
-            j = json.loads(fetch('https://translate.googleapis.com/translate_a/single', data=q.encode(),
-                                 headers={'Content-Type': 'application/x-www-form-urlencoded'}, tries=3))
+            with TR_LOCK:   # one translation at a time, spaced out; a 429 skips translating for 10 minutes
+                if time.time() < TR_PAUSE[0]:
+                    raise RuntimeError('translation paused after a 429')
+                time.sleep(0.5)
+                try:
+                    j = json.loads(fetch('https://translate.googleapis.com/translate_a/single', data=q.encode(),
+                                         headers={'Content-Type': 'application/x-www-form-urlencoded'}, tries=2, wait429=False))
+                except RuntimeError as e:
+                    if '429' in str(e):
+                        TR_PAUSE[0] = time.time() + 600
+                    raise
             out.append(''.join(seg[0] for seg in j[0] if seg and seg[0]))
             lang = lang or j[2]
         return ''.join(out).strip(), lang
@@ -1366,7 +1407,9 @@ def english(text, lang=None):
     if lang == 'en':
         return {'language': 'en', 'text': text, 'original': None, 'translated': False}
     tr, src = translate(text)
-    if not src or src == 'en' or tr == text:
+    if not src:   # translation failed: keep the text, and mark the file so the next run tries again
+        return {'language': lang, 'text': text, 'original': None, 'translated': False, '_pending': True}
+    if src == 'en' or tr == text:
         return {'language': src or lang, 'text': text, 'original': None, 'translated': False}
     return {'language': src, 'text': tr, 'original': text, 'translated': True}
 
@@ -1498,7 +1541,12 @@ def reviews(lib):
             continue
         rf = os.path.join(d, 'reviews.json')
         if os.path.exists(rf) and time.time() - os.path.getmtime(rf) < REVIEWS_DAYS * 86400:
-            continue
+            try:
+                fresh = not json.load(open(rf, encoding='utf-8')).get('pending_translation')
+            except Exception:
+                fresh = False
+            if fresh:
+                continue
         todo.append((t, ids))
     say(f'Ratings and reviews: {len(todo)} titles to check')
     prods, lost = {}, set()
@@ -1539,6 +1587,8 @@ def reviews(lib):
             revs += b
             fill_party(t, pouet_prod(ids['pouet']))
         out = {'format': 1, 'title': t, 'updated': TODAY, 'ratings': ratings, 'reviews': revs}
+        if [r for r in revs if r.pop('_pending', False)]:
+            out['pending_translation'] = True
         rf = os.path.join(TITLES, t, 'reviews.json')
         with open(rf + '.part', 'w', encoding='utf-8') as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
