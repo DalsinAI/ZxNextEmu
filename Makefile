@@ -19,7 +19,7 @@ ZXM_SRC  = src/core/zxm.c
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
-.PHONY: all desktop test sst vfat esp nextpi ulaplus state wasm wasmtest clean
+.PHONY: all desktop test sst vfat esp nextpi ulaplus state wasm wasmtest web serve clean
 
 all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
 
@@ -110,3 +110,17 @@ wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm roms $$mc 300 'print 2+2\n') || exit 1; \
 	    if [ "$$a" = "$$b" ]; then echo "$$b (native and wasm agree)"; \
 	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; done
+
+# ---- The browser runtime: build/web is a static site (open it through any
+# web server; `make serve` uses port 7081, ZX Cradle's dev port). ----------
+WEB_FILES = web/index.html web/app.js web/app.css web/worker.js web/audio.js
+
+web: $(BUILD)/zxcore.wasm $(WEB_FILES)
+	mkdir -p $(BUILD)/web/cradle
+	cp $(WEB_FILES) $(BUILD)/zxcore.wasm $(BUILD)/web/
+	cp docs/cradle/tokens/zxcradle.css docs/cradle/tokens/components.css $(BUILD)/web/cradle/
+	python3 -c 'import base64,glob,json,os,sys; json.dump({os.path.basename(f): base64.b64encode(open(f,"rb").read()).decode() for f in sorted(glob.glob("roms/*.rom"))}, sys.stdout)' > $(BUILD)/web/roms.json
+
+serve: web
+	@echo "ZX Cradle: http://localhost:7081/"
+	cd $(BUILD)/web && python3 -m http.server 7081
