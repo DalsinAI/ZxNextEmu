@@ -67,6 +67,10 @@ def cmd_trace(a):
     exe = os.path.join(ROOT, "build", "s256trace")
     subprocess.check_call(["make", "-s", "-C", ROOT, "build/s256trace"])  # make rebuilds it only when a source changed
     os.makedirs(a.work, exist_ok=True)
+    # A new trace makes the old sprites and plan wrong, so sheet has to run again.
+    for f in ("sprites.json", "plan.json", "snapshot.sha256"):
+        if os.path.exists(os.path.join(a.work, f)):
+            os.remove(os.path.join(a.work, f))
     subprocess.check_call([exe, "-r", a.roms, "-f", str(a.frames), "-k", str(a.seed),
                            "-s", str(a.frames // 3), a.snapshot, a.work])
     with open(os.path.join(a.work, "snapshot.sha256"), "w") as f:
@@ -421,9 +425,11 @@ def cmd_emit(a):
     # zxrun -g loads every Spectrum or Spec256 file in the folder, so clear out an earlier package first.
     for f in os.listdir(a.out):
         old = os.path.join(a.out, f)
-        if re.search(r"\.(sna|z80|gf[x0-9ab]|b00|cfg|pal)$", f, re.I) and not os.path.samefile(old, a.snapshot):
+        if re.search(r"\.(sna|z80|gf[x0-9ab]|b\d\d|cfg|pal)$", f, re.I) and not os.path.samefile(old, a.snapshot):
             os.remove(old)
-    shutil.copyfile(a.snapshot, os.path.join(a.out, name + ".SNA"))
+    dst = os.path.join(a.out, name + ".SNA")
+    if not (os.path.exists(dst) and os.path.samefile(dst, a.snapshot)):
+        shutil.copyfile(a.snapshot, dst)
 
     def page(base):
         buf = bytearray(0x4000 * 8)
@@ -441,7 +447,9 @@ def cmd_emit(a):
         with open(gfb, "wb") as f:
             f.write(page(0))
     with open(os.path.join(a.out, name + ".CFG"), "w") as f:
-        f.write("UpColorsMixed=8\r\n")
+        # Uncoloured bytes are 0 and 0xFF, drawn in the attribute's paper and ink, even for the
+        # games the player otherwise draws plainly by name.
+        f.write("UpColorsMixed=8\r\nPaper00InkFF=1\r\n")
     print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX")
 
 

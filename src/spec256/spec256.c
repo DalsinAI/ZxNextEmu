@@ -273,11 +273,12 @@ static void traced(s256 *s)
         uint8_t v;
         pl += (a & 0x3fff) * 8;
         v = zx_peek(s->m, a);
-        /* A constant reaches every plane alike, so planes 0 and 1 both equal
-           the byte; that is no tag (and a real source at 0xVVVV holding V
-           cannot be told from it, so it is dropped too). */
-        s->trace(s->trace_user, a, v, pl[0] == v && pl[1] == v ? 0 : (uint16_t)(pl[0] | pl[1] << 8));
-        pl[0] = pl[1] = 0;
+        /* Planes 2 and 3 carry the tag's complement. A byte moved from its
+           source keeps that pairing; a constant (every plane alike) or an ALU
+           mix of two tags almost never does, so those are no tag. */
+        s->trace(s->trace_user, a, v, pl[2] == (uint8_t)~pl[0] && pl[3] == (uint8_t)~pl[1]
+                 ? (uint16_t)(pl[0] | pl[1] << 8) : 0);
+        pl[0] = pl[1] = pl[2] = pl[3] = 0;
     }
 }
 
@@ -396,7 +397,7 @@ void s256_render(s256 *s)
                 int bit = 7 - x, ci = 0, draw = 1;
                 const uint8_t *src;
                 uint8_t rgb[3];
-                /* While tracing, planes 0 and 1 carry address tags, so the
+                /* While tracing, planes 0 to 3 carry address tags, so the
                    picture comes from the plain Spectrum byte instead. */
                 if (s->trace)
                     ci = (orig >> bit & 1) ? 0xff : 0;
@@ -786,6 +787,8 @@ void s256_trace(s256 *s, s256_trace_fn fn, void *user)
             int blank = a >= 0x4000 && a < 0x5800;
             pl[i * 8] = blank ? 0 : (uint8_t)a;
             pl[i * 8 + 1] = blank ? 0 : (uint8_t)(a >> 8);
+            pl[i * 8 + 2] = blank ? 0 : (uint8_t)~a;
+            pl[i * 8 + 3] = blank ? 0 : (uint8_t)(~a >> 8);
         }
     }
 }
