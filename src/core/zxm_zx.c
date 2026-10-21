@@ -194,6 +194,10 @@ static int attach(zxm *b, const char *id, const zxm_rom_set *roms)
     const zxm_interface *f = zxm_interface_lookup(id);
     if (!f || m->iface || !roms || !roms->rom[0])
         return -1;
+    /* the Spec256 draws its own picture, which has no room for the MB03+'s
+     * 640-wide one */
+    if (m->s256 && (interface_features[f - interfaces] & ZX_EXP_TIMEX))
+        return -1;
     if (zx_exp_attach(&m->m, interface_features[f - interfaces], roms->rom[0], roms->len[0]))
         return -1;
     /* the MB03+'s General Sound, when its ROM is there */

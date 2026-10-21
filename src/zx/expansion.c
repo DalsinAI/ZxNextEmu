@@ -627,9 +627,11 @@ static void giga_frame(zx *m)
 {
     zx_exp *e = m->exp;
     uint8_t mode = giga_mode(e), buf = (uint8_t)(m->screen_page << 1 | (e->port_ff & 1));
-    uint16_t *pic = m->wide && e->own_wide ? m->wide : &m->screen[0][0];
     size_t i, n = (size_t)m->pitch * ZX_SCREEN_H;
+    uint16_t *pic = e->own_wide ? m->wide : &m->screen[0][0];
     int mix;
+    if (m->wide && !e->own_wide)
+        return;                  /* the ATM draws its own picture */
     e->giga_flips = buf != e->giga_buf ? (uint8_t)(e->giga_flips < 2 ? e->giga_flips + 1 : 2) : 0;
     e->giga_buf = buf;
     mix = mode == 2 || (mode == 3 && e->giga_flips >= 2);
