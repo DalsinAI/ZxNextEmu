@@ -335,6 +335,7 @@ export async function showDetail(id) {
       ${(r.needs || []).length ? `<small>Needs ${esc(r.needs.map(needWord).join(', '))}</small>` : ''}
       ${known.length ? `<small class="det-known">${esc(known.join(' · '))}</small>` : ''}</div>
       ${insideSymbos(r) ? '<small class="det-later">Runs inside SymbOS: copy it onto a set-up that boots SymbOS</small>'
+        : !paths.length ? `<small class="det-later">${esc(r.notes || 'Nothing to load directly; see the files')}</small>`
         : missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
         : ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
         <button class="zxc-btn zxc-btn--primary small" data-play="${i}">Run</button>
@@ -580,10 +581,12 @@ export async function queueShots() {
 // 48K), try the next kind of machine, and list the one that worked first.
 async function takeShots(t) {
   // A run that needs SymbOS cannot start on a bare machine, so it gets no automatic shots.
-  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !insideSymbos(r) && !runParts(t, r).missing.length);
-  const fresh0 = () => titleGet(t.id);
+  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !insideSymbos(r)
+    && !runParts(t, r).missing.length && runParts(t, r).parts.length);
   if (!run) {
-    const f = await fresh0();
+    // Nothing to shoot: drop it from the queue here too, or queueShots would pick it again at once.
+    t.needsShots = false;
+    const f = await titleGet(t.id);
     if (f) { f.needsShots = false; await titlePut(f); }
     return;
   }
@@ -596,6 +599,7 @@ async function takeShots(t) {
     const r = await shootOn(machine, parts, t.id);
     if (r.loaded && r.keep.length) { keep = r.keep; worked = machine; break; }
   }
+  t.needsShots = false;
   const fresh = await titleGet(t.id);
   if (!fresh) return;
   if (worked && worked !== run.machines[0]) {
