@@ -13,5 +13,14 @@ emulator's `roms/` directory.
 | `plus2-0.rom`, `plus2-1.rom` | +2 (grey) |
 | `plus3-0.rom` ... `plus3-3.rom` | +2A / +3 |
 
+`samcoupe.rom` is the SAM Coupé's ROM 3.0 (32K: ROM 0 then ROM 1),
+copyright Miles Gordon Technology. Dr Andy Wright, its author, gave
+permission for the SAM ROMs to be distributed; this copy comes from
+SimCoupé's resources, which ship it on that basis.
+
+| File | Machine |
+| --- | --- |
+| `samcoupe.rom` | SAM Coupé (ROM 3.0) |
+
 The Spectrum Next's NextZXOS and TBBlue firmware are not stored here; they
 come from the official distribution SD image (see the top-level README).

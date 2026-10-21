@@ -15,6 +15,7 @@ to another instance.
 | `ide` | divIDE, +3e, ZXATASP | `ide.0`, `ide.1` | `.hdf`, `.img` | FAT32 or +3DOS partition |
 | `microdrive` | Interface 1 (up to 8 drives) | `md.1` to `md.8` | `.mdr` | Microdrive cartridge, built on the fly |
 | `disk` | +3, +2A with drive, CPC | `disk.a`, `disk.b` | `.dsk` (standard and extended) | +3DOS / AMSDOS (CP/M 2.2 layout) |
+| `disk` | SAM Coupé | `disk.1`, `disk.2` | `.mgt`, `.sad`, `.dsk` (raw, standard and extended) | SAMDOS / MasterDOS (to come) |
 | `beta` | Pentagon, Scorpion, Beta 128 | `beta.a` to `beta.d` | `.trd`, `.scl` | TR-DOS |
 | `tape` | every Spectrum, ZX81, CPC, MSX | `tape` | `.tap`, `.tzx`, `.pzx`, `.wav`, `.p`, `.cdt`, `.cas` | a playlist of files, in name order |
 | `cart` | Interface 2, Timex, CPC Plus, MSX, consoles | `cart` | `.rom`, `.dck`, `.cpr` | not folder-backed: a cartridge is one image |
