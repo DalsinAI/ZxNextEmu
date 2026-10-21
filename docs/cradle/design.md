@@ -167,8 +167,8 @@ instance can override it, for a machine that autoboots straight into a game.
 
 Clients talk to the host, and the host talks to runtimes, in one protocol:
 JSON messages. Between the host and its runtimes they travel over
-`postMessage`; between Node and its clients, over a WebSocket on
-`127.0.0.1` (Cradle Setup) or as JSON lines on stdio (the shell and the MCP
+`postMessage`; between Node and its clients, over a WebSocket at
+`ws://127.0.0.1:7080/zcp` (Cradle Setup) or as JSON lines on stdio (the shell and the MCP
 server can also run the host in-process).
 
 ```json
@@ -186,7 +186,7 @@ the reply carries the path, so the protocol stays line based.
 ### Clients
 
 - **Cradle Setup.** The web UI: plain JavaScript and CSS using the tokens
-  and components in `tokens/`, served by the Node host on `localhost` or
+  and components in `tokens/`, served by the Node host at `http://127.0.0.1:7080/` or
   opened as a static page that runs the host itself. A grid of
   instance cards, a machine catalogue for creating instances, and per
   instance: the live screen, the media changer, snapshots, the patch queue,
@@ -229,6 +229,23 @@ of its own with a `medium.toml`, backed either by an image file or by plain
 host files that the runtime presents as the machine's file system. Shared
 masters such as the NextZXOS card live in the library and are used through
 per-instance overlays. All of this is in [storage.md](storage.md).
+
+## Ports
+
+Every ZX Cradle port is in the 7000 range, so it never collides with Amiga
+Cradle (amigachrome) running on the same computer (Dale, 2026-10-20). All of
+them listen on `127.0.0.1` only.
+
+| Port | What |
+| --- | --- |
+| 7080 | The Node host: Cradle Setup over HTTP, and ZCP over a WebSocket at `/zcp` |
+| 7081 | Development server for the browser-only page (`zxc serve`) |
+| 7090 | The MCP server over HTTP, when started with `zxc mcp --http`; the default is stdio, with no port |
+| 7100 to 7199 | Per-instance ports, handed out in order and recorded in `instance.toml`: a debugger connection, a TCP bridge for an emulated serial port |
+
+If a port is taken, the host says which program has it and stops, rather
+than picking another port silently. `ZXCRADLE_PORT` moves the base port
+(7080, with the others moved by the same amount), still within 7000 to 7999.
 
 ## Security
 
