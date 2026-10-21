@@ -5,7 +5,7 @@
                                             a 48K .z80 works too
     bot.py sheet  work/                     group the graphics into sprites,
                                             draw work/sheet.png
-    bot.py ai     work/ --title "Jetpac"    ask Claude to plan the colours
+    bot.py ai     work/ --title "Jetpac"    ask the AI model to plan the colours
                                             (needs ANTHROPIC_API_KEY)
     bot.py emit   work/ game.sna out/       write out/NAME.SNA, .GFX, .CFG
 
@@ -432,7 +432,7 @@ def cmd_ai(a):
         ] + [{"type": "text", "text": ai_prompt(a.title, sprites)}]}],
     )
     if response.stop_reason == "refusal":
-        sys.exit(f"Claude declined: {response.stop_details}")
+        sys.exit(f"The model declined: {response.stop_details}")
     if response.stop_reason == "max_tokens":
         sys.exit("the answer was cut off; try fewer sprites")
     text = next(b.text for b in response.content if b.type == "text")
