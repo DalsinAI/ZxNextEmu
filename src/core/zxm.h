@@ -168,6 +168,8 @@ const zxm_input_desc *zxm_inputs(const zxm *m);
 /* 0 on success. A snapshot loads into the running machine and is not kept. */
 int    zxm_media_insert(zxm *m, const char *slot, const zxm_media *media);
 int    zxm_media_eject(zxm *m, const char *slot);
+/* 1 while the slot's medium is working (a tape playing), for an LED. */
+int    zxm_media_active(const zxm *m, const char *slot);
 
 /* Complete state: CPU, memory, devices, the typing queue, the tape's play
  * position. Media stay attached and are not part of it. A state loads into

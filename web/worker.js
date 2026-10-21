@@ -17,7 +17,9 @@ let frameMs = 20;
 let audioPort = null;
 let audioQueued = 0;   // sound frames the worklet holds, as last reported
 let scratch = 0;       // 64 bytes of wasm memory for small structs
-let saved = null;      // the last saved state
+let framesRun = 0;
+let statusAt = 0, statusFrames = 0;
+let tapeSlot = 0;      // "tape" as a C string, for the LED
 let lut = null;
 
 const u8 = () => new Uint8Array(x.memory.buffer);
@@ -87,7 +89,6 @@ async function romFile(romsUrl, name) {
 async function create(id, romsUrl) {
   stop();
   if (m) { x.zxm_destroy(m); x.free(m); m = 0; }
-  saved = null;
   info = x.zxm_lookup(cstr(id));
   if (!info) throw new Error(`There is no machine called ${id}.`);
   const d = dv();
@@ -113,6 +114,7 @@ async function create(id, romsUrl) {
 
 function frame() {
   x.zxm_run_frame(m);
+  framesRun++;
   // picture
   const fb = x.zxm_framebuffer(m, scratch);
   const pitch = dv().getInt32(scratch, true);
@@ -147,6 +149,13 @@ function tick() {
     if (audioPort && audioQueued < 2) frame();
     nextAt += frameMs;
     n++;
+  }
+  if (now - statusAt >= 500) {
+    const fps = statusAt ? (framesRun - statusFrames) * 1000 / (now - statusAt) : 0;
+    statusAt = now;
+    statusFrames = framesRun;
+    if (!tapeSlot) tapeSlot = cstr('tape');
+    postMessage({ type: 'status', fps, frames: framesRun, tape: x.zxm_media_active(m, tapeSlot) === 1 });
   }
   timer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
 }
@@ -201,6 +210,7 @@ const handlers = {
   async init(msg) { await init(msg.wasm); },
   async create(msg) { await create(msg.id, msg.roms); },
   start, stop,
+  step() { if (!running && m) frame(); },
   reset(msg) { x.zxm_reset(m, msg.power ? 0 : 1); },
   key(msg) { input(1, msg.row, msg.bit, msg.down); },
   kempston(msg) { input(2, msg.bits, 0, 0); },
@@ -227,21 +237,21 @@ const handlers = {
     }
   },
   eject(msg) { x.zxm_media_eject(m, cstr(msg.slot)); postMessage({ type: 'media', slot: msg.slot, name: null }); },
-  save() {
+  save(msg) {
     const len = x.zxm_state_size(m);
     const p = x.malloc(len);
     if (x.zxm_state_save(m, p, len)) { x.free(p); throw new Error('Could not save the machine.'); }
-    saved = u8().slice(p, p + len);
+    const bytes = u8().slice(p, p + len);
     x.free(p);
-    postMessage({ type: 'saved', bytes: saved.length });
+    postMessage({ type: 'saved', name: msg.name, bytes: bytes.buffer }, [bytes.buffer]);
   },
-  restore() {
-    if (!saved) return;
-    const p = copyIn(saved);
-    const r = x.zxm_state_load(m, p, saved.length);
+  restore(msg) {
+    const bytes = new Uint8Array(msg.bytes);
+    const p = copyIn(bytes);
+    const r = x.zxm_state_load(m, p, bytes.length);
     x.free(p);
-    if (r) throw new Error('That snapshot belongs to another machine.');
-    postMessage({ type: 'restored' });
+    if (r) throw new Error(`${msg.name} was saved from a different machine or version, so it cannot be restored here.`);
+    postMessage({ type: 'restored', name: msg.name });
   },
   audio(msg) { audioPort = msg.port; audioQueued = 0; audioPort.onmessage = e => { audioQueued = e.data; }; },
 };
