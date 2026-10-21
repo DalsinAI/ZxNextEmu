@@ -4,11 +4,13 @@
 # records file into LIBRARY/titles/<id>/ (title.json format 2, files/, screens/).
 # A title whose ZXDB id is already in the library gets the OneDrive files added to it, never a second folder.
 # Python 3 standard library only. Safe to re-run: finished files and titles are skipped.
-import base64, gzip, json, os, re, shutil, struct, sys, time, urllib.request, zlib, datetime
+import base64, gzip, json, os, re, shutil, struct, sys, time, urllib.request, zipfile, zlib, datetime
 
 API = 'https://my.microsoftpersonalcontent.com/_api/v2.0/'
 SKIP_EXT = ('.hdf',)  # raw hard-disk images; the same images are in the folder as .rar
 TODAY = datetime.date.today().isoformat()
+# What the player can load, by slot. Anything else in the records (.sp, .slt, .xml, .mgt) is left out.
+LOADS = {'tape': ('.tap', '.tzx'), 'snapshot': ('.sna', '.z80'), 'disk.a': ('.dsk',)}
 
 def say(*a):
     print(*a, flush=True)
@@ -158,15 +160,54 @@ def folder_for(lib, r):
             return tid, True
         n += 1
 
-def runs_for(r, sub):
-    out = {}
+def slot_of(name):
+    ext = os.path.splitext(name)[1].lower()
+    return next((k for k, v in LOADS.items() if ext in v), None)
+
+def copy_file(src, out):
+    # Copy through a .part file so an interrupted copy is never mistaken for a finished one.
+    if os.path.exists(out) and os.path.getsize(out) == os.path.getsize(src):
+        return
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    shutil.copy2(src, out + '.part')
+    os.replace(out + '.part', out)
+
+def gather(r, dest, fdir):
+    # Copies each loadable file into fdir and returns [(record run, file name, slot)].
+    # A .zip is unpacked: each tape or snapshot inside becomes a file of its own.
+    got = []
     for x in r['runs']:
-        v = out.setdefault((x['variant'], x['slot']), {'platform': 'zx-spectrum', 'machines': list(x['machines']), 'files': [], 'slot': x['slot'], 'needs': []})
-        v['files'].append('files/' + sub + os.path.basename(x['src']))
-        v['machines'] += [m for m in x['machines'] if m not in v['machines']]
-        if len(r['runs']) > 1:
-            v['notes'] = x['variant'] + ('' if len(v['files']) == 1 else '. Load the files in order (sides/tapes).')
-    rs = list(out.values())
+        src = os.path.join(dest, '_onedrive', x['src'])
+        if src.lower().endswith('.zip'):
+            try:
+                z = zipfile.ZipFile(src)
+            except zipfile.BadZipFile:
+                continue
+            for zi in z.infolist():
+                name = os.path.basename(zi.filename)
+                if zi.is_dir() or not slot_of(name) or slot_of(name) == 'disk.a':
+                    continue
+                out = os.path.join(fdir, name)
+                if not (os.path.exists(out) and os.path.getsize(out) == zi.file_size):
+                    os.makedirs(fdir, exist_ok=True)
+                    with z.open(zi) as f, open(out + '.part', 'wb') as o:
+                        shutil.copyfileobj(f, o)
+                    os.replace(out + '.part', out)
+                got.append((x, name, slot_of(name)))
+        elif slot_of(src) == x['slot']:
+            copy_file(src, os.path.join(fdir, os.path.basename(src)))
+            got.append((x, os.path.basename(src), x['slot']))
+    return got
+
+def runs_for(got, sub):
+    # One run per file: the player loads one tape at a time, so each side or part is its own run.
+    many = len(got) > 1
+    rs = []
+    for x, name, slot in got:
+        v = {'platform': 'zx-spectrum', 'machines': list(x['machines']), 'files': ['files/' + sub + name], 'slot': slot, 'needs': []}
+        if many:
+            v['notes'] = f"{x['variant']}: {name}"
+        rs.append(v)
     rs.sort(key=lambda v: (v['slot'] != 'tape', '(Europe)' not in v.get('notes', '(Europe)')))
     return rs
 
@@ -184,13 +225,18 @@ def file_title(r, dest, lib, link):
     srcs = [os.path.join(dest, '_onedrive', x['src']) for x in r['runs']]
     if not all(os.path.exists(s) for s in srcs):
         return tid, 'missing'
-    for s in srcs:
-        o = os.path.join(tdir, 'files', sub, os.path.basename(s))
-        os.makedirs(os.path.dirname(o), exist_ok=True)
-        if not os.path.exists(o):
-            shutil.copy2(s, o)
-    runs = runs_for(r, sub)
-    source = 'OneDrive: ' + link
+    # A new title is built in a staging folder and renamed into place once title.json is written,
+    # so an interrupted run leaves nothing that looks like a title. A stale staging folder is redone.
+    final = tdir
+    if not merge:
+        tdir = os.path.join(dest, '_onedrive', '.staging', tid)
+        shutil.rmtree(tdir, ignore_errors=True)
+    got = gather(r, dest, os.path.join(tdir, 'files', sub))
+    if not got:
+        shutil.rmtree(tdir, ignore_errors=True)
+        return tid, 'unsupported'
+    runs = runs_for(got, sub)
+    source = link
     p = os.path.join(tdir, 'title.json')
     if merge and os.path.exists(p):
         j = json.load(open(p, encoding='utf-8'))
@@ -226,8 +272,6 @@ def file_title(r, dest, lib, link):
     if screens:
         j['screens'] = screens
     write_json(p, j)
-    if r['zxdb']:
-        ZXDB_INDEX[str(r['zxdb'])] = tid
     about = [f'# {r["name"]}', '', '## Where it came from', '',
              '- OneDrive Spectrum collection: ' + ', '.join(f'`{os.path.basename(x["src"])}`' for x in r['runs'])]
     if r['zxdb']:
@@ -235,6 +279,9 @@ def file_title(r, dest, lib, link):
     if any(c not in ('exact', 'manual') for c in r['conf']):
         about += ['', f'Matched to ZXDB by name ({", ".join(r["conf"])}) from "{r["groups"][0]}"; check it if the details look wrong.']
     open(os.path.join(tdir, 'about.md'), 'w', encoding='utf-8').write('\n'.join(about) + '\n')
+    os.replace(tdir, final)
+    if r['zxdb']:
+        ZXDB_INDEX[str(r['zxdb'])] = tid
     return tid, 'new'
 
 def clean_link(link):
@@ -269,15 +316,19 @@ def main():
         items = [i for i in items if i['path'] in want]
     total = sum(i['size'] for i in items)
     say(f'{len(items)} files, {total / 1e6:.0f} MB to fetch into {dest}/_onedrive')
-    got = 0
+    got, failed = 0, []
     for n, it in enumerate(items, 1):
-        od.download(it, os.path.join(dest, '_onedrive', it['path']))
+        out = os.path.join(dest, '_onedrive', it['path'])
+        if not od.download(it, out) and not (os.path.exists(out) and os.path.getsize(out) == it['size']):
+            failed.append(it['path'])
         got += it['size']
         if n % 100 == 0 or n == len(items):
             say(f'  {n}/{len(items)} files, {got / 1e6:.0f} of {total / 1e6:.0f} MB')
+    if failed:
+        say(f'{len(failed)} files could not be downloaded; run this again to retry them.')
     if not recs:
         say('No records file found, so the files are downloaded but not filed into the library.')
-        return
+        sys.exit(1 if failed else 0)
     logp = os.path.join(dest, '_onedrive', 'filed.json')
     done = json.load(open(logp)) if os.path.exists(logp) else {}
     index_library(lib)
@@ -292,8 +343,11 @@ def main():
             write_json(logp, done)
             say(f'  {n}/{len(recs)} titles')
     write_json(logp, done)
-    c = {s: sum(1 for v in done.values() if v == s) for s in ('new', 'merged', 'missing')}
-    say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing.')
+    c = {s: sum(1 for v in done.values() if v == s) for s in ('new', 'merged', 'missing', 'unsupported')}
+    say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing, '
+        f'{c["unsupported"]} with no file the player can load.')
+    if failed:
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
