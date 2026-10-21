@@ -9,8 +9,10 @@ import base64, gzip, json, os, re, shutil, struct, sys, time, urllib.request, zi
 API = 'https://my.microsoftpersonalcontent.com/_api/v2.0/'
 SKIP_EXT = ('.hdf',)  # raw hard-disk images; the same images are in the folder as .rar
 TODAY = datetime.date.today().isoformat()
-# What the player can load, by slot. Anything else in the records (.sp, .slt, .xml, .mgt) is left out.
-LOADS = {'tape': ('.tap', '.tzx'), 'snapshot': ('.sna', '.z80'), 'disk.a': ('.dsk',)}
+# What the player can load, by slot. Anything else in the records (.sp, .slt, .xml, .mgt, and +3 .dsk,
+# which no machine has a drive for yet) is left out.
+LOADS = {'tape': ('.tap', '.tzx'), 'snapshot': ('.sna', '.z80')}
+NO_SLOT = {'snapshot': {'next'}}  # machines without that slot (src/core/zxm_zx.c)
 
 def say(*a):
     print(*a, flush=True)
@@ -185,7 +187,7 @@ def gather(r, dest, fdir):
                 continue
             for zi in z.infolist():
                 name = os.path.basename(zi.filename)
-                if zi.is_dir() or not slot_of(name) or slot_of(name) == 'disk.a':
+                if zi.is_dir() or not slot_of(name):
                     continue
                 out = os.path.join(fdir, name)
                 if not (os.path.exists(out) and os.path.getsize(out) == zi.file_size):
@@ -204,7 +206,10 @@ def runs_for(got, sub):
     many = len(got) > 1
     rs = []
     for x, name, slot in got:
-        v = {'platform': 'zx-spectrum', 'machines': list(x['machines']), 'files': ['files/' + sub + name], 'slot': slot, 'needs': []}
+        machines = [m for m in x['machines'] if m not in NO_SLOT.get(slot, ())]
+        if not machines:
+            continue
+        v = {'platform': 'zx-spectrum', 'machines': machines, 'files': ['files/' + sub + name], 'slot': slot, 'needs': []}
         if many:
             v['notes'] = f"{x['variant']}: {name}"
         rs.append(v)
@@ -232,10 +237,11 @@ def file_title(r, dest, lib, link):
         tdir = os.path.join(dest, '_onedrive', '.staging', tid)
         shutil.rmtree(tdir, ignore_errors=True)
     got = gather(r, dest, os.path.join(tdir, 'files', sub))
-    if not got:
-        shutil.rmtree(tdir, ignore_errors=True)
-        return tid, 'unsupported'
     runs = runs_for(got, sub)
+    if not runs:
+        if not merge:  # only ever delete our own staging folder, never an existing title
+            shutil.rmtree(tdir, ignore_errors=True)
+        return tid, 'unsupported'
     source = link
     p = os.path.join(tdir, 'title.json')
     if merge and os.path.exists(p):
