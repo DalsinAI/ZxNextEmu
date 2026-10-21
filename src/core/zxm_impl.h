@@ -41,6 +41,7 @@ struct zxm_family {
 };
 
 extern const zxm_family zxm_family_zx;     /* zxm_zx.c: Spectrums and the Next */
+extern const zxm_family zxm_family_sam;    /* zxm_sam.c: SAM Coupé */
 
 /* zxm.c: case-insensitive file name extension test (".tap"). */
 int zxm_has_ext(const char *name, const char *ext);
