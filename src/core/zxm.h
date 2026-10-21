@@ -164,7 +164,8 @@ int    zxm_typing(const zxm *m);
 /* Interfaces for a classic machine's expansion port: "divmmc" (esxDOS and
  * an SD card), "mb03" (the MB03+ Ultimate: divMMC with two SD cards,
  * TurboSound, DACs, SAA1099, SID, Kempston mouse, Timex screens, the
- * ZXi settings registers and, given its ROM, General Sound). */
+ * ZXi settings registers, MBIDE with two CF cards, the RTC and, given its
+ * ROM, General Sound). */
 typedef struct zxm_interface {
     const char *id;
     const char *name;

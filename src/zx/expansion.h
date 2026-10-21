@@ -27,6 +27,19 @@
  *                 when its ROM is given (zx_exp_attach_gs)
  *   SID           6581/8580 on 6C3B (register) and 6D3B (data); register
  *                 1F picks the model and the PAL or NTSC clock
+ *   MBIDE         two CF cards (devices/ata.h) on the IDE ports m_zxi_002
+ *                 picks: 1 DRON (C3-DF, MB02+), 2 PVL (A3-BF, divIDE), 3 HOOD
+ *                 (the even registers on DRON's ports, the odd on PVL's); 0,
+ *                 the default, none. The data register is 8 bits wide: the
+ *                 first access of a word is its low byte, the second its
+ *                 high byte; any other register starts a word again. The
+ *                 IDE ports come before the GS, DAC and mouse ports they
+ *                 share
+ *   RTC72421      read only on port 0x03 (the register in A8-A11), with
+ *                 m_zxi_003 bit 0 on and m_zxi_040 the time zone. It keeps
+ *                 emulated time, so a machine runs the same every time: it
+ *                 starts at 2026-01-01 00:00:00 when the interface is
+ *                 plugged in
  *   ZXi registers the MB03+'s settings (its Programmer's Reference): 703B
  *                 selects a column and 713B-773B read or write it in the
  *                 eight m_zxi rows; 7C3B and 7D3B do the same for the
@@ -54,6 +67,7 @@
 #include "../devices/saa1099.h"
 #include "../devices/sid.h"
 #include "../devices/gs.h"
+#include "../devices/ata.h"
 
 struct zx;
 struct nx_sd;
@@ -70,13 +84,16 @@ enum {
     ZX_EXP_ZXI        = 128,
     ZX_EXP_RADASTAN   = 256,
     ZX_EXP_GIGA       = 512,
-    ZX_EXP_GS         = 1024     /* set by zx_exp_attach_gs */
+    ZX_EXP_GS         = 1024,    /* set by zx_exp_attach_gs */
+    ZX_EXP_IDE        = 2048,
+    ZX_EXP_RTC        = 4096
 };
 
 #define ZX_EXP_ALL 0xffffffffu
 
 #define ZX_EXP_MB03 (ZX_EXP_DIVMMC | ZX_EXP_TURBOSOUND | ZX_EXP_DAC | ZX_EXP_MOUSE | ZX_EXP_TIMEX \
-                     | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI | ZX_EXP_RADASTAN | ZX_EXP_GIGA)
+                     | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI | ZX_EXP_RADASTAN | ZX_EXP_GIGA \
+                     | ZX_EXP_IDE | ZX_EXP_RTC)
 
 /* m_zxi_001, audio select */
 enum {
@@ -140,6 +157,14 @@ typedef struct zx_exp {
 
     gs *gs;                      /* General Sound, or NULL */
     uint64_t gs_frac;
+
+    /* MBIDE */
+    ata_bus ide;
+    uint8_t ide_latch, ide_odd;  /* the word's other byte, and which half is next */
+
+    /* RTC72421 */
+    uint64_t rtc_t;              /* T-states before this frame since plug-in */
+    uint8_t rtc_ce;              /* register E, the only writable one */
 } zx_exp;
 
 /* A device is fitted and, where the ZXi registers are, switched on
@@ -168,6 +193,9 @@ void zx_exp_frame_end(struct zx *m);
 /* SD card in the divMMC, slot 0 or 1; NULL ejects. The interface owns the
  * device once this succeeds. */
 int zx_exp_attach_sd(struct zx *m, int slot, struct zx_blockdev *bd);
+/* CF card on the MBIDE, 0 master or 1 slave; NULL ejects. The interface
+ * owns the device once this succeeds. */
+int zx_exp_attach_ide(struct zx *m, int unit, struct zx_blockdev *bd);
 
 /* Memory below 0x4000 while the divMMC is paged in (m->div_map). */
 uint8_t zx_exp_read(const struct zx *m, uint16_t addr);
