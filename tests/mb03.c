@@ -45,6 +45,7 @@ static int machine(zx *m, zx_model model, const char *romdir, uint32_t features,
 {
     if (zx_init(m, model, romdir) || zx_exp_attach(m, features, div_rom, 0x2000)) {
         printf("FAIL: cannot build the machine\n");
+        fails++;
         return -1;
     }
     return 0;

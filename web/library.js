@@ -53,7 +53,7 @@ export const romAdd = (name, b64) => tx('roms', 'readwrite', s => s.put({ name, 
 export const machineLabels = {
   zx48: '48K', zx128: '128K', plus2: '+2', plus2a: '+2A', plus3: '+3', pentagon: 'Pentagon',
   next: 'Next', spec256: 'Spec256', scorpion: 'Scorpion', atm2: 'ATM Turbo', sam: 'SAM Coupé',
-  msx1: 'MSX1', msx1eu: 'MSX1 50 Hz', msx2: 'MSX2', msx2eu: 'MSX2 50 Hz', oric1: 'Oric-1', atmos: 'Atmos',
+  msx1: 'MSX1', msx1eu: 'MSX1 50 Hz', msx2: 'MSX2', msx2eu: 'MSX2 50 Hz',
 };
 export const label = id => machineLabels[id] || id;
 
@@ -281,7 +281,7 @@ export const MACHINE_OFFERS = {
   atm2: ['ram:128', 'ram:256', 'ram:1024', 'ay', 'kempston', 'beta'],
   spec256: ['ram:128', 'ay', 'kempston', 'spec256'],
   next: ['ram:128', 'ram:256', 'ram:1024', 'ay', 'turbosound', 'kempston', 'mouse', 'divmmc', 'ulaplus', 'timex-hires'],
-  sam: [], msx1: [], msx1eu: [], msx2: [], msx2eu: [], oric1: [], atmos: [],
+  sam: [], msx1: [], msx1eu: [], msx2: [], msx2eu: [],
 };
 export const offersOf = (machine, extra = []) => [...new Set([...(MACHINE_OFFERS[machine] || []), ...extra])];
 
