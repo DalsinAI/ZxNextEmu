@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZX Cradle</title>
+<link rel="stylesheet" href="cradle/zxcradle.css">
+<link rel="stylesheet" href="cradle/components.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="zxc-wordmark">ZX <span>Cradle</span></div>
+  <label class="machine">
+    <span class="label">Machine</span>
+    <select id="machine"></select>
+  </label>
+  <span id="chip" class="zxc-chip zxc-chip--starting"><b>S</b>Starting</span>
+  <i class="zxc-stripe" aria-hidden="true"></i>
+</header>
+
+<main>
+  <section class="screen" id="screen-area" aria-label="Machine screen">
+    <canvas id="screen" width="320" height="256" tabindex="0"></canvas>
+    <p class="hint" id="hint">Click the screen to type into the machine. Drop a .tap, .tzx, .sna or .z80 file anywhere to load it.</p>
+    <div class="drop" id="drop" hidden>Drop to load</div>
+  </section>
+
+  <aside class="side">
+    <section class="zxc-panel">
+      <h2>Machine</h2>
+      <div class="row">
+        <button class="zxc-btn zxc-btn--primary" id="run">Pause</button>
+        <button class="zxc-btn" id="reset">Reset</button>
+        <button class="zxc-btn" id="power">Power cycle</button>
+      </div>
+      <div class="row">
+        <button class="zxc-btn" id="save">Save snapshot</button>
+        <button class="zxc-btn" id="restore" disabled>Restore</button>
+      </div>
+      <p class="note" id="saved-note">No snapshot saved yet.</p>
+    </section>
+
+    <section class="zxc-panel media">
+      <h2>Media</h2>
+      <div class="zxc-slot zxc-slot--empty" id="slot-tape">
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/></svg>
+        <span class="zxc-slot__id">tape</span>
+        <span class="zxc-slot__file">Empty</span>
+        <button class="zxc-btn" data-insert="tape">Insert tape</button>
+      </div>
+      <div class="zxc-slot zxc-slot--empty" id="slot-snapshot">
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="9"/><path d="M5.5 4.5 6.5 2.5h3l1 2"/><circle cx="8" cy="9" r="2.5"/></svg>
+        <span class="zxc-slot__id">snap</span>
+        <span class="zxc-slot__file">Empty</span>
+        <button class="zxc-btn" data-insert="snapshot">Load snapshot</button>
+      </div>
+      <label class="check"><input type="checkbox" id="autostart" checked> Start tapes automatically</label>
+      <input type="file" id="file" accept=".tap,.tzx,.sna,.z80" hidden>
+    </section>
+
+    <section class="zxc-panel">
+      <h2>Settings</h2>
+      <label class="check"><input type="checkbox" id="joystick"> Arrow keys and Tab are a Kempston joystick</label>
+      <label class="check"><input type="checkbox" id="sound" checked> Sound</label>
+      <label class="check"><input type="checkbox" id="light"> Paper theme</label>
+    </section>
+
+    <section class="zxc-panel keys">
+      <h2>Keys</h2>
+      <dl>
+        <dt><kbd class="zxc-kbd">Shift</kbd></dt><dd>CAPS SHIFT</dd>
+        <dt><kbd class="zxc-kbd">Ctrl</kbd> <kbd class="zxc-kbd">Alt</kbd></dt><dd>SYMBOL SHIFT</dd>
+        <dt><kbd class="zxc-kbd">Backspace</kbd></dt><dd>DELETE</dd>
+        <dt><kbd class="zxc-kbd">Esc</kbd></dt><dd>BREAK</dd>
+        <dt><kbd class="zxc-kbd">←</kbd> <kbd class="zxc-kbd">↓</kbd> <kbd class="zxc-kbd">↑</kbd> <kbd class="zxc-kbd">→</kbd></dt><dd>Cursor keys (CAPS SHIFT 5 to 8)</dd>
+      </dl>
+    </section>
+
+    <p class="error" id="error" role="alert" hidden></p>
+  </aside>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

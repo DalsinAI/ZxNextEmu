@@ -1,0 +1,255 @@
+// ZX Cradle runtime: one machine, running zxcore.wasm in this Worker.
+//
+// The page sends commands ({cmd: ...}); the worker sends back frames
+// (RGBA pixels, transferred), sound (to the AudioWorklet's port when the
+// page hands one over) and status. Frames are paced by a timer at the
+// machine's own rate, nudged by how much sound the worklet has queued so
+// sound never runs dry or piles up.
+
+let x = null;          // wasm exports
+let m = 0;             // the machine (zxm *)
+let info = 0;          // its zxm_info *
+let fbW = 0, fbH = 0;
+let running = false;
+let timer = 0;
+let nextAt = 0;
+let frameMs = 20;
+let audioPort = null;
+let audioQueued = 0;   // sound frames the worklet holds, as last reported
+let scratch = 0;       // 64 bytes of wasm memory for small structs
+let saved = null;      // the last saved state
+let lut = null;
+
+const u8 = () => new Uint8Array(x.memory.buffer);
+const dv = () => new DataView(x.memory.buffer);
+
+function cstr(s) {
+  const b = new TextEncoder().encode(s + '\0');
+  const p = x.malloc(b.length);
+  u8().set(b, p);
+  return p;
+}
+function readCstr(p) {
+  const mem = u8();
+  let e = p;
+  while (mem[e]) e++;
+  return new TextDecoder().decode(mem.subarray(p, e));
+}
+function copyIn(bytes) {
+  const p = x.malloc(bytes.length || 1);
+  u8().set(bytes, p);
+  return p;
+}
+
+// RGB333 to RGBA (little-endian 0xAABBGGRR).
+function makeLut() {
+  lut = new Uint32Array(512);
+  for (let c = 0; c < 512; c++) {
+    const r = ((c >> 6) & 7) * 255 / 7 | 0, g = ((c >> 3) & 7) * 255 / 7 | 0, b = (c & 7) * 255 / 7 | 0;
+    lut[c] = 0xff000000 | b << 16 | g << 8 | r;
+  }
+}
+
+async function init(wasmUrl) {
+  const { instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), {});
+  x = instance.exports;
+  x._initialize?.();
+  scratch = x.malloc(64);
+  makeLut();
+  const machines = [];
+  for (let i = 0; ; i++) {
+    const p = x.zxm_machine(i);
+    if (!p) break;
+    const roms = [];
+    for (let r = dv().getUint32(p + 28, true), k = 0; ; k++) {
+      const np = dv().getUint32(r + 4 * k, true);
+      if (!np) break;
+      roms.push(readCstr(np));
+    }
+    machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms });
+  }
+  postMessage({ type: 'ready', machines });
+}
+
+// ROM images come in one JSON file, {"48.rom": "<base64>", ...}.
+let romCache = null;
+async function romFile(romsUrl, name) {
+  if (!romCache) {
+    const res = await fetch(romsUrl);
+    if (!res.ok) throw new Error(`The ROM file ${romsUrl} is missing.`);
+    romCache = await res.json();
+  }
+  const b64 = romCache[name];
+  if (!b64) throw new Error(`The ROM file ${name} is missing.`);
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+
+async function create(id, romsUrl) {
+  stop();
+  if (m) { x.zxm_destroy(m); x.free(m); m = 0; }
+  saved = null;
+  info = x.zxm_lookup(cstr(id));
+  if (!info) throw new Error(`There is no machine called ${id}.`);
+  const d = dv();
+  const cpuHz = d.getUint32(info + 8, true), frameT = d.getUint32(info + 12, true);
+  fbW = d.getUint16(info + 16, true);
+  fbH = d.getUint16(info + 18, true);
+  frameMs = 1000 * frameT / cpuHz;
+  // zxm_rom_set: four pointers, then four lengths.
+  const set = x.malloc(32);
+  u8().fill(0, set, set + 32);
+  for (let r = dv().getUint32(info + 28, true), k = 0; ; k++) {
+    const np = dv().getUint32(r + 4 * k, true);
+    if (!np) break;
+    const name = readCstr(np);
+    const bytes = await romFile(romsUrl, name);
+    dv().setUint32(set + 4 * k, copyIn(bytes), true);
+    dv().setUint32(set + 16 + 4 * k, bytes.length, true);
+  }
+  m = x.malloc(x.zxm_size(info));
+  if (x.zxm_create(m, info, set)) { m = 0; throw new Error(`Could not start the ${id}.`); }
+  postMessage({ type: 'created', id, fbW, fbH, frameMs });
+}
+
+function frame() {
+  x.zxm_run_frame(m);
+  // picture
+  const fb = x.zxm_framebuffer(m, scratch);
+  const pitch = dv().getInt32(scratch, true);
+  const px = new Uint16Array(x.memory.buffer, fb, pitch * fbH);
+  const out = new Uint32Array(fbW * fbH);
+  for (let y = 0; y < fbH; y++) {
+    const s = y * pitch, o = y * fbW;
+    for (let i = 0; i < fbW; i++) out[o + i] = lut[px[s + i] & 511];
+  }
+  postMessage({ type: 'frame', w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
+  // sound
+  if (audioPort) {
+    const au = x.zxm_audio(m, scratch);
+    const n = dv().getInt32(scratch, true);
+    const src = new Int16Array(x.memory.buffer, au, n * 2);
+    const pcm = new Float32Array(n * 2);
+    for (let i = 0; i < n * 2; i++) pcm[i] = src[i] / 32768;
+    audioPort.postMessage(pcm, [pcm.buffer]);
+    audioQueued++;
+  }
+}
+
+function tick() {
+  if (!running) return;
+  const now = performance.now();
+  // Catch up at most a few frames after a stall (a background tab).
+  if (now - nextAt > frameMs * 5) nextAt = now;
+  let n = 0;
+  while (nextAt <= now && n < 5) {
+    // Too much sound queued: skip a frame. Too little: run one more.
+    if (!(audioPort && audioQueued > 6)) frame();
+    if (audioPort && audioQueued < 2) frame();
+    nextAt += frameMs;
+    n++;
+  }
+  timer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
+}
+
+function start() {
+  if (running || !m) return;
+  running = true;
+  nextAt = performance.now();
+  tick();
+  postMessage({ type: 'state', running: true });
+}
+
+function stop() {
+  running = false;
+  clearTimeout(timer);
+  postMessage({ type: 'state', running: false });
+}
+
+// zxm_input_event: t u32, kind u8, a u8, b u8, down u8, dx dy dz i16.
+function input(kind, a, b, down) {
+  const d = dv();
+  d.setUint32(scratch, 0, true);
+  d.setUint8(scratch + 4, kind);
+  d.setUint8(scratch + 5, a);
+  d.setUint8(scratch + 6, b);
+  d.setUint8(scratch + 7, down ? 1 : 0);
+  d.setInt16(scratch + 8, 0, true);
+  d.setInt16(scratch + 10, 0, true);
+  d.setInt16(scratch + 12, 0, true);
+  x.zxm_input(m, scratch);
+}
+
+// zxm_media: kind u32, name ptr, data ptr, len u32, blocks ptr, serial ptr.
+function insert(slot, name, bytes) {
+  const media = x.malloc(24);
+  const nameP = cstr(name), data = copyIn(bytes);
+  const d = dv();
+  d.setUint32(media, 1, true);
+  d.setUint32(media + 4, nameP, true);
+  d.setUint32(media + 8, data, true);
+  d.setUint32(media + 12, bytes.length, true);
+  d.setUint32(media + 16, 0, true);
+  d.setUint32(media + 20, 0, true);
+  const r = x.zxm_media_insert(m, cstr(slot), media);
+  x.free(data);
+  x.free(nameP);
+  x.free(media);
+  return r === 0;
+}
+
+const handlers = {
+  async init(msg) { await init(msg.wasm); },
+  async create(msg) { await create(msg.id, msg.roms); },
+  start, stop,
+  reset(msg) { x.zxm_reset(m, msg.power ? 0 : 1); },
+  key(msg) { input(1, msg.row, msg.bit, msg.down); },
+  kempston(msg) { input(2, msg.bits, 0, 0); },
+  releaseAll() { input(4, 0, 0, 0); },
+  type(msg) { const p = cstr(msg.text); x.zxm_type(m, p, msg.delay || 0); x.free(p); },
+  load(msg) {
+    const bytes = new Uint8Array(msg.bytes);
+    const lower = msg.name.toLowerCase();
+    if (lower.endsWith('.tap') || lower.endsWith('.tzx')) {
+      if (!insert('tape', msg.name, bytes)) throw new Error(`${msg.name} is not a tape this machine can read.`);
+      if (msg.autostart) {
+        x.zxm_reset(m, 1);
+        const is48 = msg.id === 'zx48';
+        const p = cstr(is48 ? 'j""\n' : '\n');
+        x.zxm_type(m, p, is48 ? 120 : 90);
+        x.free(p);
+      }
+      postMessage({ type: 'media', slot: 'tape', name: msg.name });
+    } else if (lower.endsWith('.sna') || lower.endsWith('.z80')) {
+      if (!insert('snapshot', msg.name, bytes)) throw new Error(`${msg.name} could not be loaded into this machine.`);
+      postMessage({ type: 'media', slot: 'snapshot', name: msg.name });
+    } else {
+      throw new Error(`${msg.name}: ZX Cradle loads .tap, .tzx, .sna and .z80 files.`);
+    }
+  },
+  eject(msg) { x.zxm_media_eject(m, cstr(msg.slot)); postMessage({ type: 'media', slot: msg.slot, name: null }); },
+  save() {
+    const len = x.zxm_state_size(m);
+    const p = x.malloc(len);
+    if (x.zxm_state_save(m, p, len)) { x.free(p); throw new Error('Could not save the machine.'); }
+    saved = u8().slice(p, p + len);
+    x.free(p);
+    postMessage({ type: 'saved', bytes: saved.length });
+  },
+  restore() {
+    if (!saved) return;
+    const p = copyIn(saved);
+    const r = x.zxm_state_load(m, p, saved.length);
+    x.free(p);
+    if (r) throw new Error('That snapshot belongs to another machine.');
+    postMessage({ type: 'restored' });
+  },
+  audio(msg) { audioPort = msg.port; audioQueued = 0; audioPort.onmessage = e => { audioQueued = e.data; }; },
+};
+
+onmessage = async e => {
+  try {
+    await handlers[e.data.cmd](e.data);
+  } catch (err) {
+    postMessage({ type: 'error', message: err.message || String(err) });
+  }
+};
