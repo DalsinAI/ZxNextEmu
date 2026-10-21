@@ -680,7 +680,12 @@ export function normalizeReviews(r) {
   const num = x => Number.isFinite(+x) ? +x : null;
   const ratings = (r.ratings || []).filter(x => x && num(x.score) != null && num(x.scale))
     .map(x => ({ ...x, score: num(x.score), scale: num(x.scale), votes: num(x.votes) ?? undefined }));
-  const n = { format: 1, ...r, ratings, reviews: (r.reviews || []).filter(x => x && x.text) };
+  // A review's own score counts only with a numeric score and scale.
+  const reviews = (r.reviews || []).filter(x => x && x.text).map(x => {
+    const { score, scale, ...rest } = x;
+    return num(score) != null && num(scale) ? { ...rest, score: num(score), scale: num(scale) } : rest;
+  });
+  const n = { format: 1, ...r, ratings, reviews };
   return n.ratings.length || n.reviews.length ? n : null;
 }
 

@@ -334,7 +334,7 @@ export async function showDetail(id) {
       <small>${esc(file)}${r.notes ? ` · ${esc(r.notes)}` : ''}</small>
       ${(r.needs || []).length ? `<small>Needs ${esc(r.needs.map(needWord).join(', '))}</small>` : ''}
       ${known.length ? `<small class="det-known">${esc(known.join(' · '))}</small>` : ''}</div>
-      ${insideSymbos(r) ? '<small class="det-later">Runs inside SymbOS: copy it onto a set-up that boots SymbOS</small>'
+      ${insideSymbos(r) && !missing.length ? '<small class="det-later">Runs inside SymbOS: copy it onto a set-up that boots SymbOS</small>'
         : !paths.length ? `<small class="det-later">${esc(r.notes || 'Nothing to load directly; see the files')}</small>`
         : missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
         : ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
