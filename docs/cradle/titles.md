@@ -122,7 +122,26 @@ A demo or intro that competed can carry `party`: `{ "name", "year",
 title's page shows it as "3rd in the ZX Demo compo at Chaos Constructions
 2019". `ids` can also hold `pouet`, `demozoo` and `zxaaa`.
 
-## Ratings and reviews
+## Companies, series and the same game elsewhere
+
+- `publisher` names the main publisher and `developer` the company or person
+  who made it. `companies` lists any others as `{ "name", "role" }`, with
+  role `developer`, `publisher`, `label` or `distributor`. A version may carry
+  its own `publisher` and `developer`.
+- `series` lists `{ "name", "number" }`, with number giving the place in the
+  series or null. A title can be in more than one series. ZXDB's series are
+  tags of type `S`, numbered by `members.member_seq`.
+- `work` is shared by every folder holding the same game on any system, e.g.
+  `"head-over-heels"` on the Spectrum, MSX and SAM folders. Without it, the
+  library uses the name, minus anything in brackets and trailing machine
+  tags, so "Head Over Heels (MSX)" and "Head over Heels" already meet.
+  Versions on one system stay in one folder under `versions`.
+
+The library's **Show** menu puts the same game together on one card (the
+default), shows every title, or shows one card per series. A title's page
+links its companies, its series and the same game's other titles.
+
+
 
 `reviews.json` sits beside `title.json`. Reviews are kept in English; one
 translated from another language keeps its original in `original`.
@@ -167,5 +186,6 @@ rest:
 Search matches the name, authors, publisher, genres, tags, summary and file
 names. Words of the form `machine:next`, `kind:demo`, `needs:beta`,
 `compat:verified`, `year:1984`, `decade:1990s`, `genre:platform`,
-`lang:ru`, `rating:7` (7 or more out of 10) and `fit:needs` filter, the same in the search box, the shell and MCP. Filters narrow by machine ("runs on this"), kind, genre, decade and language.
+`lang:ru`, `rating:7` (7 or more out of 10), `company:ocean`,
+`series:dizzy`, `work:head-over-heels` and `fit:needs` filter, the same in the search box, the shell and MCP. Filters narrow by machine ("runs on this"), kind, genre, decade, language and company.
 Results sort by name, year, date added or rating.

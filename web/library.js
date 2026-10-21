@@ -196,7 +196,7 @@ const isTable = v => v && typeof v === 'object' && !Array.isArray(v);
 const isTableArray = v => Array.isArray(v) && v.length && v.every(isTable);
 
 // Key order for the fields we know; anything else follows, so it survives.
-const ORDER = ['format', 'name', 'kind', 'year', 'authors', 'publisher', 'genres', 'tags', 'summary', 'license', 'source', 'added'];
+const ORDER = ['format', 'name', 'kind', 'year', 'authors', 'publisher', 'developer', 'companies', 'series', 'work', 'genres', 'tags', 'summary', 'license', 'source', 'added'];
 const SUB_ORDER = ['platform', 'machines', 'file', 'files', 'slot', 'notes', 'caption'];
 
 export function toToml(meta) {
@@ -240,6 +240,9 @@ export function normalize(meta) {
     delete m.zxdb_id;
     delete m.zxart_id;
   }
+  // A series can come as one {name, number} or a list of them, or a bare name.
+  if (m.series) m.series = [].concat(m.series).map(x => typeof x === 'string' ? { name: x, number: null } : x).filter(x => x?.name);
+  if (m.companies) m.companies = m.companies.map(x => typeof x === 'string' ? { name: x, role: 'publisher' } : x).filter(x => x?.name);
   m.compat ??= {};
   return m;
 }
@@ -605,13 +608,16 @@ export function haystack(t) {
   const m = t.meta;
   return [m.name, m.publisher, m.summary, m.kind, m.license, ...(m.authors || []), ...(m.genres || []), ...(m.tags || []),
     ...t.files.map(f => f.path.replace(/^files\//, '')), ...(m.runs || []).flatMap(r => (r.machines || []).map(label)),
-    ...(m.versions || []).flatMap(v => [v.label, v.publisher, ...(v.authors || [])]), ...titleLangs(t).map(langName)]
+    ...(m.versions || []).flatMap(v => [v.label, v.publisher, ...(v.authors || [])]), ...titleLangs(t).map(langName),
+    ...companiesOf(t), ...(m.series || []).map(x => x.name)]
     .filter(Boolean).join(' ').toLowerCase();
 }
 
 // Plain words match anywhere; key:value words filter, the same in the search
 // box, the shell and MCP: machine:next kind:demo needs:beta compat:verified
-// year:1984 decade:1990s genre:platform lang:ru rating:7 (7 or more out of 10). (fit: is the library view's.)
+// year:1984 decade:1990s genre:platform lang:ru rating:7 (7 or more out of 10)
+// company:ocean series:dizzy work:head-over-heels. Dashes stand for spaces in
+// company and series names. (fit: is the library view's.)
 export function matches(t, query) {
   if (!query) return true;
   const h = t._hay ??= haystack(t);
@@ -628,6 +634,9 @@ export function matches(t, query) {
     case 'genre': return (m.genres || []).some(g => g.toLowerCase().includes(v));
     case 'lang': return titleLangs(t).some(c => c === v || langName(c).toLowerCase() === v);
     case 'rating': return (ratingOf(t)?.score ?? -1) >= Number(v);
+    case 'company': return companiesOf(t).some(c => slug(c).includes(slug(v)));
+    case 'series': return (m.series || []).some(x => slug(x.name) === slug(v));
+    case 'work': return workOf(t) === v;
     case 'fit': return true;
     default: return h.includes(w);
     }
@@ -741,4 +750,51 @@ export function ratingOf(t) {
   for (const x of r.ratings) add(x, Math.max(1, x.votes || 1));
   if (!w) for (const x of r.reviews) if (x.score != null && x.scale) add(x, 1);
   return w ? { score: Math.round(sum / w * 10) / 10, votes: r.ratings.reduce((a, x) => a + (x.votes || 0), 0), reviews: r.reviews.length } : null;
+}
+
+// ---- companies, series and the same game elsewhere ---------------------------
+
+// Every company named on a title: its publisher and developer, the companies
+// list, and each version's publisher and developer.
+export function companiesOf(t) {
+  const m = t.meta;
+  return [...new Set([m.publisher, m.developer, ...(m.companies || []).map(c => c.name),
+    ...(m.versions || []).flatMap(v => [v.publisher, v.developer])].filter(Boolean))];
+}
+
+// What a title is the same game as on other systems. title.json's `work`
+// says so; without it, the name with bracketed and trailing machine tags taken off,
+// so "Head Over Heels (MSX)" and "Head over Heels" meet.
+const PLATFORM_TAIL = /[\s:-]+(for )?(the )?(zx ?spectrum|spectrum|zx ?next|next|128k?|48k?|\+[23]a?|sam( coupe)?|msx ?2?\+?|pentagon|scorpion|atm( turbo)?|tr-?dos|disk|tape|version|edition)\s*$/;
+export function workOf(t) {
+  if (t.meta.work) return t.meta.work;
+  let n = (t.meta.name || t.id).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[([][^)\]]*[)\]]/g, ' ').replace(/^the\s+/, '').replace(/&/g, ' and ').trim();
+  let n2 = n;
+  while (PLATFORM_TAIL.test(` ${n2}`)) n2 = ` ${n2}`.replace(PLATFORM_TAIL, '').trim();
+  n = n2 || n;
+  return n.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || t.id;
+}
+
+// Titles gathered by game: [{work, titles}], in the order of the list given.
+export function groupByWork(list) {
+  const groups = new Map();
+  for (const t of list) {
+    const w = workOf(t);
+    if (!groups.has(w)) groups.set(w, { work: w, titles: [] });
+    groups.get(w).titles.push(t);
+  }
+  return [...groups.values()];
+}
+
+// Series gathered from the titles: [{name, titles}] with titles in series order.
+export function groupBySeries(list) {
+  const groups = new Map();
+  for (const t of list) for (const x of t.meta.series || []) {
+    const k = slug(x.name);
+    if (!groups.has(k)) groups.set(k, { name: x.name, slug: k, titles: [] });
+    groups.get(k).titles.push({ t, number: x.number });
+  }
+  for (const g of groups.values()) g.titles.sort((a, b) => (a.number ?? 999) - (b.number ?? 999) || (a.t.meta.year || 9999) - (b.t.meta.year || 9999));
+  return [...groups.values()];
 }
