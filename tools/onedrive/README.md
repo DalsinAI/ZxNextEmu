@@ -15,7 +15,10 @@ python3 tools/onedrive/onedrive_local.py LIBRARY SHARE_LINK
 The raw files land in `LIBRARY/_onedrive/` and each title is copied into
 `LIBRARY/titles/<id>/` with a `title.json` (machines, year, authors, publisher,
 genre, ZXDB id) and up to three ZXDB screenshots. Raw `.hdf` hard-disk images
-are skipped; the same images are in the folder as `.rar`.
+are skipped; the same images are in the folder as `.rar`. Each tape side or
+part becomes a run of its own, a `.zip` is unpacked to the tapes and snapshots
+inside it, and files the player cannot load (`.sp`, `.slt`, `.mgt`, `.xml`) are
+left out. The script exits with status 1 if any download failed.
 
 `onedrive-records.json.gz` lists which files make up each title and the ZXDB
 entry each was matched to (4,035 titles from 4,492 files). A title whose ZXDB
