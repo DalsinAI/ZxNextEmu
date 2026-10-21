@@ -3,8 +3,10 @@
  * Cradle uses. For tests and scripting.
  *
  *   zxmrun -m machine [-r romdir] [-R n=file] [-f frames] [-t text [-d delay]]
- *          [-s out.ppm] [-w out.wav] [-x reset-after-media] [slot=file ...]
+ *          [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [slot=file ...]
  *
+ * -x resets (power on) after the media go in. -p prints memory, as the
+ * CPU sees it, after the run.
  * -R replaces ROM n (0..3, in the order the machine lists them); -R n=
  * leaves an optional ROM out. Media go in as slot=file: cart1=game.rom,
  * disk0=disk.dsk, ide0=folder-or-image, tape=game.tap. Block devices
@@ -135,6 +137,7 @@ int main(int argc, char **argv)
     const char *id = "msx2", *romdir = "roms", *text = NULL, *shot = NULL, *wav = NULL;
     const char *rom_override[4] = { NULL, NULL, NULL, NULL };
     int frames = 300, delay = 0, i, reset_after = 0, nmedia = 0;
+    unsigned dump_addr = 0, dump_len = 0;
     const char *media[16];
     const zxm_info *info;
     zxm_rom_set roms;
@@ -152,6 +155,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-s") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(a, "-w") && i + 1 < argc) wav = argv[++i];
         else if (!strcmp(a, "-x")) reset_after = 1;
+        else if (!strcmp(a, "-p") && i + 1 < argc && sscanf(argv[i + 1], "%x:%u", &dump_addr, &dump_len) == 2) i++;
         else if (!strcmp(a, "-R") && i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '3'
                  && argv[i + 1][1] == '=') {
             i++;
@@ -159,7 +163,7 @@ int main(int argc, char **argv)
         } else if (strchr(a, '=') && a[0] != '-' && nmedia < 16) media[nmedia++] = a;
         else {
             fprintf(stderr, "usage: %s -m machine [-r romdir] [-R n=file] [-f frames] [-t text [-d delay]]\n"
-                            "       [-s out.ppm] [-w out.wav] [-x] [slot=file ...]\n", argv[0]);
+                            "       [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [slot=file ...]\n", argv[0]);
             return 2;
         }
     }
@@ -229,6 +233,12 @@ int main(int argc, char **argv)
     }
     if (shot)
         save_ppm(m, shot);
+    if (dump_len) {
+        const zxm_debug *dbg = zxm_debugger(m);
+        unsigned k;
+        for (k = 0; k < dump_len; k++)
+            printf("%02x%s", dbg->peek(m, (uint16_t)(dump_addr + k)), (k & 15) == 15 || k + 1 == dump_len ? "\n" : " ");
+    }
     zxm_destroy(m);
     free(m);
     return 0;

@@ -201,8 +201,9 @@ static void sprites(vdp *v, int y, int mode, uint16_t spr[256])
     if (is_v9938(v) && (v->reg[8] & 2))
         return;
     if (mode2) {
-        attr = (((uint32_t)v->reg[11] & 3) << 15 | ((uint32_t)v->reg[5] & 0xfc) << 7) + 0x200;
-        ctab = attr - 0x200;
+        /* A9 of the attribute table is 1; the colours are 512 bytes below. */
+        attr = (((uint32_t)v->reg[11] & 3) << 15 | ((uint32_t)v->reg[5] & 0xf8) << 7) | 0x200;
+        ctab = attr & ~0x200u;
     } else {
         attr = ((uint32_t)v->reg[5] & 0x7f) << 7;
         if (is_v9938(v))
