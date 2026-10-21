@@ -300,7 +300,7 @@ function reviewsHtml(t) {
   const link = (x, text) => /^https?:/i.test(x.url || '') ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
   const score = x => x.score != null && x.scale ? `${+x.score}/${x.scale}` : '';
   return `<h3>Ratings and reviews${all ? ` <small class="lib-rating">★ ${all.score.toFixed(1)} out of 10</small>` : ''}</h3>
-    ${r.ratings.length ? `<ul class="det-ratings">${r.ratings.map(x => `<li>${link(x, x.site || 'Rating')} <b>${esc(score(x))}</b>${x.votes ? ` <small>${x.votes} vote${x.votes === 1 ? '' : 's'}</small>` : ''}${x.version ? ` <small>${esc(x.version)}</small>` : ''}</li>`).join('')}</ul>` : ''}
+    ${r.ratings.length ? `<ul class="det-ratings">${r.ratings.map(x => `<li>${link(x, x.site || 'Rating')} <b>${esc(score(x))}</b>${x.votes ? ` <small>${esc(String(x.votes))} vote${x.votes === 1 ? '' : 's'}</small>` : ''}${x.version ? ` <small>${esc(x.version)}</small>` : ''}</li>`).join('')}</ul>` : ''}
     ${r.reviews.map(x => `<article class="det-review">
       <header>${x.title ? `<b>${esc(x.title)}</b> ` : ''}<small>${[x.author && esc(x.author), x.site && link(x, x.site), x.date && esc(x.date), score(x) && `<b>${esc(score(x))}</b>`].filter(Boolean).join(' · ')}</small></header>
       <div class="det-review-text">${esc(x.text)}</div>
@@ -577,7 +577,8 @@ export async function queueShots() {
 // it does not load on the first machine it lists (a 128K game offered to the
 // 48K), try the next kind of machine, and list the one that worked first.
 async function takeShots(t) {
-  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !runParts(t, r).missing.length);
+  // A run that needs SymbOS cannot start on a bare machine, so it gets no automatic shots.
+  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !(r.needs || []).includes('symbos') && !runParts(t, r).missing.length);
   const fresh0 = () => titleGet(t.id);
   if (!run) {
     const f = await fresh0();

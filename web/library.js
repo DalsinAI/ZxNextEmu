@@ -657,7 +657,7 @@ export const langFlag = c => (LANGS[c]?.[1] || '').replace(/./g, ch => String.fr
 export function versionsOf(t) {
   const m = t.meta;
   const list = m.versions?.length ? m.versions : [{ id: '', label: '', year: m.year, language: m.language }];
-  const out = list.map(v => ({ ...v, runs: [] }));
+  const out = list.map(v => ({ ...v, language: v.language || m.language || 'en', runs: [] }));
   (m.runs || []).forEach((r, i) => (out.find(v => v.id && v.id === r.version) || out[0]).runs.push({ run: r, i }));
   return out;
 }
@@ -672,7 +672,10 @@ export const titleLangs = t => {
 
 export function normalizeReviews(r) {
   if (!r) return null;
-  const n = { format: 1, ...r, ratings: (r.ratings || []).filter(x => x && x.score != null && x.scale), reviews: (r.reviews || []).filter(x => x && x.text) };
+  const num = x => Number.isFinite(+x) ? +x : null;
+  const ratings = (r.ratings || []).filter(x => x && num(x.score) != null && num(x.scale))
+    .map(x => ({ ...x, score: num(x.score), scale: num(x.scale), votes: num(x.votes) ?? undefined }));
+  const n = { format: 1, ...r, ratings, reviews: (r.reviews || []).filter(x => x && x.text) };
   return n.ratings.length || n.reviews.length ? n : null;
 }
 
