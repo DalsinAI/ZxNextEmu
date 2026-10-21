@@ -297,6 +297,10 @@ const handlers = {
         const p = cstr('\n');
         x.zxm_type(m, p, 90);
         x.free(p);
+      } else if (msg.id === 'sam' && filled.has('disk.1')) {   // SAM BASIC starts a disk with BOOT
+        const p = cstr('\n\nboot\n');   // past the start-up screen, as tests/sam.c does
+        x.zxm_type(m, p, 150);
+        x.free(p);
       }
     }
     postMessage({ type: 'loadedSet' });

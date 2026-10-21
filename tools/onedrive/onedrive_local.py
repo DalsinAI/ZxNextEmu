@@ -317,10 +317,13 @@ def main():
         # 4, not 1: a network failure says nothing about the link, so a caller keeps it.
         print(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.', file=sys.stderr)
         sys.exit(4)
+    except ValueError as e:   # a cut-off or non-JSON answer: OneDrive's trouble, not the link's
+        print(f'OneDrive sent a broken answer ({e}). Run this again later.', file=sys.stderr)
+        sys.exit(4)
     say('Listing the OneDrive folder...')
     try:
         items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
-    except (urllib.error.URLError, OSError) as e:
+    except Exception as e:   # network, a broken answer or anything else: none of it shows the link is bad
         print(f'Listing the OneDrive folder failed ({e}). Run this again to carry on.', file=sys.stderr)
         sys.exit(4)
     want = None

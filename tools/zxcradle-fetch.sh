@@ -556,8 +556,8 @@ def zx_title(lib, p, rels, hw):
 
 
 def zxart(lib, section):
-    """Returns how many titles it tried, so LIMIT covers the whole section."""
-    made = 0
+    """Returns how many titles it filed, so LIMIT covers the whole section, and the catalog parts that failed."""
+    made, broken = 0, []
     for hw in ZX_HW[section]:
         if LIMIT and made >= LIMIT:
             break
@@ -573,8 +573,10 @@ def zxart(lib, section):
             if j is None:
                 if total is None or start + 1 >= total:
                     say(f'  zxart.ee {hw}: page {start} keeps failing; skipping the rest of {hw}')
+                    broken.append(f'{hw} from title {start}')
                     break
                 say(f'  zxart.ee {hw}: title {start} keeps failing on their server; skipping just that one')
+                broken.append(f'{hw} title {start}')
                 start += 1
                 continue
             total = j.get('totalAmount') or 0
@@ -586,8 +588,6 @@ def zxart(lib, section):
             start += len(prods)
             todo = [p for p in prods if not lib.has('zxart', p['id'])
                     and not html.unescape(p.get('categoriesString') or '').startswith('Press')]
-            if LIMIT:
-                todo = todo[:max(0, LIMIT - made)]
             if todo:
                 ids = [r for p in todo for r in p.get('releasesIds', [])]
                 rels, lost = {}, set()
@@ -605,12 +605,27 @@ def zxart(lib, section):
                 # Likewise a title whose author or publisher names did not arrive.
                 todo = [p for p in todo if not gone & (zx_people(p) | {x for i in p.get('releasesIds', []) if i in rels
                                                                          for x in zx_people(rels[i])})]
-                batch(todo, lambda p: zx_title(lib, p, [rels[i] for i in p.get('releasesIds', []) if i in rels], hw),
-                      f'{hw} {start}/{total}', len(todo))
-                made += len(todo)
+                title = lambda p: zx_title(lib, p, [rels[i] for i in p.get('releasesIds', []) if i in rels], hw)
+                if not LIMIT:
+                    batch(todo, title, f'{hw} {start}/{total}', len(todo))
+                    made += len(todo)
+                else:
+                    # A trial run goes one at a time and counts only titles filed, so a prod with
+                    # nothing to download does not use up the limit on every run.
+                    for p in todo:
+                        if made >= LIMIT:
+                            break
+                        try:
+                            msg = title(p)
+                        except Exception as e:
+                            msg = None
+                            log(hw, 'failed', e)
+                        if msg:
+                            made += 1
+                            say(f'[{hw}] {msg}')
             if (LIMIT and made >= LIMIT) or start >= total:
                 break
-    return made
+    return made, broken
 
 
 # ---------------------------------------------------------------- MB03+ site
@@ -935,6 +950,15 @@ SPEC256 = os.environ.get('SPEC256_URLS', 'https://codeload.github.com/helpquick/
                                           'https://codeload.github.com/mvvproject/Spec256-Games/zip/HEAD').split()
 
 
+def z80_is_48k(path):
+    with open(path, 'rb') as f:
+        h = f.read(35)
+    if len(h) < 35 or h[6] or h[7]:
+        return len(h) >= 30   # version 1 files are all 48K
+    ext = h[30] | h[31] << 8
+    return h[34] in ((0, 1) if ext == 23 else (0, 1, 3))   # 48K, 48K + IF1, and in v3 48K + MGT
+
+
 def spec256(lib):
     work = os.path.join(LIB, '.spec256')
     made = 0
@@ -979,8 +1003,11 @@ def spec256(lib):
                 files.append('files/' + safe_name(f))
             # Just what the Spec256 machine loads: its companion files and the snapshot.
             game = [f for f in files if re.search(r'\.(gfx|gf[0-7ab]|b\d\d|cfg|pal|sna|z80)$', f, re.I)]
-            if not any(re.search(r'\.(sna|z80)$', f, re.I) for f in game):
-                game = []   # graphics with no snapshot: nothing to start, so the files are kept without a run
+            snaps = [f for f in game if re.search(r'\.(sna|z80)$', f, re.I)]
+            # A run needs a snapshot to start and a companion to colour it. The Spec256 machine takes a
+            # 128K .sna but only a 48K .z80, so a 128K .z80 package is kept without a run too.
+            if not snaps or len(snaps) == len(game) or not all(f.lower().endswith('.sna') or z80_is_48k(os.path.join(tdir, f)) for f in snaps):
+                game = []
             runs = [{'platform': 'zx-spectrum', 'machines': ['spec256'], 'files': game, 'slot': 'gfx', 'needs': [],
                      'notes': '256 colours (Spec256). Load every file into the gfx slot, then the .sna into snapshot.'}] if game else []
             # A 128K snapshot (longer than the 49179-byte 48K one) will not load on a 48K machine.
@@ -1086,7 +1113,7 @@ def pouet_runs(files, plat):
 
 def demos(lib):
     """One title per pouet prod, with runs for every platform of ours it is listed under."""
-    seen = {}   # prod id -> the platform list it was found in
+    seen, broken = {}, []   # prod id -> the platform list it was found in; list pages that failed
     for plat in POUET_PLATFORMS:
         if LIMIT and len(seen) >= LIMIT * 4:   # a trial run collects a few spares for prods it cannot use
             break
@@ -1096,6 +1123,7 @@ def demos(lib):
                 pg = fetch('https://www.pouet.net/prodlist.php?' + urllib.parse.urlencode({'platform[]': plat, 'page': page})).decode('utf-8', 'replace')
             except Exception as e:
                 say(f'  pouet.net {plat} page {page}: {e}')
+                broken.append(f'{plat} page {page}')
                 break
             new = [i for i in dict.fromkeys(re.findall(r'prod\.php\?which=(\d+)', pg)) if i not in ids]
             if not new:
@@ -1151,20 +1179,22 @@ def demos(lib):
         return f'{name} ({len(files)} files)'
     if not LIMIT:
         batch(list(seen), one, 'pouet')
-        return
-    # A trial run counts only titles actually filed, so a prod with nothing to download does not use up the limit.
-    left = LIMIT
-    for pid in seen:
-        if left <= 0:
-            break
-        try:
-            msg = one(pid)
-        except Exception as e:
-            msg = None
-            log('pouet', pid, 'failed', e)
-        if msg:
-            left -= 1
-            say(f'[pouet] {msg}')
+    else:
+        # A trial run counts only titles actually filed, so a prod with nothing to download does not use up the limit.
+        left = LIMIT
+        for pid in seen:
+            if left <= 0:
+                break
+            try:
+                msg = one(pid)
+            except Exception as e:
+                msg = None
+                log('pouet', pid, 'failed', e)
+            if msg:
+                left -= 1
+                say(f'[pouet] {msg}')
+    if broken:  # the prods listed were done; this marks the section as stopped so a rerun fills the gap
+        raise RuntimeError(f'pouet.net {", ".join(broken)} could not be fetched')
 
 
 # ---------------------------------------------------------------- ratings and reviews
@@ -1396,11 +1426,13 @@ def main():
         t0 = time.time()
         try:
             if s in ZX_HW:
-                made = zxart(lib, s)
+                made, broken = zxart(lib, s)
                 if s == 'sam':
                     worldofsam(lib, made)
                 if s == 'mb03':
                     mb03_site(lib, made)
+                if broken:  # the rest was done; this marks the section as stopped so a rerun fills the gap
+                    raise RuntimeError(f'zxart.ee {", ".join(broken)} could not be fetched')
             elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'demos', 'reviews'):
                 globals()[s](lib)
             else:
