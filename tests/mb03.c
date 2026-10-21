@@ -1,7 +1,8 @@
 /*
  * Expansion-port interfaces (src/zx/expansion.c): the divMMC's paging and
  * automapping, TurboSound, the DACs, the Kempston mouse and the Timex
- * screens, driven through the machine's own bus.
+ * screens, the SAA1099, the SID and the ZXi registers, driven through the
+ * machine's own bus.
  *
  * usage: mb03 romdir
  */
@@ -229,6 +230,8 @@ static void test_dac(const char *romdir)
     CHECK(swing(&m, 0) > 4000 && swing(&m, 1) < 100, "stereo Covox left stays left");
     square(&m, 0x5f);
     CHECK(swing(&m, 1) > 4000 && swing(&m, 0) < 100, "SounDrive D is on the right");
+    square(&m, 0x3f);
+    CHECK(swing(&m, 0) > 1500 && swing(&m, 1) > 1500, "Czech DAC B plays on both sides");
     zx_free(&m);
 }
 
@@ -276,6 +279,149 @@ static void test_timex(const char *romdir)
     zx_free(&m);
 }
 
+static void saa(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x01ff, reg);
+    out(m, 0x00ff, v);
+}
+
+static void zxi(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x703b, reg);
+    out(m, 0x713b, v);
+}
+
+static void test_saa(const char *romdir)
+{
+    static zx m;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_SAA, NULL))
+        return;
+    park(&m);
+    saa(&m, 0x1c, 0x02);                 /* reset generators */
+    saa(&m, 0x1c, 0x01);                 /* sound on */
+    saa(&m, 0x00, 0xff);                 /* channel 0: left full, right off */
+    saa(&m, 0x08, 0x80);                 /* tone frequency */
+    saa(&m, 0x10, 0x03);                 /* octave 3 */
+    saa(&m, 0x14, 0x01);                 /* tone 0 on */
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) > 2000, "the SAA1099 plays a tone");
+    zx_free(&m);
+
+    /* on the MB03+ the SAA starts off and the ZXi register switches it on */
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_SAA | ZX_EXP_ZXI, NULL))
+        return;
+    park(&m);
+    out(&m, 0x703b, 1);
+    CHECK(in(&m, 0x713b) == ZXI_AUDIO_DEFAULT, "ZXi register 1 reads back the sound devices");
+    saa(&m, 0x1c, 0x01); saa(&m, 0x00, 0xff); saa(&m, 0x08, 0x80); saa(&m, 0x10, 0x03); saa(&m, 0x14, 0x01);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 100, "the SAA1099 is off by default");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT | ZXI_SAA);
+    /* this time through the ZXi ports: 6F3B register, 6E3B data */
+    out(&m, 0x6f3b, 0x1c); out(&m, 0x6e3b, 0x01);
+    out(&m, 0x6f3b, 0x00); out(&m, 0x6e3b, 0xff);
+    out(&m, 0x6f3b, 0x08); out(&m, 0x6e3b, 0x80);
+    out(&m, 0x6f3b, 0x10); out(&m, 0x6e3b, 0x03);
+    out(&m, 0x6f3b, 0x14); out(&m, 0x6e3b, 0x01);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) > 2000, "OUT 28731,1: OUT 28987,n turns the SAA1099 on");
+    zx_free(&m);
+}
+
+static void sidw(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x6c3b, reg);
+    out(m, 0x6d3b, v);
+}
+
+static void test_sid(const char *romdir)
+{
+    static zx m;
+    int loud, i;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_SID, NULL))
+        return;
+    park(&m);
+    sidw(&m, 0x18, 0x0f);                /* volume 15, no filter */
+    sidw(&m, 0x00, 0x00);
+    sidw(&m, 0x01, 0x1d);                /* about 440 Hz */
+    sidw(&m, 0x05, 0x00);                /* attack 2 ms, decay 6 ms */
+    sidw(&m, 0x06, 0xf0);                /* sustain 15, release 6 ms */
+    sidw(&m, 0x04, 0x21);                /* sawtooth, gate on */
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    loud = swing(&m, 0);
+    CHECK(loud > 3000, "the SID plays a sawtooth");
+    CHECK(swing(&m, 1) == loud, "the SID is mono");
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0x00, "ENV3 is voice 3's, not voice 1's");
+    sidw(&m, 0x12, 0x21);                /* voice 3 gate on; read its envelope */
+    sidw(&m, 0x13, 0x00);
+    sidw(&m, 0x14, 0xf0);
+    zx_run_frame(&m);
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0xff, "ENV3 reads the attacked envelope");
+    sidw(&m, 0x12, 0x20);
+    sidw(&m, 0x04, 0x20);                /* gate off: release */
+    for (i = 0; i < 3; i++)
+        zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 50, "the note dies away after release");
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0x00, "ENV3 reads zero after release");
+
+    /* low-pass at the bottom of its range takes most of a 440 Hz saw away */
+    sidw(&m, 0x04, 0x21);
+    sidw(&m, 0x15, 0x00);
+    sidw(&m, 0x16, 0x00);
+    sidw(&m, 0x17, 0x01);                /* voice 1 through the filter */
+    sidw(&m, 0x18, 0x1f);                /* low-pass */
+    for (i = 0; i < 3; i++)
+        zx_run_frame(&m);
+    CHECK(swing(&m, 0) < loud / 3, "the low-pass filter quietens the saw");
+    zx_free(&m);
+}
+
+static void test_zxi(const char *romdir)
+{
+    static zx m;
+    int ch;
+    /* With the AY switched off in register 1, a 128K's own AY answers. */
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_TURBOSOUND | ZX_EXP_ZXI | ZX_EXP_TIMEX, NULL))
+        return;
+    park(&m);
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_AY);
+    out(&m, 0xfffd, 0); out(&m, 0xbffd, 0x55);
+    CHECK(m.ay.reg[0] == 0x55, "the machine's AY takes the writes");
+    out(&m, 0xfffd, 0); out(&m, 0xbffd, 0xfc);
+    out(&m, 0xfffd, 1); out(&m, 0xbffd, 0x00);
+    out(&m, 0xfffd, 7); out(&m, 0xbffd, 0x3e);
+    out(&m, 0xfffd, 8); out(&m, 0xbffd, 0x0f);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    ch = swing(&m, 0);
+    CHECK(ch > 2000, "and plays");
+
+    /* register 12 bit 0 switches the Timex port off */
+    out(&m, 0x00ff, 1);
+    CHECK(m.exp->port_ff == 1, "Timex port on by default");
+    zxi(&m, 12, 0);
+    CHECK(m.exp->port_ff == 0, "Timex off resets the screen mode");
+    out(&m, 0x00ff, 1);
+    CHECK(m.exp->port_ff == 0, "and ignores port FF");
+    out(&m, 0x703b, 12);
+    CHECK(in(&m, 0x713b) == 0, "register 12 reads back");
+    /* m_zxi_101 is column 1 on the second row (723B) */
+    out(&m, 0x703b, 1);
+    out(&m, 0x723b, 0x02);
+    CHECK(in(&m, 0x723b) == 0x02 && in(&m, 0x713b) == (ZXI_AUDIO_DEFAULT & ~ZXI_AY), "rows are separate");
+    out(&m, 0x7c3b, 8);
+    out(&m, 0x7d3b, 3);
+    CHECK(in(&m, 0x7d3b) == 3 && in(&m, 0x7c3b) == 8, "g_zxi registers read back");
+    zx_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
@@ -285,6 +431,9 @@ int main(int argc, char **argv)
     test_dac(romdir);
     test_mouse(romdir);
     test_timex(romdir);
+    test_saa(romdir);
+    test_sid(romdir);
+    test_zxi(romdir);
     printf("%s\n", fails ? "mb03: FAILED" : "mb03: all passed");
     return fails != 0;
 }

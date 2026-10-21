@@ -58,11 +58,20 @@ fits these so far:
 
 - a divMMC with 512K RAM and two SD cards
 - TurboSound: three AYs, which also gives a 48K an AY
-- SpecDrum, Covox and SounDrive DACs
+- SpecDrum, Covox, SounDrive and Czech DACs
+- the SAM Coupé's SAA1099, on ports 6E3B/6F3B and FF/1FF
+- a SID (6581 or 8580) on ports 6C3B/6D3B
 - a Kempston mouse
 - the Timex second screen and hi-colour modes
+- the board's ZXi settings registers (703B selects, 713B-773B read and
+  write; 7C3B/7D3B for the general ones), as in the MB03+ Programmer's
+  Reference. Register 1 switches the sound devices on and off and register
+  0C the Timex modes; the rest are kept but have no effect yet
 
-The board's ULA+ is the machine's own, since every classic model has ULA+.
+As on the real board after its SetUp, the SAA1099 starts switched off,
+because its data port FF is also the Timex port. `OUT 28731,1: OUT 28987,127`
+switches it on. The board's ULA+ is the machine's own, since every classic
+model has ULA+.
 Both interfaces need the 8K esxDOS ROM, and the card is a folder, as on the
 Next:
 
@@ -218,7 +227,7 @@ mid-frame changes land where they do on the hardware.
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
 | ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
-| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen and hi-colour. Still to come: General Sound, SAA1099, SID, GigaScreen, Radastan, Timex hi-res, MBIDE/CF, RTC, the board's config registers |
+| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen and hi-colour, SAA1099, SID, the ZXi settings registers. Still to come: General Sound, GigaScreen, Radastan, Timex hi-res, MBIDE/CF, RTC |
 | Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
 | MSX1 / MSX2 | boot C-BIOS; TMS9918/9929 and V9938 (all modes, sprites, timed command engine), AY, PPI keyboard, joysticks, mouse, slots and sub-slots, memory mapper, RP5C01 clock, ROM cartridges with ASCII/Konami/SCC mappers, WD2793 floppy and Sunrise IDE. Not yet: tape, MSX-MUSIC, Kanji ROM, V9958 (MSX2+), CPU waits on VRAM access |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
@@ -237,7 +246,7 @@ mid-frame changes land where they do on the hardware.
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
 | Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`; `ZXM_SPEC256=game-folder` for a Spec256 game) |
-| Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens | all pass (`make mb03`) |
+| Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens, SAA1099, SID, ZXi registers | all pass (`make mb03`) |
 | esxDOS 0.8.9 on an MB03+ (48K, 128K, +3, Pentagon): boot, `SAVE *` into the SD folder | all pass (`make esxdos`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
 | SAM Coupé: BOOT SAMDOS from an MGT, SAVE from BASIC and read the bytes back from the image, SAA1099 pitch | all pass (`make sam`) |

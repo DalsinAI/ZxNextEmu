@@ -10,8 +10,11 @@
  * classic machine, with its 8K esxDOS ROM from ZXM_IFACE_ROM.
  * ZXM_SPEC256=folder loads a Spec256 game (machine spec256): its graphics
  * files into the "gfx" slot, then its .sna.
+ * ZXM_SNAP=file loads a snapshot after any interface is plugged in.
  * ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
- * waits before typing. A machine whose ROMs are missing is skipped (exit 77).
+ * waits before typing. ZXM_PEAK prints the loudest sample in each quarter of
+ * the second half to stderr. A machine whose ROMs are missing is skipped
+ * (exit 77).
  */
 #define _DEFAULT_SOURCE /* scandir */
 #include "../src/core/zxm.h"
@@ -85,6 +88,9 @@ static int load_spec256(zxm *m, const char *dir)
     return sna[0] ? insert_file(m, "snapshot", dir, sna) : -1;
 }
 
+/* Loudest sample in each quarter of a run, for ZXM_PEAK. */
+static int peak[4];
+
 static uint32_t run(zxm *m, int frames, uint32_t h)
 {
     const zxm_info *info = zxm_info_of(m);
@@ -98,6 +104,9 @@ static uint32_t run(zxm *m, int frames, uint32_t h)
             h = fnv(h, fb + (size_t)y * (size_t)pitch, info->fb_w * 2u);
         au = zxm_audio(m, &samples);
         h = fnv(h, au, (size_t)samples * 4);
+        for (y = 0; y < samples * 2; y++)
+            if (au[y] > peak[i * 4 / frames] || -au[y] > peak[i * 4 / frames])
+                peak[i * 4 / frames] = au[y] < 0 ? -au[y] : au[y];
     }
     return h;
 }
@@ -174,6 +183,15 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    if (getenv("ZXM_SNAP")) {
+        const char *path = getenv("ZXM_SNAP"), *slash = strrchr(path, '/');
+        char dir[1024];
+        snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - path) : 1, slash ? path : ".");
+        if (insert_file(m, "snapshot", dir, slash ? slash + 1 : path)) {
+            fprintf(stderr, "cannot load snapshot %s\n", path);
+            return 1;
+        }
+    }
     if (getenv("ZXM_SPEC256") && load_spec256(m, getenv("ZXM_SPEC256"))) {
         fprintf(stderr, "cannot load Spec256 game %s\n", getenv("ZXM_SPEC256"));
         return 1;
@@ -209,7 +227,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "state save failed\n");
         return 1;
     }
+    memset(peak, 0, sizeof peak);
     h1 = run(m, frames - half, h0);
+    if (getenv("ZXM_PEAK"))
+        fprintf(stderr, "peak %d %d %d %d\n", peak[0], peak[1], peak[2], peak[3]);
     /* Upset the machine, then put it back. */
     zxm_reset(m, ZXM_POWER_ON);
     run(m, 3, 0);

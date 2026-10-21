@@ -57,6 +57,16 @@ void zx_exp_power_on(zx *m)
         return;
     memset(e->div_ram, 0, sizeof e->div_ram);
     e->port_e3 = 0;
+    memset(e->zxi, 0, sizeof e->zxi);
+    memset(e->gzxi, 0, sizeof e->gzxi);
+    e->zxi[0][0x00] = 2;         /* divSD (esxDOS) */
+    e->zxi[0][0x01] = ZXI_AUDIO_DEFAULT;
+    e->zxi[0][0x03] = 1;         /* RTC */
+    e->zxi[0][0x06] = 1;         /* SD */
+    e->zxi[0][0x07] = 1;         /* Kempston */
+    e->zxi[0][0x0c] = 1;         /* Timex modes */
+    e->zxi[0][0x0d] = 1;         /* ULAplus */
+    sid_set_model(&e->sid, 0, 0);
     zx_exp_reset(m);
 }
 
@@ -77,6 +87,10 @@ void zx_exp_reset(zx *m)
     e->ay_select = 0;
     memset(e->dac, 0x80, sizeof e->dac);
     e->port_ff = 0;
+    saa_reset(&e->saa);
+    sid_reset(&e->sid);
+    e->sid_sel = 0;
+    e->zxi_sel = e->gzxi_sel = 0;
     update_map(m);
 }
 
@@ -184,6 +198,28 @@ static void spi_select(zx_exp *e, uint8_t v)
         nx_sd_deselect(e->sd[1]);
 }
 
+/* 713B-773B: rows 0-7 of the m_zxi registers */
+static int zxi_row(uint16_t port)
+{
+    return (port & 0xf8ff) == 0x703b && (port >> 8) >= 0x71 ? (port >> 8) - 0x71 : -1;
+}
+
+static void zxi_write(zx_exp *e, int row, uint8_t v)
+{
+    e->zxi[row][e->zxi_sel] = v;
+    if (row)
+        return;
+    switch (e->zxi_sel) {
+    case 0x0c:
+        if (!(v & 1))
+            e->port_ff = 0;      /* Timex modes off: the standard screen */
+        break;
+    case 0x19:
+        sid_set_model(&e->sid, v & 1, v & 2);
+        break;
+    }
+}
+
 int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
 {
     zx_exp *e = m->exp;
@@ -201,7 +237,19 @@ int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
             return 1;
         }
     }
-    if ((e->features & ZX_EXP_TURBOSOUND) && (port & 0xc002) == 0xc000) {
+    if (e->features & ZX_EXP_ZXI) {
+        int row = zxi_row(port);
+        if (port == 0x703b || port == 0x7c3b || row >= 0 || port == 0x7d3b) {
+            *v = port == 0x703b ? e->zxi_sel : port == 0x7c3b ? e->gzxi_sel
+               : row >= 0 ? e->zxi[row][e->zxi_sel] : e->gzxi[e->gzxi_sel];
+            return 1;
+        }
+    }
+    if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && port == 0x6d3b) {
+        *v = e->sid_sel == 0x1f ? (uint8_t)(e->sid.model | e->sid.ntsc << 1) : sid_read(&e->sid, e->sid_sel);
+        return 1;
+    }
+    if (zx_exp_turbosound(e) && (port & 0xc002) == 0xc000) {
         *v = ay_read(&e->ay[e->ay_select]);
         return 1;
     }
@@ -227,7 +275,32 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
             return;
         }
     }
-    if ((e->features & ZX_EXP_TURBOSOUND) && (port & 0x0002) == 0) {
+    if (e->features & ZX_EXP_ZXI) {
+        int row = zxi_row(port);
+        if (port == 0x703b) {
+            e->zxi_sel = v;
+            return;
+        } else if (row >= 0) {
+            zxi_write(e, row, v);
+            return;
+        } else if (port == 0x7c3b) {
+            e->gzxi_sel = v;
+            return;
+        } else if (port == 0x7d3b) {
+            e->gzxi[e->gzxi_sel] = v;
+            return;
+        }
+    }
+    if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && (port == 0x6c3b || port == 0x6d3b)) {
+        if (port == 0x6c3b)
+            e->sid_sel = v;
+        else if (e->sid_sel == 0x1f)
+            sid_set_model(&e->sid, v & 1, v & 2);
+        else if (e->sid_sel < 0x1d)
+            sid_write(&e->sid, e->sid_sel, v);
+        return;
+    }
+    if (zx_exp_turbosound(e) && (port & 0x0002) == 0) {
         if ((port & 0xc000) == 0xc000) {
             if ((v & 0xfc) == 0xfc && (v & 3))
                 e->ay_select = (uint8_t)(3 - (v & 3));   /* FF, FE, FD */
@@ -237,7 +310,7 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
             ay_write(&e->ay[e->ay_select], v);
         }
     }
-    if (e->features & ZX_EXP_DAC) {
+    if (zx_exp_on(e, ZX_EXP_DAC, ZXI_DAC)) {
         switch (lsb) {
         case 0xdf:               /* SpecDrum */
         case 0xfb:               /* Covox */
@@ -247,9 +320,16 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
         case 0x0f: e->dac[1] = v; break;   /* SounDrive, stereo Covox left */
         case 0x4f: e->dac[2] = v; break;   /* SounDrive, stereo Covox right */
         case 0x5f: e->dac[3] = v; break;   /* SounDrive */
+        case 0x3f: e->dac[4] = v; break;   /* Czech DAC B */
         }
     }
-    if ((e->features & ZX_EXP_TIMEX) && lsb == 0xff)
+    if (zx_exp_on(e, ZX_EXP_SAA, ZXI_SAA)) {
+        if (port == 0x6f3b || (lsb == 0xff && (port & 0x100)))
+            saa_write_address(&e->saa, v);
+        else if (port == 0x6e3b || lsb == 0xff)
+            saa_write_data(&e->saa, v);
+    }
+    if ((e->features & ZX_EXP_TIMEX) && lsb == 0xff && (!(e->features & ZX_EXP_ZXI) || (e->zxi[0][0x0c] & 1)))
         e->port_ff = v;
 }
 
@@ -258,7 +338,7 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
 void zx_exp_audio_run(zx *m, uint32_t dt)
 {
     zx_exp *e = m->exp;
-    if (e->features & ZX_EXP_TURBOSOUND) {
+    if (zx_exp_turbosound(e)) {
         /* clocked at CPU/2, like the machine's own AY */
         uint32_t c;
         e->ay_half += dt;
@@ -269,15 +349,26 @@ void zx_exp_audio_run(zx *m, uint32_t dt)
         ay_run(&e->ay[2], c);
     }
     if (e->features & ZX_EXP_DAC) {
-        e->dac_l += (int64_t)((int32_t)e->dac[0] + e->dac[1] - 256) * dt;
-        e->dac_r += (int64_t)((int32_t)e->dac[2] + e->dac[3] - 256) * dt;
+        int32_t mid = ((int32_t)e->dac[4] - 128) / 2;
+        e->dac_l += (int64_t)((int32_t)e->dac[0] + e->dac[1] - 256 + mid) * dt;
+        e->dac_r += (int64_t)((int32_t)e->dac[2] + e->dac[3] - 256 + mid) * dt;
+    }
+    if (zx_exp_on(e, ZX_EXP_SAA, ZXI_SAA)) {
+        e->saa_frac += (uint64_t)dt * 8000000u;
+        saa_run(&e->saa, (uint32_t)(e->saa_frac / m->tm->cpu_hz));
+        e->saa_frac %= m->tm->cpu_hz;
+    }
+    if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID)) {
+        e->sid_frac += (uint64_t)dt * sid_hz(&e->sid);
+        sid_run(&e->sid, (uint32_t)(e->sid_frac / m->tm->cpu_hz));
+        e->sid_frac %= m->tm->cpu_hz;
     }
 }
 
 void zx_exp_audio_take(zx *m, uint32_t span, int32_t *l, int32_t *r)
 {
     zx_exp *e = m->exp;
-    if (e->features & ZX_EXP_TURBOSOUND) {
+    if (zx_exp_turbosound(e)) {
         int i;
         for (i = 0; i < 3; i++) {
             int32_t ch[3];
@@ -297,6 +388,17 @@ void zx_exp_audio_take(zx *m, uint32_t span, int32_t *l, int32_t *r)
             *r += (int32_t)(e->dac_r / (int64_t)span) * 24;
         }
         e->dac_l = e->dac_r = 0;
+    }
+    if (zx_exp_on(e, ZX_EXP_SAA, ZXI_SAA)) {
+        int32_t sl, sr;
+        saa_take(&e->saa, &sl, &sr);
+        *l += sl * 8;           /* as on the SAM */
+        *r += sr * 8;
+    }
+    if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID)) {
+        int32_t s = sid_take(&e->sid);
+        *l += s;
+        *r += s;
     }
 }
 

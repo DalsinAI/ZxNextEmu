@@ -30,7 +30,7 @@ interface's slots and inputs to the instance):
 | Id | Interface | Notes |
 | --- | --- | --- |
 | `divmmc` | divMMC | esxDOS ROM, 512K, slot `sd0` |
-| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens; General Sound, SAA1099, SID, GigaScreen, MBIDE and the config registers to come |
+| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive/Czech DACs, SAA1099, SID, Kempston mouse, Timex screens, ZXi settings registers; General Sound, GigaScreen, Radastan, Timex hi-res and MBIDE to come |
 
 ## Wave 2: the big Z80 families
 
