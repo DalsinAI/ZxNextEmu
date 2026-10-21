@@ -668,6 +668,9 @@ def zxart(lib, section):
             if start == 0:
                 say(f'zxart.ee {hw}: {total} titles')
             if not prods:
+                if start < total:   # a short or broken answer, not the end of the list
+                    say(f'  zxart.ee {hw}: an empty page at title {start} of {total}')
+                    broken.append(f'{hw} from title {start}')
                 break
             start += len(prods)
             todo = [p for p in prods if not lib.has('zxart', p['id'])
@@ -789,10 +792,11 @@ def worldofsam(lib, made=0):
                 say(f'  worldofsam.org: {e}')
                 broken.append(f'{kind}s page {page + 1}')
                 break
-            new = [h for h in re.findall(r'<td[^>]*>\s*<a href="(/products/[^"?#]+)"', p) if h not in links]
-            if not new and page == 0:   # an interstitial or changed markup, not an empty category
-                say(f'  worldofsam.org: no {kind}s on the first page')
-                broken.append(f'{kind}s page 1 (unparsable)')
+            found = re.findall(r'<td[^>]*>\s*<a href="(/products/[^"?#]+)"', p)
+            new = [h for h in found if h not in links]
+            if not found:   # the first page, or one the page before linked to: an interstitial or changed markup
+                say(f'  worldofsam.org: no {kind}s on page {page + 1}')
+                broken.append(f'{kind}s page {page + 1} (unparsable)')
             for h in new:
                 links[h] = kind
             if not new or f'page={page + 1}"' not in p:
@@ -947,6 +951,8 @@ def msx(lib):
         key = ('msx-demo-' if demo else 'msx-') + slug(name)
         g = groups.setdefault(key, {'name': name, 'demo': demo, 'files': []})
         g['files'].append((d, p, gen))
+    if not groups:   # an error page or a changed layout: the archive is never empty
+        raise RuntimeError('file-hunter.com list had no MSX titles in it')
     say(f'file-hunter.com MSX: {len(groups)} titles')
     todo = [(k, g) for k, g in groups.items() if not lib.has('filehunter', k)]
     order = list(FH_DIRS)
@@ -1001,6 +1007,8 @@ def symbos(lib):
     except Exception as e:
         raise RuntimeError(f'symbos.de app list: {e}')
     apps = [r for r in js_rows(src.split('garrApps', 1)[-1]) if len(r) >= 17]
+    if not apps:   # an interstitial or a changed layout: the list is never empty
+        raise RuntimeError('symbos.de app list had no apps in it')
     say(f'symbos.de: {len(apps)} apps + SymbOS itself')
     made = 0
     if not lib.has('symbos', 'os'):
