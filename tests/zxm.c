@@ -41,7 +41,7 @@ static uint32_t run(zxm *m, int frames, uint32_t h)
 
 int main(int argc, char **argv)
 {
-    static uint8_t rom[4][0x4000];
+    static uint8_t rom[4][0x80000];
     const zxm_info *info;
     zxm_rom_set roms;
     zxm *m;
@@ -64,14 +64,18 @@ int main(int argc, char **argv)
     for (i = 0; info->roms[i]; i++) {
         char path[1024];
         FILE *fp;
+        size_t n;
         snprintf(path, sizeof path, "%s/%s", argv[1], info->roms[i]);
-        if (!(fp = fopen(path, "rb")) || fread(rom[i], 1, 0x4000, fp) != 0x4000) {
+        if (!(fp = fopen(path, "rb"))) {
+            if (info->rom_optional >> i & 1)
+                continue;
             fprintf(stderr, "cannot read %s\n", path);
             return 1;
         }
+        n = fread(rom[i], 1, sizeof rom[i], fp);
         fclose(fp);
         roms.rom[i] = rom[i];
-        roms.len[i] = 0x4000;
+        roms.len[i] = (uint32_t)n;
     }
     m = malloc(zxm_size(info));
     if (!m || zxm_create(m, info, &roms)) {
