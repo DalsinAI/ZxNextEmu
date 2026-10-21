@@ -286,6 +286,13 @@ function renderFilters() {
 
 // Ratings from each site, then the reviews, in English. A translated review
 // keeps its original a click away.
+// Where a demo competed: "3rd in the ZX Demo compo at Chaos Constructions 2019".
+function partyLine(p) {
+  if (!p || !(p.name || p.compo)) return '';
+  const nth = n => n + ((n % 100 >= 11 && n % 100 <= 13) ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+  return [p.place ? `${nth(p.place)} in` : 'Entered in', p.compo ? `the ${p.compo} compo` : null, p.name ? `at ${p.name}${p.year ? ` ${p.year}` : ''}` : null].filter(Boolean).join(' ');
+}
+
 function reviewsHtml(t) {
   const r = t.reviews;
   if (!r) return '';
@@ -360,6 +367,7 @@ export async function showDetail(id) {
       <div class="det-info">
         ${chips.length ? `<p class="chips">${chips.map(c => `<span class="badge">${esc(c)}</span>`).join('')}</p>` : ''}
         ${m.summary ? `<p class="det-summary">${esc(m.summary)}</p>` : ''}
+        ${partyLine(m.party) ? `<p class="det-party">${esc(partyLine(m.party))}</p>` : ''}
         <h3>${m.versions?.length > 1 ? 'Versions' : 'Runs on'}</h3><ul class="det-runs">${runs || '<li class="det-later">No files to run.</li>'}</ul>
         ${reviewsHtml(t)}
         ${controls.length ? `<h3>Controls</h3><p>${controls.map(esc).join('<br>')}</p>` : ''}
