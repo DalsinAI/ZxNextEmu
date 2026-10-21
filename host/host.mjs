@@ -9,6 +9,10 @@
 //                            with file sizes and paths, no file contents
 // GET /library/titles/<id>/<path>   one file of a title
 //
+// GET /roms.json             the page's ROMs plus the ROM files in ~/.zxcradle/roms
+//                            (or ZXCRADLE_ROMS): the ones that may not be shipped,
+//                            such as TR-DOS, the Scorpion and ATM sets and esxDOS
+//
 // ZXCRADLE_PORT moves the port (docs/cradle/design.md, "Ports");
 // ZXCRADLE_LIBRARY names the library folder. Standard library only.
 
@@ -25,6 +29,7 @@ const arg = (name, def) => { const i = process.argv.indexOf(name); return i > 0 
 const WEB = path.resolve(arg('--web', path.join(here, '..', 'build', 'web')));
 const LIBRARY = path.resolve(arg('--library', process.env.ZXCRADLE_LIBRARY || path.join(os.homedir(), '.zxcradle', 'library')));
 const TITLES = path.join(LIBRARY, 'titles');
+const ROMS = path.resolve(process.env.ZXCRADLE_ROMS || path.join(os.homedir(), '.zxcradle', 'roms'));
 const PORT = Number(process.env.ZXCRADLE_PORT || 7080);
 const RESCAN_MS = 10 * 60 * 1000;
 
@@ -54,7 +59,10 @@ async function listFiles(dir, base) {
     const p = path.join(dir, d.name);
     const rel = `${base}/${d.name}`;
     if (d.isDirectory()) out.push(...await listFiles(p, rel));
-    else if (d.isFile()) out.push({ path: rel, size: (await fsp.stat(p)).size });
+    else if (d.isFile()) {
+      // A fetch still filling the library can move a file away between the listing and here.
+      try { out.push({ path: rel, size: (await fsp.stat(p)).size }); } catch { /* gone */ }
+    }
   }
   return out;
 }
@@ -88,7 +96,8 @@ async function scan() {
       try { mtime = (await fsp.stat(path.join(TITLES, id))).mtimeMs; } catch { continue; }
       const c = cache.get(id);
       if (c && c.mtime === mtime) continue;
-      const entry = await readTitle(id);
+      let entry = null;
+      try { entry = await readTitle(id); } catch (err) { console.warn(`ZX Cradle: ${id}: ${err.message}`); }
       if (entry) { cache.set(id, { mtime, entry }); read++; } else cache.delete(id);
     }
   }));
@@ -131,6 +140,17 @@ async function handle(req, res) {
     const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
     const body = gz ? index.gz : index.json;
     res.writeHead(200, { 'content-type': 'application/json', 'content-length': body.length, 'cache-control': 'no-cache', ...(gz ? { 'content-encoding': 'gzip' } : {}) });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return;
+  }
+  if (rel === '/roms.json') {
+    let roms = {};
+    try { roms = JSON.parse(await fsp.readFile(path.join(WEB, 'roms.json'), 'utf8')); } catch { /* none shipped */ }
+    let names = [];
+    try { names = (await fsp.readdir(ROMS, { withFileTypes: true })).filter(d => d.isFile() && /\.(rom|bin)$/i.test(d.name)).map(d => d.name); } catch { /* no ROM folder */ }
+    for (const n of names) roms[n] = (await fsp.readFile(path.join(ROMS, n))).toString('base64');
+    const body = Buffer.from(JSON.stringify(roms));
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': body.length, 'cache-control': 'no-cache' });
     res.end(req.method === 'HEAD' ? undefined : body);
     return;
   }

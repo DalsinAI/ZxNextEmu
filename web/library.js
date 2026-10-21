@@ -565,11 +565,12 @@ export async function importCollection(data) {
 // Under the Node host (host/host.mjs) the library is a folder of titles on the
 // computer, read in place: the page gets every title's description, and a
 // title's files and screenshots only when they are needed. Returns [] when the
-// page is not served by the host.
+// page is not served by the host, and null while the host is still reading it.
 export async function hostTitles() {
   let data;
   try {
     const res = await fetch('library/titles.json');
+    if (res.status === 503) return null;   // the host is still reading the library folder
     if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return [];
     data = await res.json();
   } catch { return []; }
