@@ -236,6 +236,21 @@ function insert(slot, name, bytes) {
   return r === 0;
 }
 
+// Starting a Beta disk, per machine, checked with a scratch copy of tests/beta.c that
+// types through zxm_type: | is cursor down, ~ extended mode, \x01 a pause of one key.
+const BETA_BOOT = {
+  scorpion: [450, '\n'],                    // menu: 128 TR-DOS
+  atm2: [160, '|\n'],                       // menu: TR-DOS 48
+  pentagon: [110, '|||\n' + '\x01'.repeat(10) + 't~l15616\n' + '\x01'.repeat(26) + 'r\n'],   // 48 BASIC, RANDOMIZE USR 15616, RUN
+};
+
+// Tape autostart on the clones whose start-up menu does not open on a tape loader: 128 BASIC, then
+// LOAD "" (checked with each machine's ROMs). Pentagon's menu is the 128's, so Enter works there.
+const TAPE_BOOT = {
+  scorpion: [450, '|\n' + '\x01'.repeat(10) + 'load ""\n'],   // menu: 128 BASIC
+  atm2: [160, '||\n' + '\x01'.repeat(10) + 'load ""\n'],      // menu: 128 BASIC
+};
+
 const handlers = {
   async init(msg) { await init(msg.wasm, msg.roms, msg.extra); },
   // ROMs the user added: {"name.rom": "<base64>"}.
@@ -255,9 +270,10 @@ const handlers = {
       if (!insert('tape', msg.name, bytes)) throw new Error(`${msg.name} is not a tape this machine can read.`);
       if (msg.autostart) {
         x.zxm_reset(m, 1);
-        const is48 = msg.id === 'zx48';
-        const p = cstr(is48 ? 'j""\n' : '\n');
-        x.zxm_type(m, p, is48 ? 120 : 90);
+        const is48 = msg.id === 'zx48', sam = msg.id === 'sam', clone = TAPE_BOOT[msg.id];
+        // 48K: LOAD "" (J then quotes); SAM: past the start-up screen, then LOAD ""; 128K: the menu's Tape Loader
+        const p = cstr(is48 ? 'j""\n' : sam ? '\n\n' + '\x01'.repeat(5) + 'load ""\n' : clone ? clone[1] : '\n');
+        x.zxm_type(m, p, is48 ? 120 : sam ? 150 : clone ? clone[0] : 90);
         x.free(p);
       }
       postMessage({ type: 'media', slot: 'tape', name: msg.name });
@@ -279,10 +295,15 @@ const handlers = {
       if (p.slot === 'tape' || p.slot === 'snapshot') {
         handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
         starts = true;
-      } else if (!filled.has(p.slot)) {
+      } else if (p.slot === 'gfx' || !filled.has(p.slot)) {   // Spec256 takes every companion file
+        if (p.slot === 'gfx' && !filled.has('gfx')) {   // drop an earlier title's companions first
+          const s = cstr('gfx');
+          x.zxm_media_eject(m, s);
+          x.free(s);
+        }
         if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
         filled.add(p.slot);
-        if (/^(disk|cart)/.test(p.slot)) boots = true;
+        if (/^(disk|cart|beta)/.test(p.slot)) boots = true;
         postMessage({ type: 'media', slot: p.slot, name: p.name });
       }
     }
@@ -291,6 +312,15 @@ const handlers = {
       if (msg.id === 'plus3' || msg.id === 'plus2a') {   // the menu's Loader
         const p = cstr('\n');
         x.zxm_type(m, p, 90);
+        x.free(p);
+      } else if (msg.id === 'sam' && filled.has('disk.1')) {   // SAM BASIC starts a disk with BOOT
+        const p = cstr('\n\n' + '\x01'.repeat(5) + 'boot\n');   // past the start-up screen, as tests/sam.c does
+        x.zxm_type(m, p, 150);
+        x.free(p);
+      } else if (filled.has('beta.a') && BETA_BOOT[msg.id]) {   // into TR-DOS, which runs "boot"
+        const [delay, keys] = BETA_BOOT[msg.id];
+        const p = cstr(keys);
+        x.zxm_type(m, p, delay);
         x.free(p);
       }
     }
@@ -328,12 +358,15 @@ const handlers = {
     stop();
     const slot = cstr('tape');
     const limit = msg.limit || 30000, stall = msg.stall || 1500;
-    let f = 0, last = -2, since = 0, loaded = false;
+    let f = 0, last = -2, since = 0, loaded = false, typed = 0;
     for (; f < limit; f++) {
       x.zxm_run_frame(m);
       const p = x.zxm_media_progress(m, slot);
       if (p !== last) { last = p; since = f; }
-      if (f < (msg.settle || 150)) continue;
+      // Keys still being typed (a disk's boot command, after its delay): nothing has started
+      // loading yet, so the settle time counts from when the typing ends.
+      if (x.zxm_typing(m)) { typed = f; since = f; continue; }
+      if (f - typed < (msg.settle || 150)) continue;
       if (p < 0 || p >= 100) { loaded = true; break; }
       if (f - since > stall) break;   // the tape has stopped part way: it did not load
     }

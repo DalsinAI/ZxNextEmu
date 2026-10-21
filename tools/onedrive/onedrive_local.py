@@ -13,6 +13,9 @@ TODAY = datetime.date.today().isoformat()
 # which no machine has a drive for yet) is left out.
 LOADS = {'tape': ('.tap', '.tzx'), 'snapshot': ('.sna', '.z80')}
 NO_SLOT = {'snapshot': {'next'}}  # machines without that slot (src/core/zxm_zx.c)
+# A Next tape needs NextZXOS from an SD card the player cannot mount from bytes yet, and there is
+# no 16K machine (a 48K runs those), as in zxcradle-fetch.sh's run_table.
+MACHINE_AS = {'next': None, 'zx16': 'zx48'}
 
 def say(*a):
     print(*a, flush=True)
@@ -47,9 +50,12 @@ class OneDrive:
         self.root = root
 
     def renew(self):
-        r = http('https://api-badgerp.svc.ms/v1.0/token', {'Content-Type': 'application/json'},
-                 json.dumps({'appId': '5cbed6ac-a083-4e14-b191-b4ba07653de2'}).encode())
-        self.h = {'Authorization': 'Badger ' + json.load(r)['token'], 'Prefer': 'autoredeem'}
+        try:
+            r = http('https://api-badgerp.svc.ms/v1.0/token', {'Content-Type': 'application/json'},
+                     json.dumps({'appId': '5cbed6ac-a083-4e14-b191-b4ba07653de2'}).encode())
+            self.h = {'Authorization': 'Badger ' + json.load(r)['token'], 'Prefer': 'autoredeem'}
+        except (urllib.error.HTTPError, KeyError, ValueError) as e:
+            raise TokenError(e) from e
         self.sid = 'u!' + base64.urlsafe_b64encode(self.link.encode()).decode().rstrip('=')
         self.born = time.time()
 
@@ -206,7 +212,8 @@ def runs_for(got, sub):
     many = len(got) > 1
     rs = []
     for x, name, slot in got:
-        machines = [m for m in x['machines'] if m not in NO_SLOT.get(slot, ())]
+        machines = [MACHINE_AS.get(m, m) for m in x['machines'] if m not in NO_SLOT.get(slot, ())]
+        machines = list(dict.fromkeys(m for m in machines if m))
         if not machines:
             continue
         v = {'platform': 'zx-spectrum', 'machines': machines, 'files': ['files/' + sub + name], 'slot': slot, 'needs': []}
@@ -290,12 +297,20 @@ def file_title(r, dest, lib, link):
         ZXDB_INDEX[str(r['zxdb'])] = tid
     return tid, 'new'
 
+BAD_LINK = 5   # the exit status that means the share link itself is wrong; any other failure keeps it
+
+
 def clean_link(link):
     link = link.strip().strip('\'"<>').strip()
     if not re.match(r'^https://(1drv\.ms|onedrive\.live\.com)/', link):
-        sys.exit('That does not look like a OneDrive share link. It should start with https://1drv.ms/ '
-                 'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.')
+        print('That does not look like a OneDrive share link. It should start with https://1drv.ms/ '
+              'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.', file=sys.stderr)
+        sys.exit(BAD_LINK)
     return link
+
+class TokenError(Exception):
+    """OneDrive's sign-in token service failed; that says nothing about the share link."""
+
 
 def main():
     if len(sys.argv) < 3:
@@ -307,17 +322,35 @@ def main():
     os.makedirs(lib, exist_ok=True)
     try:
         od = OneDrive(link)
+    except TokenError as e:
+        print(f'OneDrive would not give out a sign-in token ({e}). Run this again later.', file=sys.stderr)
+        sys.exit(4)
     except urllib.error.HTTPError as e:
-        sys.exit(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
-                 'shared as "Anyone with the link can view", then run this again.')
+        if e.code >= 500 or e.code == 429:   # OneDrive itself is having trouble: the link may be fine
+            print(f'OneDrive is not answering properly (HTTP {e.code}). Run this again later.', file=sys.stderr)
+            sys.exit(4)
+        print(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
+              'shared as "Anyone with the link can view", then run this again.', file=sys.stderr)
+        sys.exit(BAD_LINK)
     except urllib.error.URLError as e:
-        sys.exit(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.')
+        # 4, not 1: a network failure says nothing about the link, so a caller keeps it.
+        print(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.', file=sys.stderr)
+        sys.exit(4)
+    except ValueError as e:   # a cut-off or non-JSON answer: OneDrive's trouble, not the link's
+        print(f'OneDrive sent a broken answer ({e}). Run this again later.', file=sys.stderr)
+        sys.exit(4)
     say('Listing the OneDrive folder...')
-    items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
+    try:
+        items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
+    except Exception as e:   # network, a broken answer or anything else: none of it shows the link is bad
+        print(f'Listing the OneDrive folder failed ({e}). Run this again to carry on.', file=sys.stderr)
+        sys.exit(4)
     want = None
     recs = json.load(gzip.open(recp, 'rt', encoding='utf-8')) if os.path.exists(recp) else []
-    if limit:
-        recs = recs[:limit]
+    logp = os.path.join(dest, '_onedrive', 'filed.json')
+    done = json.load(open(logp)) if os.path.exists(logp) else {}
+    if limit:   # a trial takes the next records not tried yet, so each run moves on; a full run retries missing ones
+        recs = [r for r in recs if str(r['zxdb'] or r['groups'][0]) not in done][:limit]
         want = {x['src'] for r in recs for x in r['runs']}
         items = [i for i in items if i['path'] in want]
     total = sum(i['size'] for i in items)
@@ -335,16 +368,16 @@ def main():
     if not recs:
         say('No records file found, so the files are downloaded but not filed into the library.')
         sys.exit(3 if failed else 0)
-    logp = os.path.join(dest, '_onedrive', 'filed.json')
-    done = json.load(open(logp)) if os.path.exists(logp) else {}
     index_library(lib)
     say(f'Filing {len(recs)} titles into {lib}...')
+    missing = 0
     for n, r in enumerate(recs, 1):
         key = str(r['zxdb'] or r['groups'][0])
         if done.get(key) in ('new', 'merged'):
             continue
         tid, st = file_title(r, dest, lib, link)
         done[key] = st
+        missing += st == 'missing'
         if n % 100 == 0 or n == len(recs):
             write_json(logp, done)
             say(f'  {n}/{len(recs)} titles')
@@ -352,7 +385,9 @@ def main():
     c = {s: sum(1 for v in done.values() if v == s) for s in ('new', 'merged', 'missing', 'unsupported')}
     say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing, '
         f'{c["unsupported"]} with no file the player can load.')
-    if failed:
+    if failed or missing:
+        if missing and not failed:
+            say(f'{missing} titles name files that are not in the shared folder; run this again to retry them.')
         sys.exit(3)  # 3, not 1, so a caller can tell failed downloads from a bad link
 
 if __name__ == '__main__':
