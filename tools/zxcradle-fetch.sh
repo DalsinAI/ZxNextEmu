@@ -210,6 +210,17 @@ class Library:
         if (j.get('ids') or {}).get('zxart') and runs and all(r.get('platform', 'zx-spectrum') == 'zx-spectrum' for r in runs):
             self.zxart_names.add(norm(j.get('name')))
 
+    def zxart_sam(self, name):
+        """The SAM title zxart.ee filed under exactly this name, if there is one."""
+        for sid in [t for t in self.used if t == slug(name) + '-sam' or t.startswith(slug(name) + '-sam-')]:
+            try:
+                j = json.load(open(os.path.join(TITLES, sid, 'title.json'), encoding='utf-8'))
+            except Exception:
+                continue
+            if (j.get('ids') or {}).get('zxart') and 'samcoupe' in (j.get('tags') or []) and norm(j.get('name')) == norm(name):
+                return sid
+        return None
+
     def has_zxart_name(self, name):
         return norm(name) in self.zxart_names
 
@@ -276,6 +287,7 @@ class Library:
                 json.dump(j, f, indent=2, ensure_ascii=False)
             os.replace(tmp, path)
             self.ids[(key, str(val))] = sid
+            self.note_zxart(j)
 
 
 def unpack(path, dest, charset=None):
@@ -670,6 +682,10 @@ def zxart(lib, section):
                         jr = fetch_json(f'{ZX}/types:zxRelease/export:zxRelease/start:0/limit:50/filter:zxReleaseId={",".join(map(str, ids[i:i + 50]))};')
                         for r in jr['responseData'].get('zxRelease') or []:
                             rels[r['id']] = r
+                        miss = set(ids[i:i + 50]) - set(rels)   # asked for but not sent: as good as lost
+                        if miss:
+                            lost.update(miss)
+                            broken.append(f'{hw} release details near title {start}')
                     except Exception as e:
                         log('zxart releases', e)
                         lost.update(ids[i:i + 50])
@@ -786,8 +802,9 @@ def worldofsam(lib, made=0):
         urls = sorted(set(re.findall(r'href="(https://www\.worldofsam\.org/system/files/[^"]+)"', p)))
         if not urls:
             return False
-        if os.path.exists(os.path.join(TITLES, slug(name) + '-sam', 'title.json')):
-            lib.link(slug(name) + '-sam', 'worldofsam', h)   # already filed from zxart.ee; noted so it is not fetched again
+        same = lib.zxart_sam(name)
+        if same:
+            lib.link(same, 'worldofsam', h)   # already filed from zxart.ee; noted so it is not fetched again
             return False
         sid = lib.claim(name, '-sam', 'worldofsam', h)
         tdir = os.path.join(TITLES, sid)
@@ -838,11 +855,15 @@ def vtrd(lib):
             say(f'  vtrd.in {t}: {e}')
             lost.append(t)
             continue
+        n0 = len(rows)
         for m in re.finditer(r'<tr[^>]*><td nowrap><a href="(/[^"]+)">(.*?)</a></td><td>(.*?)</td><td>(.*?)</td>'
                              r'<td>[^<]*</td><td>(?:<a[^>]*href="(/release\.php\?r=[0-9a-f]+)")?', page):
             href, name, auth, grp, rel = m.groups()
             rows.append((t, href, html.unescape(re.sub('<[^>]+>', '', name)).replace('\xa0', ' ').strip(),
                          html.unescape(auth).strip(), html.unescape(grp).strip(), rel))
+        if len(rows) == n0:   # a page with no games: changed markup or an error page, not an empty list
+            say(f'  vtrd.in {t}: no games found on the page')
+            lost.append(t)
     say(f'vtrd.in: {len(rows)} titles')
     # A full version whose name zxart.ee already filed is skipped before LIMIT, so trial runs keep moving on.
     todo = [r for r in rows if not lib.has('vtrd', r[1])
@@ -930,7 +951,9 @@ def msx(lib):
         runs, n = [], 0
         for d, p, gen in sorted(g['files'], key=lambda x: order.index(x[0])):
             slot = FH_DIRS[d]
-            files = get_files(tdir, FH + p, p.rsplit('/', 1)[-1])
+            # Each folder's file in its own directory: Games/MSX1/ROM/Foo.zip and Games/MSX2/ROM/Foo.zip both come.
+            fn = p.rsplit('/', 1)[-1]
+            files = get_files(tdir, FH + p, fn, sub=slug(d) + '-' + re.sub(r'(\.[a-z0-9]{2,4})+$', '', fn, flags=re.I))
             if not files:
                 # Leave the title unfinished so the next run tries every file of the group again.
                 log('filehunter', p, 'gave no files')
@@ -988,6 +1011,9 @@ def symbos(lib):
                              'summary': 'Multitasking windowed operating system for Z80 machines.', 'license': 'freeware',
                              'source': SY, 'sources': [SY], 'ids': {'symbos': 'os'}, 'runs': runs})
             say('[symbos] SymbOS 4.0')
+        else:   # left unfinished; the section is marked failed so a rerun fetches it
+            with LOCK:
+                MISSED[0] += 1
     todo = [a for a in apps if not lib.has('symbos', a[0]) and (a[7] == '0' or set(a[7]) & {'2', '7'})]
 
     def one(a):
