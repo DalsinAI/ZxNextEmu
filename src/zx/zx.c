@@ -3,7 +3,9 @@
 #include "expansion.h"
 #include "../next/next.h"
 #include "../spec256/spec256.h"
+#include "../storage/blockdev.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define NOCONT 0xffffffffu
@@ -19,6 +21,11 @@ const zx_timing zx_timings[ZX_MODEL_COUNT] = {
     /* The Next keeps its own timing (src/next); this row names it and gives
      * the 3.5 MHz frame for pacing. */
     { "Next",      69888, 224, 32, 14336, NOCONT, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 3500000, 1750000 },
+    /* Scorpion: libspectrum's table (312 lines, INT 36 T long). */
+    { "Scorpion",  69888, 224, 36, 14336, NOCONT, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 3500000, 1750000 },
+    /* ATM Turbo 2+: Unreal Speccy's ATM preset; 7 MHz turbo runs two CPU
+     * T-states to each of these. */
+    { "ATM Turbo 2+", 69888, 224, 32, 17989, NOCONT, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 3500000, 1750000 },
 };
 
 static const struct { const char *name; zx_model model; } model_names[] = {
@@ -26,6 +33,8 @@ static const struct { const char *name; zx_model model; } model_names[] = {
     { "plus2", ZX_PLUS2 }, { "+2", ZX_PLUS2 }, { "plus2a", ZX_PLUS2A }, { "+2a", ZX_PLUS2A },
     { "plus3", ZX_PLUS3 }, { "+3", ZX_PLUS3 }, { "pentagon", ZX_PENTAGON },
     { "next", ZX_NEXT }, { "tbblue", ZX_NEXT },
+    { "scorpion", ZX_SCORPION }, { "zs256", ZX_SCORPION },
+    { "atm2", ZX_ATM2 }, { "atm", ZX_ATM2 },
 };
 
 int zx_model_from_name(const char *name, zx_model *out)
@@ -44,6 +53,20 @@ static int is_plus3(const zx *m) { return m->model == ZX_PLUS2A || m->model == Z
 static int has_ay(const zx *m) { return m->model != ZX_48K; }
 /* An interface's TurboSound takes over the AY ports. */
 static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && (m->exp->features & ZX_EXP_TURBOSOUND)); }
+static int is_atm(const zx *m) { return m->model == ZX_ATM2; }
+
+/* Absolute time in T-states, for the disk controller. */
+static inline uint64_t now_t(const zx *m)
+{
+    return m->frames * m->tm->frame_t + m->t;
+}
+
+/* The TR-DOS ROM and the Beta ports are on: paged in by the 3Dxx trap, or
+ * forced by the ATM's CP/M bit. */
+static inline int dos_on(const zx *m)
+{
+    return m->dos || (is_atm(m) && !(m->atm.p77_hi & 2));
+}
 
 /* ---- contention -------------------------------------------------------- */
 
@@ -124,10 +147,103 @@ static void draw_chunk(zx *m, uint32_t c)
     }
 }
 
+/* ---- ATM Turbo 2+ video ------------------------------------------------------
+ *
+ * The picture is 640 wide (each classic pixel is two). Mode 3 is the
+ * Spectrum screen; modes 0 (320x200, 16 colours), 2 (640x200 with an
+ * attribute per 8 pixels) and 6 (80x25 text) show a 320x200 raster that
+ * starts 4 lines above and 32 pixels left of the Spectrum paper, filling
+ * the width. They read the screen page (5 or 7) and the page 4 below it.
+ * Every colour goes through the 16-entry palette. */
+
+#define ATM_W (ZX_SCREEN_W * 2)
+
+static inline uint16_t atm_ink(const zx *m, uint8_t c)
+{
+    return m->atm.pal[((c & 0x40) >> 3) | (c & 7)];
+}
+
+static inline uint16_t atm_paper(const zx *m, uint8_t c)
+{
+    return m->atm.pal[((c & 0x80) >> 4) | ((c >> 3) & 7)];
+}
+
+/* Text mode characters: the 48K ROM's character set (the ATM's own
+ * character generator is not emulated); codes outside 32..127 are blank. */
+static inline uint8_t atm_font(const zx *m, uint8_t ch, int line)
+{
+    return ch >= 32 && ch < 128 ? m->rom[0][0x3d00 + (ch - 32) * 8 + line] : 0;
+}
+
+static void draw_chunk_atm(zx *m, uint32_t c)
+{
+    int y = (int)(c / CHUNKS_PER_LINE), cx = (int)(c % CHUNKS_PER_LINE), i;
+    uint16_t *px = m->wide + (size_t)y * ATM_W + (size_t)cx * 16;
+    int mode = m->atm.p77 & 7, yy = y - (ZX_BORDER_Y - 4);
+    const uint8_t *hi = m->ram[m->screen_page], *lo = m->ram[m->screen_page - 4];
+
+    if (mode == 3) {
+        int row = y - ZX_BORDER_Y, col = cx - ZX_BORDER_X / 8;
+        if (row >= 0 && row < 192 && col >= 0 && col < 32) {
+            uint8_t bits = hi[((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col];
+            uint8_t attr = hi[6144 + (row >> 3) * 32 + col];
+            uint16_t ink = m->atm.pal[(attr & 7) | ((attr & 0x40) >> 3)];
+            uint16_t paper = m->atm.pal[((attr >> 3) & 7) | ((attr & 0x40) >> 3)];
+            if ((attr & 0x80) && (m->frames & 16))
+                bits = (uint8_t)~bits;
+            for (i = 0; i < 8; i++)
+                px[2 * i] = px[2 * i + 1] = (bits & (0x80 >> i)) ? ink : paper;
+            return;
+        }
+    } else if (yy >= 0 && yy < 200 && (mode == 0 || mode == 2 || mode == 6)) {
+        uint32_t g = (uint32_t)yy * 40 + (uint32_t)cx;
+        if (mode == 0) {
+            const uint8_t b[4] = { lo[g], hi[g], lo[g + 0x2000], hi[g + 0x2000] };
+            for (i = 0; i < 4; i++) {
+                px[4 * i] = px[4 * i + 1] = atm_ink(m, b[i]);
+                px[4 * i + 2] = px[4 * i + 3] = atm_paper(m, b[i]);
+            }
+        } else {
+            uint8_t bits[2], attr[2];
+            int h;
+            if (mode == 2) {
+                bits[0] = hi[g]; attr[0] = lo[g];
+                bits[1] = hi[g + 0x2000]; attr[1] = lo[g + 0x2000];
+            } else {
+                uint32_t a = 0x1c0 + (uint32_t)(yy >> 3) * 64 + (uint32_t)cx;
+                bits[0] = atm_font(m, hi[a], yy & 7); attr[0] = lo[a + 0x2000];
+                bits[1] = atm_font(m, hi[a + 0x2000], yy & 7); attr[1] = lo[a + 1];
+            }
+            for (h = 0; h < 2; h++) {
+                uint16_t ink = atm_ink(m, attr[h]), paper = atm_paper(m, attr[h]);
+                for (i = 0; i < 8; i++)
+                    px[8 * h + i] = (bits[h] & (0x80 >> i)) ? ink : paper;
+            }
+        }
+        return;
+    }
+    for (i = 0; i < 16; i++)
+        px[i] = m->atm.pal[m->border & 15];
+}
+
+/* The ATM palette register: inverted, two bits a gun, grbG--RB. */
+static uint16_t atm_colour(uint8_t raw)
+{
+    static const uint8_t level[4] = { 0, 2, 5, 7 };
+    uint8_t v = (uint8_t)~raw;
+    int r = ((v >> 1) & 1) << 1 | ((v >> 6) & 1);
+    int g = ((v >> 4) & 1) << 1 | ((v >> 7) & 1);
+    int b = (v & 1) << 1 | ((v >> 5) & 1);
+    return (uint16_t)(level[r] << 6 | level[g] << 3 | level[b]);
+}
+
 static void video_update(zx *m, uint32_t upto)
 {
     while (m->video_chunk < CHUNKS && chunk_t(m, m->video_chunk) <= (int32_t)upto) {
-        draw_chunk(m, m->video_chunk);
+        if (m->wide)
+            draw_chunk_atm(m, m->video_chunk);
+        else
+            draw_chunk(m, m->video_chunk);
         m->video_chunk++;
     }
 }
@@ -245,8 +361,47 @@ static void update_paging(zx *m)
             m->contended[3] = page >= 4;
         }
         break;
+    case ZX_SCORPION:
+        /* 1FFD: bit 0 RAM 0 at 0000, bit 1 the service monitor ROM, bit 4
+         * the upper 128K. ROMs: 0 128K, 1 48K, 2 monitor, 3 TR-DOS. */
+        if (m->port_1ffd & 1) {
+            m->rd[0] = m->wr[0] = m->ram[0];
+        } else {
+            rom = (m->port_1ffd & 2) ? 2 : m->dos ? 3 : (m->port_7ffd >> 4) & 1;
+            m->rd[0] = m->rom[rom]; m->wr[0] = NULL;
+        }
+        page = (m->port_7ffd & 7) | ((m->port_1ffd & 0x10) >> 1);
+        m->rd[1] = m->wr[1] = m->ram[5];
+        m->rd[2] = m->wr[2] = m->ram[2];
+        m->rd[3] = m->wr[3] = m->ram[page];
+        for (i = 0; i < 4; i++)
+            m->contended[i] = 0;
+        break;
+    case ZX_ATM2:
+        /* Each window takes a page from #xxF7 (two sets of four, chosen by
+         * 7FFD bit 4), written inverted: bit 6 RAM, bit 7 mixes in 7FFD's
+         * bank (RAM) or the TR-DOS line (ROM). Until #xx77 sets pen
+         * (A8), every window shows the last ROM page. ROMs: 0 48K, 1
+         * TR-DOS, 2 128K, 3 the ATM's own. */
+        for (i = 0; i < 4; i++) {
+            uint8_t v = m->atm.page[((m->port_7ffd & 0x10) >> 2) | i];
+            int pg = ~v & 0x3f;
+            m->contended[i] = 0;
+            if (!(m->atm.p77_hi & 1)) {
+                m->rd[i] = m->rom[3]; m->wr[i] = NULL;
+            } else if (v & 0x40) {
+                if (v & 0x80)
+                    pg = (pg & 0x38) | (m->port_7ffd & 7);
+                m->rd[i] = m->wr[i] = m->ram[pg & (m->ram_pages - 1)];
+            } else {
+                if (v & 0x80)
+                    pg = (pg & 0x3e) | dos_on(m);
+                m->rd[i] = m->rom[pg & 3]; m->wr[i] = NULL;
+            }
+        }
+        break;
     default: /* 128K, +2, Pentagon */
-        rom = (m->port_7ffd >> 4) & 1;
+        rom = (m->model == ZX_PENTAGON && m->dos) ? 2 : (m->port_7ffd >> 4) & 1;
         page = m->port_7ffd & 7;
         m->rd[0] = m->rom[rom]; m->wr[0] = NULL;
         m->rd[1] = m->wr[1] = m->ram[5];
@@ -259,6 +414,16 @@ static void update_paging(zx *m)
         break;
     }
     m->screen_page = (m->port_7ffd & 8) ? 7 : 5;
+}
+
+/* The ROM holding the 48K BASIC tape routines. */
+static int tape_rom(const zx *m)
+{
+    switch (m->model) {
+    case ZX_48K: case ZX_ATM2: return 0;
+    case ZX_PLUS2A: case ZX_PLUS3: return 3;
+    default: return 1;
+    }
 }
 
 /* ---- bus --------------------------------------------------------------- */
@@ -284,9 +449,29 @@ static inline void mem_write(zx *m, uint16_t addr, uint8_t v)
     p[addr & 0x3fff] = v;
 }
 
+/* TR-DOS comes in when the CPU fetches from 3Dxx in the 48K BASIC ROM, and
+ * goes when it fetches from RAM. */
+static void dos_trap(zx *m, uint16_t addr)
+{
+    if (m->dos) {
+        if (m->wr[addr >> 14]) {
+            m->dos = 0;
+            update_paging(m);
+        }
+    } else if ((addr & 0xff00) == 0x3d00
+               && (is_atm(m) ? !m->wr[0] && (m->port_7ffd & 0x10) : m->rd[0] == m->rom[1])) {
+        m->dos = 1;
+        update_paging(m);
+    }
+}
+
 static uint8_t b_fetch(void *ctx, uint16_t addr)
 {
     zx *m = ctx;
+    if (m->has_beta)
+        dos_trap(m, addr);
+    if (m->model == ZX_SCORPION)
+        m->t = (m->t + 1) & ~1u;         /* M1 starts on an even T-state */
     if (m->contended[addr >> 14])
         m->t += contention(m, m->t);
     m->t += 4;
@@ -362,6 +547,8 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
 
     io_timing(m, port);
 
+    if (dos_on(m) && m->has_beta && beta_port((uint8_t)port))
+        return beta_read(&m->beta, (uint8_t)port, now_t(m));
     if (!(port & 1)) {
         uint8_t k = 0x1f;
         for (i = 0; i < 8; i++)
@@ -386,9 +573,13 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
         return v;
     if ((port & 0xe0) == 0) { /* Kempston on port 0x1F */
         v = m->kempston;
+        /* The Scorpion's joystick port also shows the Beta's INTRQ and
+         * DRQ (bits 7, 6); its service ROM waits on them there. */
+        if (m->model == ZX_SCORPION)
+            v = (uint8_t)((v & 0x1f) | (beta_read(&m->beta, 0xff, now_t(m)) & 0xe0));
         have = 1;
     }
-    if (own_ay(m) && (port & 0xc002) == 0xc000) {
+    if (own_ay(m) && (port & (is_atm(m) ? 0xc202 : 0xc002)) == (is_atm(m) ? 0xc200 : 0xc000)) {
         v = ay_read(&m->ay);
         have = 1;
     }
@@ -401,6 +592,8 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
     return v;
 }
 
+static void atm_io_write(zx *m, uint16_t port, uint8_t v);
+
 static void b_io_write(void *ctx, uint16_t port, uint8_t v)
 {
     zx *m = ctx;
@@ -410,6 +603,8 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
         video_update(m, m->t);
         audio_update(m, m->t);
         m->border = v & 7;
+        if (is_atm(m) && !(port & 8))    /* A3 low: bright border */
+            m->border |= 8;
         m->speaker = (v >> 4) & 1;
         m->mic = (v >> 3) & 1;
     }
@@ -417,6 +612,14 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
         video_update(m, m->t);
         audio_update(m, m->t);
         zx_exp_io_write(m, port, v);
+    }
+    if (is_atm(m)) {
+        atm_io_write(m, port, v);
+        return;
+    }
+    if (dos_on(m) && m->has_beta && beta_port((uint8_t)port)) {
+        beta_write(&m->beta, (uint8_t)port, v, now_t(m));
+        return;
     }
     if (port == 0xbf3b) {           /* ULA+ register select */
         m->ulaplus_reg = v;
@@ -433,7 +636,17 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
     if (m->model == ZX_48K)
         return;
 
-    if (is_plus3(m)) {
+    if (m->model == ZX_SCORPION) {
+        if ((port & 0xc023) == 0x4021 && !m->paging_locked) {
+            video_update(m, m->t);
+            m->port_7ffd = v;
+            m->paging_locked = (v >> 5) & 1;
+            update_paging(m);
+        } else if ((port & 0xc023) == 0x0021) {
+            m->port_1ffd = v;
+            update_paging(m);
+        }
+    } else if (is_plus3(m)) {
         if ((port & 0xc002) == 0x4000 && !m->paging_locked) {
             video_update(m, m->t);
             m->port_7ffd = v;
@@ -460,6 +673,47 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
     }
 }
 
+/* ATM Turbo 2+ ports. 7FFD and the AY decode A15, A9 and A1. With TR-DOS
+ * on: #xx77 the system port (its address lines too), #xxF7 the window
+ * pages, #FF (and its A5/A6 aliases) the palette as well as the Beta. */
+static void atm_io_write(zx *m, uint16_t port, uint8_t v)
+{
+    uint8_t lo = (uint8_t)port;
+    if ((port & 0x8202) == 0x0200 && !m->paging_locked) {
+        video_update(m, m->t);
+        m->port_7ffd = v;
+        m->paging_locked = (v >> 5) & 1;
+        update_paging(m);
+    }
+    if ((port & 0xc202) == 0xc200) {
+        m->ay.sel = v;
+    } else if ((port & 0xc202) == 0x8200) {
+        audio_update(m, m->t);
+        ay_write(&m->ay, v);
+    }
+    if (!dos_on(m))
+        return;
+    if (lo == 0x77) {
+        video_update(m, m->t);
+        m->atm.p77 = v;
+        m->atm.p77_hi = (uint8_t)(port >> 8);
+        update_paging(m);
+        return;
+    }
+    if (lo == 0xf7) {
+        m->atm.page[((m->port_7ffd & 0x10) >> 2) | (port >> 14)] = v;
+        update_paging(m);
+        return;
+    }
+    if ((lo & 0x9f) == 0x9f && !(m->atm.p77_hi & 0x40)) {
+        video_update(m, m->t);
+        m->atm.pal_raw[m->border & 15] = v;
+        m->atm.pal[m->border & 15] = atm_colour(v);
+    }
+    if (beta_port(lo))
+        beta_write(&m->beta, lo, v, now_t(m));
+}
+
 /* ---- state --------------------------------------------------------------- */
 
 #define STATE_MAGIC   0x534d585au  /* "ZXMS" */
@@ -481,11 +735,17 @@ typedef struct state_hdr {
     uint32_t zx_size, nx_size, tape_size, exp_size;
 } state_hdr;
 
+/* RAM beyond the eight pages inside the struct. */
+static size_t ext_ram(const zx *m)
+{
+    return (const void *)m->ram == (const void *)m->ram8 ? 0 : (size_t)m->ram_pages * 0x4000;
+}
+
 size_t zx_state_size(const zx *m)
 {
     return sizeof(state_hdr) + sizeof(zx)
         + (m->model == ZX_NEXT ? nx_state_size(m) : 0)
-        + zx_exp_state_size(m) + zx_tape_state_size()
+        + zx_exp_state_size(m) + ext_ram(m) + zx_tape_state_size()
         + (m->s256 ? s256_state_size(m->s256) : 0);
 }
 
@@ -526,6 +786,8 @@ int zx_state_save(const zx *m, void *buf, size_t len)
         nx_state_save(m, p);
         p += h.nx_size;
     }
+    memcpy(p, m->ram, ext_ram(m));
+    p += ext_ram(m);
     if (m->exp) {
         zx_exp_state_save(m, p);
         p += h.exp_size;
@@ -551,7 +813,11 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     struct zx_tape *tape = m->tape;
     struct s256 *s256 = m->s256;
     struct zx_exp *exp = m->exp;
-    int has_sd[2];
+    uint8_t (*ram)[0x4000] = m->ram;
+    uint16_t *wide = m->wide;
+    struct zx_blockdev *disk[BETA_DRIVES];
+    uint8_t *raw[BETA_DRIVES];
+    int has_sd[2], i;
     if (len < sizeof h)
         return -1;
     memcpy(&h, p, sizeof h);
@@ -564,8 +830,10 @@ int zx_state_load(zx *m, const void *buf, size_t len)
         return -1;
     p += sizeof h;
     /* The live machine's pointers: the timing table, the bus callbacks,
-     * the picture, the Next's own state, the interface and the tape stay
-     * as they are. */
+     * the picture, the Next's own state, the interface, the RAM, the tape
+     * and the disks stay as they are. */
+    memcpy(disk, m->beta.disk, sizeof disk);
+    memcpy(raw, m->beta.raw, sizeof raw);
     memcpy(m, p, sizeof *m);
     p += sizeof *m;
     m->tm = tm;
@@ -575,12 +843,20 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     m->tape = tape;
     m->s256 = s256;
     m->exp = exp;
+    m->ram = ram;
+    m->wide = wide;
+    for (i = 0; i < BETA_DRIVES; i++) {
+        m->beta.disk[i] = disk[i];
+        m->beta.raw[i] = raw[i];
+    }
     if (m->model == ZX_NEXT) {
         has_sd[0] = (h.flags & ST_SD0) != 0;
         has_sd[1] = (h.flags & ST_SD1) != 0;
         nx_state_load(m, p, has_sd);
         p += h.nx_size;
     } else {
+        memcpy(m->ram, p, ext_ram(m));
+        p += ext_ram(m);
         update_paging(m);
     }
     if (m->exp) {
@@ -605,13 +881,20 @@ static const char *const rom_files[ZX_MODEL_COUNT][4] = {
     { "plus2-0.rom", "plus2-1.rom" },
     { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
     { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom" },
-    { "128-0.rom", "128-1.rom" },
+    { "128-0.rom", "128-1.rom", "trdos.rom" },
     { NULL },
+    { "256s-0.rom", "256s-1.rom", "256s-2.rom", "256s-3.rom" },
+    { "atm2-0.rom", "atm2-1.rom", "atm2-2.rom", "atm2-3.rom" },
 };
 
 const char *zx_rom_file(zx_model model, int i)
 {
     return model < ZX_MODEL_COUNT && i >= 0 && i < 4 ? rom_files[model][i] : NULL;
+}
+
+int zx_rom_optional(zx_model model, int i)
+{
+    return model == ZX_PENTAGON && i == 2;
 }
 
 int zx_create(zx *m, zx_model model, const uint8_t *const roms[4])
@@ -631,14 +914,42 @@ int zx_create(zx *m, zx_model model, const uint8_t *const roms[4])
             m->keys[i] = 0x1f;
         return nx_init(m);
     }
+    m->ram = m->ram8;
+    m->ram_pages = 8;
     for (i = 0; i < 4; i++) {
         memset(m->rom[i], 0xff, sizeof m->rom[i]);
         if (rom_files[model][i]) {
-            if (!roms || !roms[i])
+            if (!roms || !roms[i]) {
+                if (zx_rom_optional(model, i))
+                    continue;
                 return -1;
+            }
             memcpy(m->rom[i], roms[i], sizeof m->rom[i]);
         }
     }
+    if (model == ZX_SCORPION || model == ZX_ATM2) {
+        m->ram_pages = model == ZX_SCORPION ? 16 : 64;
+        m->ram = calloc((size_t)m->ram_pages, 0x4000);
+        if (!m->ram) {
+            m->ram = m->ram8;
+            return -1;
+        }
+    }
+    if (model == ZX_ATM2) {
+        m->wide = calloc((size_t)ATM_W * ZX_SCREEN_H, sizeof *m->wide);
+        if (!m->wide) {
+            zx_free(m);
+            return -1;
+        }
+        m->pixels = m->wide;
+        m->screen_w = m->pitch = ATM_W;
+        for (i = 0; i < 16; i++) {
+            m->atm.pal[i] = zx_colour[i];
+            m->atm.pal_raw[i] = 0xff;
+        }
+    }
+    m->has_beta = model == ZX_SCORPION || model == ZX_ATM2 || (model == ZX_PENTAGON && roms && roms[2]);
+    beta_init(&m->beta, m->tm->cpu_hz);
     z80_init(&m->cpu, 0);
     m->bus.ctx = m;
     m->bus.fetch = b_fetch;
@@ -654,9 +965,38 @@ int zx_create(zx *m, zx_model model, const uint8_t *const roms[4])
 
 void zx_free(zx *m)
 {
-    if (m->model == ZX_NEXT)
+    if (m->model == ZX_NEXT) {
         nx_free(m);
+        return;
+    }
     zx_exp_free(m);
+    beta_free(&m->beta);
+    if (m->ram && m->ram != m->ram8)
+        free(m->ram);
+    m->ram = m->ram8;
+    m->ram_pages = 8;
+    free(m->wide);
+    m->wide = NULL;
+    m->pixels = &m->screen[0][0];
+}
+
+int zx_attach_disk_dev(zx *m, int drive, struct zx_blockdev *bd)
+{
+    if (!m->has_beta)
+        return -1;
+    return beta_insert(&m->beta, drive, bd);
+}
+
+int zx_attach_disk_image(zx *m, int drive, const uint8_t *data, size_t len, int scl)
+{
+    if (!m->has_beta || len > 0x1000000)
+        return -1;
+    return beta_insert_image(&m->beta, drive, data, (uint32_t)len, scl);
+}
+
+void zx_eject_disk(zx *m, int drive)
+{
+    beta_eject(&m->beta, drive);
 }
 
 int zx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd)
@@ -677,6 +1017,15 @@ void zx_reset(zx *m)
     m->port_7ffd = 0;
     m->port_1ffd = 0;
     m->paging_locked = m->model == ZX_48K;
+    m->dos = 0;
+    if (is_atm(m)) {
+        /* Reset clears pen and cpm: the ATM ROM in every window, TR-DOS
+         * ports on. Spectrum screen, INT on, no turbo. */
+        m->atm.p77 = 0x23;
+        m->atm.p77_hi = 0;
+        m->atm.carry = 0;
+    }
+    beta_reset(&m->beta);
     update_paging(m);
     m->border = 7;
     m->ulaplus_reg = m->ulaplus_mode = 0;
@@ -739,21 +1088,29 @@ void zx_run_frame(zx *m)
     m->audio_samples = 0;
 
     while (m->t < frame_t) {
+        uint32_t t0 = m->t;
         if (m->t < m->tm->int_len && z80_int_enabled(&m->cpu)
-            && !(m->exp && (m->exp->port_ff & 0x40))) {
+            && !(m->exp && (m->exp->port_ff & 0x40))
+            && !(is_atm(m) && !(m->atm.p77 & 0x20))) {   /* the ATM's INT gate */
             if (m->s256)
                 s256_interrupt(m->s256);
             else
                 z80_interrupt(&m->cpu, &m->bus);
+        } else if (m->tape && m->cpu.pc == 0x0556 && !m->div_map && m->rd[0] == m->rom[tape_rom(m)]
+                   && zx_tape_trap(m->tape, m)) {
             continue;
-        }
-        if (m->tape && m->cpu.pc == 0x0556 && !m->div_map && m->rd[0] == m->rom[m->model == ZX_48K ? 0 : (is_plus3(m) ? 3 : 1)])
-            if (zx_tape_trap(m->tape, m))
-                continue;
-        if (m->s256)
+        } else if (m->s256) {
             s256_step(m->s256);
-        else
+        } else {
             z80_step(&m->cpu, &m->bus);
+        }
+        if (is_atm(m) && (m->atm.p77 & 8)) {
+            /* 7 MHz: two CPU T-states to each 3.5 MHz one. Ports inside an
+             * instruction see the unhalved count. */
+            uint32_t d = m->t - t0 + m->atm.carry;
+            m->t = t0 + d / 2;
+            m->atm.carry = (uint8_t)(d & 1);
+        }
     }
 
     video_update(m, 0xffffffffu >> 1);

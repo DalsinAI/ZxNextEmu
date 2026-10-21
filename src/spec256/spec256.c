@@ -68,7 +68,7 @@ static uint8_t *planes_of(s256 *s, const uint8_t *page)
 {
     zx *m = s->m;
     uintptr_t p = (uintptr_t)page, r = (uintptr_t)&m->ram[0][0], o = (uintptr_t)&m->rom[0][0];
-    if (p - r < sizeof m->ram)
+    if (p - r < (uintptr_t)m->ram_pages * PAGE)
         return s->ram[(p - r) / PAGE];
     if (p - o < sizeof m->rom)
         return s->rom[(p - o) / PAGE];

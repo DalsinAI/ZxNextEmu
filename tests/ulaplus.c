@@ -50,7 +50,9 @@ int main(int argc, char **argv)
             char path[1024];
             FILE *fp;
             snprintf(path, sizeof path, "%s/%s", argv[1], info->roms[i]);
-            if (!(fp = fopen(path, "rb")) || fread(rom[i], 1, 0x4000, fp) != 0x4000) {
+            if (!(fp = fopen(path, "rb")) && (info->rom_optional >> i & 1))
+                continue;
+            if (!fp || fread(rom[i], 1, 0x4000, fp) != 0x4000) {
                 fprintf(stderr, "cannot read %s\n", path);
                 return 1;
             }
