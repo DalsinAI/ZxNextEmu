@@ -189,6 +189,10 @@ int main(int argc, char **argv)
         DIR *d = opendir(gfx);
         struct dirent *e;
         size_t n;
+        if (!d) {
+            perror(gfx);
+            return 1;
+        }
         while (d && (e = readdir(d)) != NULL) {
             uint8_t *f;
             n = strlen(e->d_name);
@@ -199,8 +203,7 @@ int main(int argc, char **argv)
                 s256_add_file(s, e->d_name, f, n);
             free(f);
         }
-        if (d)
-            closedir(d);
+        closedir(d);
         s256_set_name(s, snap);
     }
     s256_roms(s, 0, roms);
