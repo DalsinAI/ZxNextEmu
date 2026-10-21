@@ -478,6 +478,10 @@ def zx_title(lib, p, rels, hw):
         needs = [HW_NEEDS[h] for h in hwr if h in HW_NEEDS] or ([HW_NEEDS[hw]] if hw in HW_NEEDS and not hwr else [])
         likes = [HW_LIKES[h] for h in hwr if h in HW_LIKES]
         files = get_files(tdir, r['file'], r['fileName'], charset, sub=vid)
+        if not files:
+            # Leave the title unfinished (its .claim stays) so the next run tries every release again.
+            log('zxart', p['id'], 'release', r['id'], 'gave no files')
+            return None
         nfiles += len(files)
         vruns = group_runs([run_table(f, mach, 'sam-coupe' if sam or 'sam' in mach else 'zx-spectrum', needs, likes,
                                       versions[-1]['label']) for f in files])
@@ -514,8 +518,12 @@ def zx_title(lib, p, rels, hw):
 
 
 def zxart(lib, section):
+    """Returns how many titles it tried, so LIMIT covers the whole section."""
+    made = 0
     for hw in ZX_HW[section]:
-        start, made, total = 0, 0, None
+        if LIMIT and made >= LIMIT:
+            break
+        start, total = 0, None
         while True:
             j = None
             for lim in (100, 20, 5, 1):
@@ -558,6 +566,7 @@ def zxart(lib, section):
                 made += len(todo)
             if (LIMIT and made >= LIMIT) or start >= total:
                 break
+    return made
 
 
 # ---------------------------------------------------------------- MB03+ site
@@ -578,7 +587,7 @@ MB03_RECS = [
 ]
 
 
-def mb03_site(lib):
+def mb03_site(lib, made=0):
     try:
         page = fetch(f'https://drive.google.com/embeddedfolderview?id={MB03_DRIVE}').decode('utf-8', 'replace')
     except Exception as e:
@@ -589,6 +598,9 @@ def mb03_site(lib):
     for name, kind, year, fn, summary in MB03_RECS:
         if lib.has('mb03site', fn) or fn not in ids:
             continue
+        if LIMIT and made >= LIMIT:
+            break
+        made += 1
         sid = lib.claim(name, '-mb03', 'mb03site', fn)
         tdir = os.path.join(TITLES, sid)
         files = get_files(tdir, f'https://drive.usercontent.google.com/download?id={ids[fn]}&export=download&confirm=t', fn)
@@ -611,7 +623,7 @@ def wos_field(p, label):
     return [html.unescape(x).strip() for x in re.findall(r'>([^<>]+)<', m.group(1)) if x.strip()] if m else []
 
 
-def worldofsam(lib):
+def worldofsam(lib, made=0):
     links = {}
     for cat, kind in ((3, 'game'), (4, 'demo')):
         page = 0
@@ -630,7 +642,7 @@ def worldofsam(lib):
     say(f'worldofsam.org: {len(links)} titles')
     todo = [x for x in links.items() if not lib.has('worldofsam', x[0])]
     if LIMIT:
-        todo = todo[:LIMIT]
+        todo = todo[:max(0, LIMIT - made)]
 
     def one(item):
         h, kind = item
@@ -918,7 +930,7 @@ def spec256(lib):
 # share link stays on this machine in .onedrive-link.
 
 RAW = os.environ.get('ZXC_RAW', 'https://raw.githubusercontent.com/DalsinAI/ZxNextEmu/{ref}/tools/onedrive/')
-REFS = ['main', 'claude/project-thread-lij4ub']
+REFS = ['main']
 
 
 def onedrive(lib):
@@ -944,6 +956,9 @@ def onedrive(lib):
     if LIMIT:
         env['ZXC_LIMIT'] = str(LIMIT)
     rc = subprocess.run([sys.executable, '-u', '-I', os.path.join(tool, 'onedrive_local.py'), LIB, link], env=env).returncode
+    if rc == 3:
+        lib.__init__()
+        raise RuntimeError('some OneDrive files could not be downloaded; run again to retry them')
     if rc:
         os.replace(lf, lf + '.failed')
         say(f'  OneDrive importer stopped (code {rc}). The saved link may be wrong, so it has been set aside;\n'
@@ -1037,6 +1052,8 @@ def demos(lib):
             else:
                 runs = group_runs([run_table(f, mach, platform) for f in files])
             if not runs:
+                if platform != 'zx-spectrum':
+                    return None  # MSX and SAM have no SD card slot to fall back on
                 runs = [{'platform': platform, 'machines': mach, 'files': files, 'slot': 'sd0', 'needs': [],
                          'notes': 'No runnable file recognised; see files/.'}]
             pl = (p.get('placings') or [{}])[0] if p.get('placings') else {}
@@ -1178,11 +1195,13 @@ def zxart_reviews(zid, prod):
     if prod and prod.get('votesAmount'):
         ratings.append({'site': 'zxart', 'url': url, 'score': float(prod.get('votes') or 0), 'scale': 5,
                         'votes': int(prod['votesAmount']), 'version': None})
+    # A failed fetch raises, so this title keeps its old reviews.json and is tried again next run.
     try:
         cs = json.loads(fetch(f'https://zxart.ee/comments-data/id:{zid}/?lang=eng'))
-    except Exception as e:
-        log('zxart comments', zid, e)
-        cs = []
+    except RuntimeError as e:
+        if 'HTTP Error 404' not in str(e):
+            raise
+        cs = []  # no comments page: nothing to keep
     stack = list(cs or [])
     while stack:
         c = stack.pop(0)
@@ -1274,6 +1293,7 @@ def reviews(lib):
 # ---------------------------------------------------------------- main
 
 def main():
+    failed = []
     lib = Library()
     say(f'{len(lib.used)} titles already in the library')
     for s in SECTIONS:
@@ -1281,11 +1301,11 @@ def main():
         t0 = time.time()
         try:
             if s in ZX_HW:
-                zxart(lib, s)
+                made = zxart(lib, s)
                 if s == 'sam':
-                    worldofsam(lib)
+                    worldofsam(lib, made)
                 if s == 'mb03':
-                    mb03_site(lib)
+                    mb03_site(lib, made)
             elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'demos', 'reviews'):
                 globals()[s](lib)
             else:
@@ -1295,9 +1315,13 @@ def main():
         except Exception as e:
             say(f'  {s} stopped: {e}')
             log(s, 'stopped', e)
+            failed.append(s)
         say(f'== {s} done in {int(time.time() - t0)}s ==')
     n = sum(1 for t in os.listdir(TITLES) if os.path.exists(os.path.join(TITLES, t, 'title.json')))
     say(f'\nAll done. {n} titles in {TITLES}. Problems, if any, are listed in {os.path.join(LIB, "fetch.log")}.')
+    if failed:
+        say(f'These sections stopped early: {", ".join(failed)}. Run the same command again to carry on.')
+        sys.exit(1)
 
 
 try:
