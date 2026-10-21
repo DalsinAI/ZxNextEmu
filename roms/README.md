@@ -25,11 +25,6 @@ SimCoupé's resources, which ship it on that basis.
 The Spectrum Next's NextZXOS and TBBlue firmware are not stored here; they
 come from the official distribution SD image (see the top-level README).
 
-The Oric-1 and Oric Atmos BASIC ROMs are not stored here either: their
-copyright holders are long gone and nobody has granted redistribution, so
-supply your own `basic10.rom` (Oric-1, CRC32 `f18710b4`) and `basic11b.rom`
-(Atmos, CRC32 `c3a92bef`).
-
 ## MSX: C-BIOS
 
 The MSX machines boot [C-BIOS](https://cbios.sourceforge.net/) 0.29a, a free
