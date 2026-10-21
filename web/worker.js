@@ -52,7 +52,7 @@ function makeLut() {
   }
 }
 
-async function init(wasmUrl, romsUrl = 'roms.json') {
+async function init(wasmUrl, romsUrl = 'roms.json', extra = {}) {
   const { instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), {});
   x = instance.exports;
   x._initialize?.();
@@ -71,10 +71,21 @@ async function init(wasmUrl, romsUrl = 'roms.json') {
     machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms,
       optional: dv().getUint32(p + 44, true) });
   }
-  // A machine is available when every ROM it must have is in roms.json.
-  try { await loadRoms(romsUrl); } catch { /* none: nothing is available */ }
-  for (const mc of machines) mc.available = !!romCache && mc.roms.every((r, k) => romCache[r] || (mc.optional >> k & 1));
-  postMessage({ type: 'ready', machines });
+  allMachines = machines;
+  // A machine is available when every ROM it must have is in roms.json or
+  // was added by the user.
+  try { await loadRoms(romsUrl); } catch { romCache = {}; }
+  Object.assign(romCache, extra);
+  postMessage({ type: 'ready', machines: availability() });
+}
+
+let allMachines = [];
+function availability() {
+  for (const mc of allMachines) {
+    mc.missing = mc.roms.filter((r, k) => !romCache[r] && !(mc.optional >> k & 1));
+    mc.available = !mc.missing.length;
+  }
+  return allMachines;
 }
 
 // ROM images come in one JSON file, {"48.rom": "<base64>", ...}.
@@ -226,7 +237,9 @@ function insert(slot, name, bytes) {
 }
 
 const handlers = {
-  async init(msg) { await init(msg.wasm, msg.roms); },
+  async init(msg) { await init(msg.wasm, msg.roms, msg.extra); },
+  // ROMs the user added: {"name.rom": "<base64>"}.
+  addRoms(msg) { Object.assign(romCache ??= {}, msg.roms); postMessage({ type: 'machines', machines: availability() }); },
   async create(msg) { await create(msg.id, msg.roms); },
   start, stop,
   step() { if (!running && m) frame(); },

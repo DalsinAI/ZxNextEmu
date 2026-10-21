@@ -3,7 +3,7 @@
 
 import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
-  importCollection, label, machineLabels, rgbaToPng, pictureScore, toToml, runParts, attachFiles,
+  importCollection, label, machineLabels, rgbaToPng, pictureScore, toToml, runParts, attachFiles, romsAdded,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -389,8 +389,13 @@ function hidden() {
     waiters.push({ types: [...types, 'error'], resolve: d => d.type === 'error' ? reject(new Error(d.message)) : resolve(d), collect });
     w.postMessage(msg);
   });
-  shooter = { call, ready: call({ cmd: 'init', wasm: 'zxcore.wasm' }, ['ready']) };
+  shooter = { w, call, ready: romsAdded().catch(() => ({})).then(extra => call({ cmd: 'init', wasm: 'zxcore.wasm', extra }, ['ready'])) };
   return shooter;
+}
+
+// The user added ROMs: the hidden machine gets them too.
+export function romsChanged(roms) {
+  shooter?.ready.then(() => shooter.w.postMessage({ cmd: 'addRoms', roms }));
 }
 
 export async function queueShots() {

@@ -10,11 +10,12 @@
 let dbp = null;
 export function db() {
   dbp ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open('zx-cradle', 2);
+    const r = indexedDB.open('zx-cradle', 3);
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains('media')) d.createObjectStore('media', { keyPath: 'id', autoIncrement: true });
       if (!d.objectStoreNames.contains('titles')) d.createObjectStore('titles', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('roms')) d.createObjectStore('roms', { keyPath: 'name' });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -35,6 +36,15 @@ export const titleAll = () => tx('titles', 'readonly', s => s.getAll());
 export const titleGet = id => tx('titles', 'readonly', s => s.get(id));
 export const titlePut = t => tx('titles', 'readwrite', s => s.put({ ...t, updated: Date.now() }));
 export const titleDelete = id => tx('titles', 'readwrite', s => s.delete(id));
+
+// ROMs the user added for machines whose ROMs are not shipped, as
+// {"name.rom": "<base64>"}, the shape of roms.json.
+export async function romsAdded() {
+  const out = {};
+  for (const r of await tx('roms', 'readonly', s => s.getAll())) out[r.name] = r.b64;
+  return out;
+}
+export const romAdd = (name, b64) => tx('roms', 'readwrite', s => s.put({ name, b64, added: Date.now() }));
 
 // ---- machines -------------------------------------------------------------
 
