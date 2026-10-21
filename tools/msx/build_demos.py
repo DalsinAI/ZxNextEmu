@@ -94,9 +94,10 @@ for folder in sorted(os.listdir(root)):
             if e not in bykind:
                 continue
             slot, nd = SLOTS[e]
-            if slot == 'cart1':
+            # Hardware no emulated MSX has (V9990, V9968, turbo R, MSX2+): files only, no run.
+            if slot == 'cart1' and not hneeds:
                 for g in bykind[e]:
-                    run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd + hneeds)
+                    run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
                     if h:
                         run['mapper'] = h['mapper']
