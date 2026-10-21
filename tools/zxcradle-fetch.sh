@@ -15,6 +15,8 @@
 #          msx       MSX1/MSX2 games and demos (file-hunter.com)
 #          symbos    SymbOS and its apps for Next and MSX2 (symbos.de)
 #          spec256   256-colour Spectrum games (GitHub Spec256-Games)
+#          onedrive  your own OneDrive Spectrum folder (asks for the share link once,
+#                    keeps it in TARGET/.onedrive-link, never in the repo)
 #
 # Each title becomes TARGET/titles/<id>/ with title.json (format 2), about.md,
 # files/ and screens/ (see docs/cradle/titles.md). Run it again at any time:
@@ -47,6 +49,14 @@ case "$TARGET" in
     fi ;;
 esac
 mkdir -p "$TARGET/titles"
+case ",$SECTIONS," in
+  *,all,*|*,onedrive,*)
+    if [ ! -s "$TARGET/.onedrive-link" ] && [ -r /dev/tty ]; then
+      printf 'Paste your OneDrive share link for the Spectrum folder (or just press Enter to skip it): '
+      read -r link < /dev/tty || link=""
+      if [ -n "$link" ]; then printf '%s\n' "$link" > "$TARGET/.onedrive-link"; chmod 600 "$TARGET/.onedrive-link"; fi
+    fi ;;
+esac
 echo "Library: $TARGET"
 echo "Sections: $SECTIONS"
 echo "Stop with Ctrl-C at any time; run the same command again to carry on."
@@ -60,7 +70,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 LIB = sys.argv[1]
 TITLES = os.path.join(LIB, 'titles')
-SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['spectrum', 'next', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256']
+SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256']
 LIMIT = int(os.environ.get('LIMIT') or 0)
 WORKERS = int(os.environ.get('WORKERS') or 4)
 MAX_REL = int(os.environ.get('MAX_RELEASES') or 3)
@@ -870,6 +880,42 @@ def spec256(lib):
     shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- OneDrive
+# Dale's own collection. The importer lives in tools/onedrive/ in the repo; the
+# share link stays on this machine in .onedrive-link.
+
+RAW = os.environ.get('ZXC_RAW', 'https://raw.githubusercontent.com/DalsinAI/ZxNextEmu/{ref}/tools/onedrive/')
+REFS = ['main', 'claude/project-thread-lij4ub']
+
+
+def onedrive(lib):
+    lf = os.path.join(LIB, '.onedrive-link')
+    link = open(lf).read().strip() if os.path.exists(lf) else ''
+    if not link:
+        say('  No OneDrive link saved, so skipping it. Run with the section "onedrive" to be asked for it.')
+        return
+    tool = os.path.join(LIB, '.onedrive-tool')
+    os.makedirs(tool, exist_ok=True)
+    for ref in REFS:
+        try:
+            for f in ('onedrive_local.py', 'onedrive-records.json.gz'):
+                data = fetch(RAW.format(ref=ref) + f, tries=2)
+                open(os.path.join(tool, f), 'wb').write(data)
+            break
+        except Exception as e:
+            log('onedrive tool', ref, e)
+    else:
+        say('  Could not get the OneDrive importer from GitHub; skipping it.')
+        return
+    env = dict(os.environ)
+    if LIMIT:
+        env['ZXC_LIMIT'] = str(LIMIT)
+    rc = subprocess.run([sys.executable, '-u', '-I', os.path.join(tool, 'onedrive_local.py'), LIB, link], env=env).returncode
+    if rc:
+        say(f'  OneDrive importer stopped with code {rc}; run again to carry on.')
+    lib.__init__()
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -885,7 +931,7 @@ def main():
                     worldofsam(lib)
                 if s == 'mb03':
                     mb03_site(lib)
-            elif s in ('vtrd', 'msx', 'symbos', 'spec256'):
+            elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive'):
                 globals()[s](lib)
             else:
                 say(f'  unknown section {s}')
