@@ -45,10 +45,16 @@ for tool in curl python3; do
 done
 
 case "$TARGET" in
-  /run/media/*/*/*)
+  /run/media/*/*)   # a removable drive (its mount point itself, or a folder on it)
     drive="$(echo "$TARGET" | cut -d/ -f1-5)"
-    if [ ! -d "$drive" ]; then
-      echo "$drive is not there. Is the drive mounted? Open it in the file manager once, then run this again." >&2
+    mounted=yes
+    if command -v mountpoint >/dev/null 2>&1; then
+      mountpoint -q "$drive" || mounted=no
+    else
+      [ -d "$drive" ] || mounted=no
+    fi
+    if [ "$mounted" = no ]; then
+      echo "$drive is not mounted. Open the drive in the file manager once, then run this again." >&2
       exit 1
     fi ;;
 esac
@@ -74,7 +80,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 LIB = sys.argv[1]
 TITLES = os.path.join(LIB, 'titles')
-SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256', 'demos', 'reviews']
+# zxart.ee first, so the OneDrive importer merges into its titles (by ZXDB id) instead of the
+# zxart pass doubling OneDrive's.
+SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'spectrum', 'clones', 'sam', 'mb03', 'onedrive', 'vtrd', 'msx', 'symbos', 'spec256', 'demos', 'reviews']
 LIMIT = int(os.environ.get('LIMIT') or 0)
 WORKERS = int(os.environ.get('WORKERS') or 4)
 MAX_REL = int(os.environ.get('MAX_RELEASES') or 0)
@@ -716,12 +724,13 @@ def worldofsam(lib, made=0):
 # Russian disk games (TR-DOS) for Pentagon, Scorpion and ATM Turbo.
 
 def vtrd(lib):
-    rows = []
+    rows, lost = [], []
     for t in ('full_ver', 'translat', 'remix'):
         try:
             page = fetch(f'https://vtrd.in/games.php?t={t}').decode('utf-8', 'replace')
         except Exception as e:
             say(f'  vtrd.in {t}: {e}')
+            lost.append(t)
             continue
         for m in re.finditer(r'<tr[^>]*><td nowrap><a href="(/[^"]+)">(.*?)</a></td><td>(.*?)</td><td>(.*?)</td>'
                              r'<td>[^<]*</td><td>(?:<a[^>]*href="(/release\.php\?r=[0-9a-f]+)")?', page):
@@ -767,6 +776,8 @@ def vtrd(lib):
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': runs})
         return f'{name} ({len(files)} files)'
     batch(todo, one, 'vtrd')
+    if lost:  # the other lists were done; this marks the section as stopped so a rerun fills the gap
+        raise RuntimeError(f'vtrd.in list {", ".join(lost)} could not be fetched')
 
 
 # ---------------------------------------------------------------- MSX (file-hunter.com)
@@ -824,10 +835,11 @@ def msx(lib):
                 return None
             n += len(files)
             keep = [f for f in files if not f.lower().endswith(('.txt', '.nfo', '.png', '.jpg', '.pdf', '.diz'))]
-            # Only cartridges get runs: floppy and hard disk slots take block media the player cannot make yet.
-            if keep and slot == 'cart1':
-                runs.append({'platform': 'msx', 'machines': FH_MACH[gen], 'files': keep, 'slot': slot, 'needs': [],
-                             'notes': d.split('/')[-1]})
+            # Only cartridges get runs, one per ROM (a slot takes one file): floppy and hard disk slots
+            # take block media the player cannot make yet.
+            if slot == 'cart1':
+                runs += [{'platform': 'msx', 'machines': FH_MACH[gen], 'files': [f], 'slot': slot, 'needs': [],
+                          'notes': d.split('/')[-1]} for f in keep if f.lower().endswith(('.rom', '.mx1', '.mx2'))]
         if not n:
             return None
         src = FH + g['files'][0][1]
@@ -949,7 +961,8 @@ def spec256(lib):
                 os.makedirs(os.path.join(tdir, 'files'), exist_ok=True)
                 shutil.copy(p, os.path.join(tdir, 'files', safe_name(f)))
                 files.append('files/' + safe_name(f))
-            game = [f for f in files if not f.lower().endswith('.txt')]
+            # Just what the Spec256 machine loads: its companion files and the snapshot.
+            game = [f for f in files if re.search(r'\.(gfx|gf[0-7ab]|b\d\d|cfg|pal|sna|z80)$', f, re.I)]
             if not game:
                 continue
             runs = [{'platform': 'zx-spectrum', 'machines': ['spec256'], 'files': game, 'slot': 'gfx', 'needs': [],
@@ -997,9 +1010,9 @@ def onedrive(lib):
     if LIMIT:
         env['ZXC_LIMIT'] = str(LIMIT)
     rc = subprocess.run([sys.executable, '-u', '-I', os.path.join(tool, 'onedrive_local.py'), LIB, link], env=env).returncode
-    if rc == 3:
+    if rc in (3, 4):  # 3: some downloads failed, 4: OneDrive could not be reached; the link is fine either way
         lib.__init__()
-        raise RuntimeError('some OneDrive files could not be downloaded; run again to retry them')
+        raise RuntimeError('OneDrive could not be reached or some files did not download; run again to retry them')
     if rc:
         os.replace(lf, lf + '.failed')
         say(f'  OneDrive importer stopped (code {rc}). The saved link may be wrong, so it has been set aside;\n'
@@ -1093,7 +1106,7 @@ def demos(lib):
             return None
         if 'files.scene.org/view/' in dl:
             dl = dl.replace('files.scene.org/view/', 'files.scene.org/get/')
-        elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|rom|nex)(\?|$)', dl, re.I):
+        elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|sad|rom|mx1|mx2|nex)(\?|$)', dl, re.I):
             return None
         # A prod listed under several of our platforms gets runs for each, so none is lost.
         listed = [(x or {}).get('name') for x in (p.get('platforms') or {}).values()] if isinstance(p.get('platforms'), dict) else []

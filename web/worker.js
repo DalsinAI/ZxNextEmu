@@ -279,7 +279,7 @@ const handlers = {
       if (p.slot === 'tape' || p.slot === 'snapshot') {
         handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
         starts = true;
-      } else if (!filled.has(p.slot)) {
+      } else if (p.slot === 'gfx' || !filled.has(p.slot)) {   // Spec256 takes every companion file
         if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
         filled.add(p.slot);
         if (/^(disk|cart)/.test(p.slot)) boots = true;

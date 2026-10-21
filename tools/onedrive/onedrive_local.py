@@ -308,12 +308,21 @@ def main():
     try:
         od = OneDrive(link)
     except urllib.error.HTTPError as e:
+        if e.code >= 500 or e.code == 429:   # OneDrive itself is having trouble: the link may be fine
+            print(f'OneDrive is not answering properly (HTTP {e.code}). Run this again later.', file=sys.stderr)
+            sys.exit(4)
         sys.exit(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
                  'shared as "Anyone with the link can view", then run this again.')
     except urllib.error.URLError as e:
-        sys.exit(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.')
+        # 4, not 1: a network failure says nothing about the link, so a caller keeps it.
+        print(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.', file=sys.stderr)
+        sys.exit(4)
     say('Listing the OneDrive folder...')
-    items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
+    try:
+        items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
+    except (urllib.error.URLError, OSError) as e:
+        print(f'Listing the OneDrive folder failed ({e}). Run this again to carry on.', file=sys.stderr)
+        sys.exit(4)
     want = None
     recs = json.load(gzip.open(recp, 'rt', encoding='utf-8')) if os.path.exists(recp) else []
     if limit:
