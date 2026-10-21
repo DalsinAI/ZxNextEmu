@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+# onedrive_local.py LIBRARY SHARE_LINK [RECORDS.json.gz]
+# Downloads a shared OneDrive folder into LIBRARY/_onedrive/ and files every title listed in the
+# records file into LIBRARY/titles/<id>/ (title.json format 2, files/, screens/).
+# A title whose ZXDB id is already in the library gets the OneDrive files added to it, never a second folder.
+# Python 3 standard library only. Safe to re-run: finished files and titles are skipped.
+import base64, gzip, json, os, re, shutil, struct, sys, time, urllib.request, zlib, datetime
+
+API = 'https://my.microsoftpersonalcontent.com/_api/v2.0/'
+SKIP_EXT = ('.hdf',)  # raw hard-disk images; the same images are in the folder as .rar
+TODAY = datetime.date.today().isoformat()
+
+def say(*a):
+    print(*a, flush=True)
+
+def http(url, headers=None, data=None, tries=6):
+    for k in range(tries):
+        try:
+            req = urllib.request.Request(url, data=data, headers={'User-Agent': 'zxcradle', **(headers or {})})
+            return urllib.request.urlopen(req, timeout=300)
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403, 404) and k >= 1:
+                raise
+            err = e
+        except Exception as e:
+            err = e
+        time.sleep(2 ** k)
+    raise err
+
+class OneDrive:
+    def __init__(self, link):
+        self.link = link
+        self.renew()
+        root = self.get(f'shares/{self.sid}/driveitem')
+        self.drive = root['parentReference']['driveId']
+        self.root = root
+
+    def renew(self):
+        r = http('https://api-badgerp.svc.ms/v1.0/token', {'Content-Type': 'application/json'},
+                 json.dumps({'appId': '5cbed6ac-a083-4e14-b191-b4ba07653de2'}).encode())
+        self.h = {'Authorization': 'Badger ' + json.load(r)['token'], 'Prefer': 'autoredeem'}
+        self.sid = 'u!' + base64.urlsafe_b64encode(self.link.encode()).decode().rstrip('=')
+        self.born = time.time()
+
+    def headers(self):
+        if time.time() - self.born > 1800:
+            self.renew()
+        return self.h
+
+    def get(self, path):
+        return json.load(http(path if path.startswith('http') else API + path, self.headers()))
+
+    def walk(self, item=None, path=None):
+        item = item or self.root['id']
+        path = path or self.root['name']
+        url = f'drives/{self.drive}/items/{item}/children?$top=1000&select=id,name,size,folder,file'
+        while url:
+            j = self.get(url)
+            for c in j['value']:
+                p = path + '/' + c['name']
+                if 'folder' in c:
+                    yield from self.walk(c['id'], p)
+                else:
+                    yield {'id': c['id'], 'path': p, 'size': c.get('size') or 0}
+            url = j.get('@odata.nextLink')
+
+    def download(self, it, out):
+        if os.path.exists(out) and os.path.getsize(out) == it['size']:
+            return False
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        for k in range(6):
+            try:
+                r = http(API + f'drives/{self.drive}/items/{it["id"]}/content', self.headers())
+                with open(out + '.part', 'wb') as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+                if os.path.getsize(out + '.part') == it['size']:
+                    os.replace(out + '.part', out)
+                    return True
+            except Exception as e:
+                say('  retry', it['path'], e)
+            time.sleep(2 ** k)
+        say('  FAILED', it['path'])
+        return False
+
+# --- screenshots: .scr -> PNG without Pillow ---
+PAL = [(0, 0, 0), (0, 0, 0xd7), (0xd7, 0, 0), (0xd7, 0, 0xd7), (0, 0xd7, 0), (0, 0xd7, 0xd7), (0xd7, 0xd7, 0), (0xd7, 0xd7, 0xd7),
+       (0, 0, 0), (0, 0, 0xff), (0xff, 0, 0), (0xff, 0, 0xff), (0, 0xff, 0), (0, 0xff, 0xff), (0xff, 0xff, 0), (0xff, 0xff, 0xff)]
+
+def scr_png(d):
+    rows = []
+    for y in range(192):
+        row = bytearray([0])
+        base = ((y & 0xc0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2)
+        for xb in range(32):
+            b, a = d[base + xb], d[6144 + (y >> 3) * 32 + xb]
+            br = 8 if a & 0x40 else 0
+            ink, paper = PAL[(a & 7) + br], PAL[((a >> 3) & 7) + br]
+            for bit in range(8):
+                row += bytes(ink if b & (0x80 >> bit) else paper)
+        rows.append(bytes(row))
+    def chunk(t, c):
+        return struct.pack('>I', len(c)) + t + c + struct.pack('>I', zlib.crc32(t + c) & 0xffffffff)
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 256, 192, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(b''.join(rows), 9)) + chunk(b'IEND', b''))
+
+def save_screen(url, sdir, n):
+    data = http(url, tries=3).read()
+    if url.lower().endswith('.scr') or len(data) == 6912:
+        name, data = f'{n}.png', scr_png(data)
+    else:
+        ext = os.path.splitext(url.split('?')[0])[1].lower() or '.png'
+        name = f'{n}{ext}'
+    os.makedirs(sdir, exist_ok=True)
+    open(os.path.join(sdir, name), 'wb').write(data)
+    return 'screens/' + name
+
+def slug(s):
+    return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')[:60].strip('-') or 'untitled'
+
+def write_json(p, j):
+    open(p + '.tmp', 'w', encoding='utf-8').write(json.dumps(j, indent=2, ensure_ascii=False) + '\n')
+    os.replace(p + '.tmp', p)
+
+ZXDB_INDEX = {}
+
+def index_library(lib):
+    for tid in os.listdir(lib):
+        try:
+            z = (json.load(open(os.path.join(lib, tid, 'title.json'), encoding='utf-8')).get('ids') or {}).get('zxdb')
+        except Exception:
+            continue
+        if z:
+            ZXDB_INDEX.setdefault(str(z), tid)
+
+def folder_for(lib, r):
+    if r['zxdb'] and str(r['zxdb']) in ZXDB_INDEX:
+        return ZXDB_INDEX[str(r['zxdb'])], True
+    base, n = slug(r['name']), 1
+    while True:
+        tid = base if n == 1 else f'{base}-{n}'
+        p = os.path.join(lib, tid, 'title.json')
+        if not os.path.exists(os.path.join(lib, tid)):
+            return tid, False
+        try:
+            j = json.load(open(p, encoding='utf-8'))
+        except Exception:
+            j = {}
+        if r['zxdb'] and str((j.get('ids') or {}).get('zxdb')) == str(r['zxdb']):
+            return tid, True
+        if not r['zxdb'] and j.get('name') == r['name'] and 'onedrive' in (j.get('tags') or []):
+            return tid, True
+        n += 1
+
+def runs_for(r, sub):
+    out = {}
+    for x in r['runs']:
+        v = out.setdefault((x['variant'], x['slot']), {'platform': 'zx-spectrum', 'machines': list(x['machines']), 'files': [], 'slot': x['slot'], 'needs': []})
+        v['files'].append('files/' + sub + os.path.basename(x['src']))
+        v['machines'] += [m for m in x['machines'] if m not in v['machines']]
+        if len(r['runs']) > 1:
+            v['notes'] = x['variant'] + ('' if len(v['files']) == 1 else '. Load the files in order (sides/tapes).')
+    rs = list(out.values())
+    rs.sort(key=lambda v: (v['slot'] != 'tape', '(Europe)' not in v.get('notes', '(Europe)')))
+    return rs
+
+def file_title(r, dest, lib, link):
+    tid, merge = folder_for(lib, r)
+    tdir = os.path.join(lib, tid)
+    if merge:
+        try:
+            old = json.load(open(os.path.join(tdir, 'title.json'), encoding='utf-8'))
+        except Exception:
+            old = {}
+        if 'onedrive' in (old.get('tags') or []):
+            return tid, 'merged'
+    sub = 'onedrive/' if merge else ''
+    srcs = [os.path.join(dest, '_onedrive', x['src']) for x in r['runs']]
+    if not all(os.path.exists(s) for s in srcs):
+        return tid, 'missing'
+    for s in srcs:
+        o = os.path.join(tdir, 'files', sub, os.path.basename(s))
+        os.makedirs(os.path.dirname(o), exist_ok=True)
+        if not os.path.exists(o):
+            shutil.copy2(s, o)
+    runs = runs_for(r, sub)
+    source = 'OneDrive: ' + link
+    p = os.path.join(tdir, 'title.json')
+    if merge and os.path.exists(p):
+        j = json.load(open(p, encoding='utf-8'))
+        have = {f for ru in j.get('runs', []) for f in ru.get('files', [])}
+        j.setdefault('runs', []).extend(ru for ru in runs if not set(ru['files']) & have)
+        if r['zxdb']:
+            j.setdefault('ids', {}).setdefault('zxdb', r['zxdb'])
+        j['tags'] = (j.get('tags') or []) + ['onedrive']
+        s = j.get('sources') or [j.get('source')]
+        if source not in s:
+            j['sources'] = [x for x in s if x] + [source]
+        write_json(p, j)
+        return tid, 'merged'
+    j = {'format': 2, 'id': tid, 'name': r['name'], 'kind': r['kind']}
+    for k in ('year', 'authors', 'publisher', 'genres'):
+        if r.get(k):
+            j[k] = r[k]
+    j['tags'] = ['onedrive']
+    j['license'] = r['license']
+    j['source'] = source
+    if r['zxdb']:
+        j['sources'] = [source, f'https://spectrumcomputing.co.uk/entry/{r["zxdb"]}']
+        j['ids'] = {'zxdb': r['zxdb']}
+    j['added'] = TODAY
+    j['runs'] = runs
+    j['compat'] = {}
+    screens = []
+    for url, cap in r['screens'][:3]:
+        try:
+            screens.append({'file': save_screen(url, os.path.join(tdir, 'screens'), len(screens) + 1), 'caption': cap})
+        except Exception as e:
+            say('  no screenshot', url, e)
+    if screens:
+        j['screens'] = screens
+    write_json(p, j)
+    if r['zxdb']:
+        ZXDB_INDEX[str(r['zxdb'])] = tid
+    about = [f'# {r["name"]}', '', '## Where it came from', '',
+             '- OneDrive Spectrum collection: ' + ', '.join(f'`{os.path.basename(x["src"])}`' for x in r['runs'])]
+    if r['zxdb']:
+        about.append(f'- Details and screenshots: ZXDB entry {r["zxdb"]}, https://spectrumcomputing.co.uk/entry/{r["zxdb"]}')
+    if any(c not in ('exact', 'manual') for c in r['conf']):
+        about += ['', f'Matched to ZXDB by name ({", ".join(r["conf"])}) from "{r["groups"][0]}"; check it if the details look wrong.']
+    open(os.path.join(tdir, 'about.md'), 'w', encoding='utf-8').write('\n'.join(about) + '\n')
+    return tid, 'new'
+
+def main():
+    if len(sys.argv) < 3:
+        sys.exit('usage: onedrive_local.py LIBRARY SHARE_LINK [RECORDS.json.gz]')
+    dest, link = os.path.abspath(sys.argv[1]), sys.argv[2]
+    recp = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'onedrive-records.json.gz')
+    limit = int(os.environ.get('ZXC_LIMIT', '0')) or None
+    lib = os.path.join(dest, 'titles')
+    os.makedirs(lib, exist_ok=True)
+    od = OneDrive(link)
+    say('Listing the OneDrive folder...')
+    items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
+    want = None
+    recs = json.load(gzip.open(recp, 'rt', encoding='utf-8')) if os.path.exists(recp) else []
+    if limit:
+        recs = recs[:limit]
+        want = {x['src'] for r in recs for x in r['runs']}
+        items = [i for i in items if i['path'] in want]
+    total = sum(i['size'] for i in items)
+    say(f'{len(items)} files, {total / 1e6:.0f} MB to fetch into {dest}/_onedrive')
+    got = 0
+    for n, it in enumerate(items, 1):
+        od.download(it, os.path.join(dest, '_onedrive', it['path']))
+        got += it['size']
+        if n % 100 == 0 or n == len(items):
+            say(f'  {n}/{len(items)} files, {got / 1e6:.0f} of {total / 1e6:.0f} MB')
+    if not recs:
+        say('No records file found, so the files are downloaded but not filed into the library.')
+        return
+    logp = os.path.join(dest, '_onedrive', 'filed.json')
+    done = json.load(open(logp)) if os.path.exists(logp) else {}
+    index_library(lib)
+    say(f'Filing {len(recs)} titles into {lib}...')
+    for n, r in enumerate(recs, 1):
+        key = str(r['zxdb'] or r['groups'][0])
+        if done.get(key) in ('new', 'merged'):
+            continue
+        tid, st = file_title(r, dest, lib, link)
+        done[key] = st
+        if n % 100 == 0 or n == len(recs):
+            write_json(logp, done)
+            say(f'  {n}/{len(recs)} titles')
+    write_json(logp, done)
+    c = {s: sum(1 for v in done.values() if v == s) for s in ('new', 'merged', 'missing')}
+    say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing.')
+
+if __name__ == '__main__':
+    main()
