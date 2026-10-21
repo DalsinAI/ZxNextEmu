@@ -6,6 +6,7 @@ import {
   importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, fillParts, attachFiles, romsAdded, hostTitles,
   normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
   versionsOf, titleLangs, titleYears, insideSymbos, langName, langFlag, ratingOf,
+  companiesOf, workOf, groupByWork, groupBySeries, slug,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -16,7 +17,7 @@ const JOYSTICKS = ['', 'kempston', 'sinclair', 'cursor', 'none'];
 
 let titles = [];
 let opts = null;          // { machines(): [{id, name}], runnable(id), run(title, run, machine), current?(): machine id }
-const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), lang: new Set(), license: new Set() };
+const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), lang: new Set(), company: new Set(), license: new Set() };
 // Instance mode: show only what runs on one set-up {machine, offers, name}.
 // null shows everything. It follows the running machine unless the user
 // chose Show everything.
@@ -39,6 +40,11 @@ export async function initLibraryView(o) {
   opts = o;
   $('lib-q').addEventListener('input', render);
   $('lib-sort').addEventListener('change', render);
+  try { $('lib-group').value = localStorage.getItem('zxc-lib-group') || 'games'; } catch { /* storage off */ }
+  $('lib-group').addEventListener('change', () => {
+    try { localStorage.setItem('zxc-lib-group', $('lib-group').value); } catch { /* storage off */ }
+    render();
+  });
   $('lib-add-files').addEventListener('click', () => $('lib-files').click());
   $('lib-add-folder').addEventListener('click', () => $('lib-folder').click());
   for (const b of document.querySelectorAll('[data-collection]')) b.addEventListener('click', addCollection);
@@ -169,6 +175,7 @@ function facetValues(t) {
     decade: [...new Set(titleYears(t).map(decade))],
     needs: [...new Set((t.meta.runs || []).flatMap(r => r.needs || []))],
     lang: titleLangs(t),
+    company: companiesOf(t),
     license: [t.meta.license || 'unknown'],
   };
 }
@@ -215,31 +222,40 @@ function render() {
   renderFilters();
   const grid = $('lib-grid');
   grid.textContent = '';
+  // Outside an instance, the same game on several systems is one card, and
+  // the series view is one card per series.
+  const group = instanceMode() ? 'titles' : $('lib-group').value;
+  $('lib-group').disabled = instanceMode();
   more?.disconnect();
+  if (group === 'series') return renderSeries(grid, list);
+  const games = group === 'games' ? groupByWork(list) : list.map(t => ({ titles: [t] }));
+  if (group === 'games' && games.length !== list.length) $('lib-count').textContent += ` · ${games.length} games`;
   shown = PAGE;
-  drawCards(grid, list, 0, fits);
+  drawCards(grid, games, 0, fits);
   $('lib-empty').hidden = titles.length > 0;
   $('lib-none').hidden = !titles.length || list.length > 0;
 }
 
-function drawCards(grid, list, from, fits) {
+// Cards from `from` up to `shown`, each one game: [{titles}].
+function drawCards(grid, games, from, fits) {
   grid.querySelector('.lib-more')?.remove();
-  for (const t of list.slice(from, shown)) {
+  for (const { titles: same } of games.slice(from, shown)) {
+    const t = same.find(x => x.screens.length) || same[0];
     const li = document.createElement('li');
     const cover = t.screens[0];
-    const machines = titleMachines(t);
+    const machines = [...new Set(same.flatMap(titleMachines))];
     const runs = (t.meta.runs || []).some(r => (r.machines || []).some(m => opts.runnable(m)) && !runParts(t, r).missing.length);
     li.innerHTML = `<button class="lib-card" data-id="${esc(t.id)}">
       <span class="lib-cover">${cover ? `<img alt="" loading="lazy" src="${esc(src(cover))}">` : `<span class="lib-nocover"><i class="zxc-stripe"></i><span>${t.needsShots && runs ? 'Taking screenshots' : t.loadFailed ? 'Did not load in the browser' : 'No screenshot'}</span></span>`}</span>
       <span class="lib-card-text">
-        <b>${esc(t.meta.name)}${flags(t)}</b>${stars(t)}
+        <b>${esc(same[0].meta.name)}${flags(t)}</b>${stars(t)}${same.length > 1 ? `<small class="lib-same">${same.length} versions</small>` : ''}
         <small>${esc([t.meta.year, t.meta.publisher || (t.meta.authors || [])[0]].filter(Boolean).join(' · ') || kindWord(t.meta.kind))}</small>
         ${fits.has(t.id) ? fitChip(fits.get(t.id)) : `<span class="badges">${machines.slice(0, 4).map(m => `<span class="badge${opts.runnable(m) ? '' : ' off'}">${esc(label(m))}</span>`).join('')}${machines.length > 4 ? `<span class="badge more">${machines.length - 4} more</span>` : ''}</span>`}
       </span></button>`;
-    li.firstElementChild.addEventListener('click', () => showDetail(t.id));
+    li.firstElementChild.addEventListener('click', () => showDetail(same[0].id));
     grid.append(li);
   }
-  if (shown >= list.length) return;
+  if (shown >= games.length) return;
   const end = document.createElement('li');
   end.className = 'lib-more';
   end.setAttribute('aria-hidden', 'true');
@@ -249,10 +265,41 @@ function drawCards(grid, list, from, fits) {
     more.disconnect();
     const at = shown;
     shown += PAGE;
-    drawCards(grid, list, at, fits);
+    drawCards(grid, games, at, fits);
   }, { rootMargin: '600px' });
   more.observe(end);
 }
+
+// One card per series; opening one shows its games in order.
+function renderSeries(grid, list) {
+  const series = groupBySeries(list).sort((a, b) => a.name.localeCompare(b.name));
+  $('lib-count').textContent += ` · ${series.length} series`;
+  for (const g of series) {
+    const cover = g.titles.map(x => x.t.screens[0]).find(Boolean);
+    const years = g.titles.map(x => x.t.meta.year).filter(Boolean);
+    const games = new Set(g.titles.map(x => workOf(x.t))).size;
+    const li = document.createElement('li');
+    li.innerHTML = `<button class="lib-card">
+      <span class="lib-cover">${cover ? `<img alt="" loading="lazy" src="${esc(src(cover))}">` : '<span class="lib-nocover"><i class="zxc-stripe"></i><span>No screenshot</span></span>'}</span>
+      <span class="lib-card-text"><b>${esc(g.name)}</b>
+        <small>${games} game${games === 1 ? '' : 's'}${years.length ? ` · ${Math.min(...years)}${Math.max(...years) > Math.min(...years) ? `–${Math.max(...years)}` : ''}` : ''}</small>
+        <small>${esc(g.titles.slice(0, 3).map(x => x.t.meta.name).join(', '))}${g.titles.length > 3 ? '…' : ''}</small></span></button>`;
+    li.firstElementChild.addEventListener('click', () => showSeries(g.slug));
+    grid.append(li);
+  }
+  $('lib-empty').hidden = titles.length > 0;
+  $('lib-none').hidden = !titles.length || series.length > 0;
+}
+
+// Narrow the library to one search, e.g. a series or a company, its games together.
+function searchFor(q) {
+  if (openId) closeDetail();
+  $('lib-q').value = q;
+  $('lib-group').value = 'games';
+  if (q.startsWith('series:')) $('lib-sort').value = 'year';
+  render();
+}
+const showSeries = s => searchFor(`series:${s}`);
 
 // Flags for the languages a title comes in, English left out.
 const flagOf = c => `<span class="lang-flag" title="${esc(langName(c))}" aria-label="${esc(langName(c))}">${langFlag(c) || esc(c.toUpperCase())}</span>`;
@@ -278,8 +325,8 @@ function renderFilters() {
   const inMode = instanceMode() ? t => fitFor(t, setup).fit === 'runs' : () => true;
   for (const k of Object.keys(counts))
     for (const t of visible(k)) if (inMode(t)) for (const v of facetValues(t)[k]) counts[k].set(v, counts[k].get(v) + 1);
-  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', lang: 'Language', license: 'Licence' };
-  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, lang: c => `${langFlag(c)} ${langName(c)}`.trim(), license: l => l.replace('-', ' ') };
+  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', lang: 'Language', company: 'Company', license: 'Licence' };
+  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, lang: c => `${langFlag(c)} ${langName(c)}`.trim(), company: c => c, license: l => l.replace('-', ' ') };
   box.textContent = '';
   if (instanceMode()) {
     const sec = document.createElement('section');
@@ -295,7 +342,9 @@ function renderFilters() {
       : k === 'works' ? COMPAT.indexOf(a[0]) - COMPAT.indexOf(b[0])
       : k === 'machine' ? ((order.indexOf(a[0]) + 1) || 99) - ((order.indexOf(b[0]) + 1) || 99)
         : b[1] - a[1] || String(a[0]).localeCompare(b[0]));
-    for (const [v, n] of entries) {
+    // Hundreds of companies: the busiest twenty, and any already picked. company: finds the rest.
+    const shown = k === 'company' ? entries.filter(([v], i) => i < 20 || facets[k].has(v)) : entries;
+    for (const [v, n] of shown) {
       const l = document.createElement('label');
       l.className = 'check';
       l.innerHTML = `<input type="checkbox"${facets[k].has(v) ? ' checked' : ''}><span>${esc(names[k](v))}</span><small>${n}</small>`;
@@ -303,6 +352,7 @@ function renderFilters() {
       l.querySelector('input').addEventListener('change', e => { e.target.checked ? facets[k].add(v) : facets[k].delete(v); render(); });
       sec.append(l);
     }
+    if (shown.length < entries.length) sec.insertAdjacentHTML('beforeend', `<small class="lib-more">${entries.length - shown.length} more: search company:name</small>`);
     box.append(sec);
   }
   if (Object.values(facets).some(s => s.size)) {
@@ -316,8 +366,6 @@ function renderFilters() {
 
 // ---- a title's page -------------------------------------------------------------
 
-// Ratings from each site, then the reviews, in English. A translated review
-// keeps its original a click away.
 // Where a demo competed: "3rd in the ZX Demo compo at Chaos Constructions 2019".
 function partyLine(p) {
   if (!p || !(p.name || p.compo)) return '';
@@ -325,6 +373,8 @@ function partyLine(p) {
   return [p.place ? `${nth(p.place)} in` : 'Entered in', p.compo ? `the ${p.compo} compo` : null, p.name ? `at ${p.name}${p.year ? ` ${p.year}` : ''}` : null].filter(Boolean).join(' ');
 }
 
+// Ratings from each site, then the reviews, in English. A translated review
+// keeps its original a click away.
 function reviewsHtml(t) {
   const r = t.reviews;
   if (!r) return '';
@@ -339,6 +389,29 @@ function reviewsHtml(t) {
       <div class="det-review-text">${esc(x.text)}</div>
       ${x.translated ? `<details><summary>Translated from ${x.language ? `${flagOf(x.language)} ${esc(langName(x.language))}` : 'another language'}</summary><div class="det-review-text">${esc(x.original || '')}</div></details>` : ''}
     </article>`).join('')}`;
+}
+
+// Who made it, which series it belongs to, and the same game on other
+// systems or as other titles in the library. Each is a link into the library.
+function relatedHtml(t) {
+  const m = t.meta;
+  const roles = new Map();
+  const add = (name, role) => { if (name) roles.set(name, [...new Set([...(roles.get(name) || []), role])]); };
+  add(m.developer, 'developer');
+  add(m.publisher, 'publisher');
+  for (const c of m.companies || []) add(c.name, c.role || 'publisher');
+  for (const v of m.versions || []) { add(v.developer, 'developer'); add(v.publisher, 'publisher'); }
+  const company = [...roles].map(([name, rs]) => `<button class="linkish" data-company="${esc(name)}">${esc(name)}</button> <small>${esc(rs.join(', '))}</small>`);
+  const series = (m.series || []).map(x => {
+    const n = titles.filter(o => (o.meta.series || []).some(y => slug(y.name) === slug(x.name))).length;
+    return `${x.number ? `Part ${esc(x.number)} of ` : 'In '}<button class="linkish" data-series="${esc(slug(x.name))}">${esc(x.name)}</button>${n > 1 ? ` <small>${n} in the library</small>` : ''}`;
+  });
+  const work = workOf(t);
+  const same = titles.filter(o => o.id !== t.id && workOf(o) === work);
+  return `${company.length ? `<p class="det-rel"><span>Companies</span> ${company.join(' · ')}</p>` : ''}
+    ${series.length ? `<p class="det-rel"><span>Series</span> ${series.join(' · ')}</p>` : ''}
+    ${same.length ? `<div class="det-rel"><span>Also in the library</span><ul class="det-same">${same.map(o => `<li><button class="linkish" data-id="${esc(o.id)}">${esc(o.meta.name)}</button>
+      <small>${esc([o.meta.year, ...new Set(titleMachines(o).map(label))].filter(Boolean).join(' · '))}</small></li>`).join('')}</ul></div>` : ''}`;
 }
 
 function closeDetail() { openId = null; $('lib-detail').close(); }
@@ -405,6 +478,7 @@ export async function showDetail(id) {
         ${chips.length ? `<p class="chips">${chips.map(c => `<span class="badge">${esc(c)}</span>`).join('')}</p>` : ''}
         ${m.summary ? `<p class="det-summary">${esc(m.summary)}</p>` : ''}
         ${partyLine(m.party) ? `<p class="det-party">${esc(partyLine(m.party))}</p>` : ''}
+        ${relatedHtml(t)}
         <h3>${m.versions?.length > 1 ? 'Versions' : 'Runs on'}</h3><ul class="det-runs">${runs || '<li class="det-later">No files to run.</li>'}</ul>
         ${reviewsHtml(t)}
         ${controls.length ? `<h3>Controls</h3><p>${controls.map(esc).join('<br>')}</p>` : ''}
@@ -430,6 +504,9 @@ export async function showDetail(id) {
     d.querySelectorAll('.det-thumb').forEach((b, j) => b.classList.toggle('on', j === i));
   };
   d.querySelector('[data-close]').addEventListener('click', closeDetail);
+  d.querySelectorAll('.det-rel [data-id]').forEach(b => b.addEventListener('click', () => showDetail(b.dataset.id)));
+  d.querySelectorAll('[data-series]').forEach(b => b.addEventListener('click', () => showSeries(b.dataset.series)));
+  d.querySelectorAll('[data-company]').forEach(b => b.addEventListener('click', () => searchFor(`company:${slug(b.dataset.company)}`)));
   d.querySelectorAll('[data-shot]').forEach(b => b.addEventListener('click', () => pick(Number(b.dataset.shot))));
   d.querySelectorAll('[data-need]').forEach(b => b.addEventListener('click', () => {
     const input = document.createElement('input');
