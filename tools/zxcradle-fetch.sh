@@ -206,7 +206,8 @@ class Library:
 
     def note_zxart(self, j):
         # Spectrum titles filed from zxart.ee, by name: vtrd.in skips a full version zxart already has.
-        if (j.get('ids') or {}).get('zxart') and all(r.get('platform', 'zx-spectrum') == 'zx-spectrum' for r in j.get('runs') or []):
+        runs = j.get('runs') or []
+        if (j.get('ids') or {}).get('zxart') and runs and all(r.get('platform', 'zx-spectrum') == 'zx-spectrum' for r in runs):
             self.zxart_names.add(norm(j.get('name')))
 
     def has_zxart_name(self, name):
@@ -332,6 +333,14 @@ def zip_unpack(path, dest, charset):
         return False
 
 
+def can_unpack(name):
+    """Whether this machine has a tool for the archive's format (zip is built in)."""
+    low = name.lower()
+    if low.endswith('.zip') or shutil.which('7z') or shutil.which('unar'):
+        return True
+    return low.endswith(('.lzh', '.lha')) and bool(shutil.which('lha'))
+
+
 def get_files(tdir, url, name, charset=None, sub=None):
     """Download one file into tdir/files/ and unpack it if it is an archive.
     Returns paths relative to tdir of everything it gave."""
@@ -350,7 +359,12 @@ def get_files(tdir, url, name, charset=None, sub=None):
                 shutil.rmtree(dest)
             os.replace(dest + '.tmp', dest)
             os.remove(arc)
-        else:
+        elif name.lower().endswith(ARCHIVES) and can_unpack(name):
+            # A damaged download (or an error page saved as .zip): nothing is filed, so the next run retries.
+            log('unpack failed', url)
+            os.remove(arc)
+            return []
+        else:   # not an archive, or no extractor here for its format: kept as it is
             os.makedirs(dest, exist_ok=True)
             os.replace(arc, os.path.join(dest, name))
     out = []
@@ -421,17 +435,30 @@ def group_runs(runs):
     return list(out.values())
 
 
+MISSED = [0]   # titles left unfinished by a failed download or page; main() fails the section on any
+
+
+def attempt(fn, it, label):
+    """fn(it) for one title: a message when filed, False when there is nothing to file (no download, a
+    duplicate), None or an exception when it failed and stays unfinished for the next run."""
+    try:
+        msg = fn(it)
+    except Exception as e:
+        msg = None
+        log(label, 'failed', e)
+    if msg is None:
+        with LOCK:
+            MISSED[0] += 1
+    return msg
+
+
 def batch(items, fn, label, total=None):
     """Run fn over items with a few workers, printing progress."""
     total = total or len(items)
     done = [0]
 
     def one(it):
-        try:
-            msg = fn(it)
-        except Exception as e:
-            msg = None
-            log(label, 'failed', e)
+        msg = attempt(fn, it, label)
         with LOCK:
             done[0] += 1
             if msg:
@@ -449,11 +476,7 @@ def batch_or_trial(items, fn, label, left=None):
     for it in items:
         if left <= 0:
             break
-        try:
-            msg = fn(it)
-        except Exception as e:
-            msg = None
-            log(label, 'failed', e)
+        msg = attempt(fn, it, label)
         if msg:
             left -= 1
             say(f'[{label}] {msg}')
@@ -530,7 +553,7 @@ def zx_authors(r):
 def zx_title(lib, p, rels, hw):
     rels = [r for r in rels if r.get('file') and r.get('fileName')]
     if not rels:
-        return None
+        return False   # nothing to download
     rels.sort(key=lambda r: (r.get('releaseType') != 'original', -(r.get('year') or 0)))
     rels = rels[:MAX_REL or None]
     name = html.unescape(p['title']).strip()
@@ -633,6 +656,12 @@ def zxart(lib, section):
             start += len(prods)
             todo = [p for p in prods if not lib.has('zxart', p['id'])
                     and not html.unescape(p.get('categoriesString') or '').startswith('Press')]
+            # A game already filed from ZXDB (the OneDrive importer) gets the zxart id, not a second folder.
+            for p in list(todo):
+                z = str((p.get('importIds') or {}).get('zxdb') or '')
+                if z.isdigit() and int(z) and lib.has('zxdb', int(z)):
+                    lib.link(lib.ids[('zxdb', str(int(z)))], 'zxart', p['id'])
+                    todo.remove(p)
             if todo:
                 ids = [r for p in todo for r in p.get('releasesIds', [])]
                 rels, lost = {}, set()
@@ -663,11 +692,7 @@ def zxart(lib, section):
                     for p in todo:
                         if made >= LIMIT:
                             break
-                        try:
-                            msg = title(p)
-                        except Exception as e:
-                            msg = None
-                            log(hw, 'failed', e)
+                        msg = attempt(title, p, hw)
                         if msg:
                             made += 1
                             say(f'[{hw}] {msg}')
@@ -710,7 +735,9 @@ def mb03_site(lib, made=0):
         sid = lib.claim(name, '-mb03', 'mb03site', fn)
         tdir = os.path.join(TITLES, sid)
         files = get_files(tdir, f'https://drive.usercontent.google.com/download?id={ids[fn]}&export=download&confirm=t', fn)
-        if not files:
+        if not files:   # left unfinished; the section is marked failed so a rerun fetches it
+            with LOCK:
+                MISSED[0] += 1
             continue
         runs = group_runs([run_table(f, FAM128, needs=['mb03']) for f in files])
         lib.finish(sid, {'name': name, 'kind': kind, 'year': year, 'tags': ['mb03+'], 'summary': summary,
@@ -791,11 +818,7 @@ def worldofsam(lib, made=0):
         for item in todo:
             if left <= 0:
                 break
-            try:
-                msg = one(item)
-            except Exception as e:
-                msg = None
-                log('worldofsam', 'failed', e)
+            msg = attempt(one, item, 'worldofsam')
             if msg:   # only a title filed counts; a failed download is tried again next run
                 left -= 1
                 say(f'[worldofsam] {msg}')
@@ -1158,7 +1181,9 @@ def pouet_reviews(pid):
 def pouet_runs(files, plat):
     platform, mach = POUET_PLATFORMS[plat]
     if platform == 'msx':  # cartridges only: MSX floppies need block media the player cannot make yet
-        return [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': 'cart1', 'needs': []}
+        # .mx2 is an MSX2 cartridge, whichever MSX list the prod is under
+        return [{'platform': 'msx', 'machines': [m for m in mach if not m.startswith('msx1')] if f.lower().endswith('.mx2') else mach,
+                 'files': [f], 'slot': 'cart1', 'needs': []}
                 for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.mx1', '.mx2')]
     return group_runs([run_table(f, mach, platform) for f in files])
 
@@ -1166,40 +1191,38 @@ def pouet_runs(files, plat):
 def demos(lib):
     """One title per pouet prod, with runs for every platform of ours it is listed under."""
     seen, broken = {}, []   # prod id -> the platform list it was found in; list pages that failed
-    for plat in POUET_PLATFORMS:
-        if LIMIT and len(seen) >= LIMIT * 4:   # a trial run collects a few spares for prods it cannot use
-            break
-        ids, page = [], 1
-        while True:
-            try:
-                pg = fetch('https://www.pouet.net/prodlist.php?' + urllib.parse.urlencode({'platform[]': plat, 'page': page})).decode('utf-8', 'replace')
-            except Exception as e:
-                say(f'  pouet.net {plat} page {page}: {e}')
-                broken.append(f'{plat} page {page}')
-                break
-            new = [i for i in dict.fromkeys(re.findall(r'prod\.php\?which=(\d+)', pg)) if i not in ids]
-            if not new:
-                break
-            ids += new
-            page += 1
-            # Count only productions not yet in the library, so trial runs page on past ones already done.
-            if LIMIT and len(seen) + sum(1 for i in ids if not lib.has('pouet', i) and i not in seen) >= LIMIT * 4:
-                break
-        todo = [i for i in ids if not lib.has('pouet', i) and i not in seen]
-        say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
-        for i in todo:
-            seen[i] = plat
+
+    def listed():
+        """Productions not in the library yet, page by page, so a trial run reads only as far as it needs."""
+        for plat in POUET_PLATFORMS:
+            ids, page = set(), 1
+            while True:
+                try:
+                    pg = fetch('https://www.pouet.net/prodlist.php?' + urllib.parse.urlencode({'platform[]': plat, 'page': page})).decode('utf-8', 'replace')
+                except Exception as e:
+                    say(f'  pouet.net {plat} page {page}: {e}')
+                    broken.append(f'{plat} page {page}')
+                    break
+                new = [i for i in dict.fromkeys(re.findall(r'prod\.php\?which=(\d+)', pg)) if i not in ids]
+                if not new:
+                    break
+                ids.update(new)
+                page += 1
+                for i in new:
+                    if not lib.has('pouet', i) and i not in seen:
+                        seen[i] = plat
+                        yield i
 
     def one(pid):
         p = pouet_prod(pid)
         name = html.unescape(p.get('name') or '').strip() or pid
         dl = (p.get('download') or '').strip()
         if not dl:
-            return None
+            return False
         if 'files.scene.org/view/' in dl:
             dl = dl.replace('files.scene.org/view/', 'files.scene.org/get/')
         elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|sad|rom|mx1|mx2|nex)(\?|$)', dl, re.I):
-            return None
+            return False
         # A prod listed under several of our platforms gets runs for each, so none is lost.
         listed = [(x or {}).get('name') for x in (p.get('platforms') or {}).values()] if isinstance(p.get('platforms'), dict) else []
         plats = [x for x in POUET_PLATFORMS if x in listed] or [seen[pid]]
@@ -1229,22 +1252,8 @@ def demos(lib):
               'screens': get_screens(tdir, [p['screenshot']] if p.get('screenshot') else [], None, 1)}
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [], '')} | {'runs': runs})
         return f'{name} ({len(files)} files)'
-    if not LIMIT:
-        batch(list(seen), one, 'pouet')
-    else:
-        # A trial run counts only titles actually filed, so a prod with nothing to download does not use up the limit.
-        left = LIMIT
-        for pid in seen:
-            if left <= 0:
-                break
-            try:
-                msg = one(pid)
-            except Exception as e:
-                msg = None
-                log('pouet', pid, 'failed', e)
-            if msg:
-                left -= 1
-                say(f'[pouet] {msg}')
+    # A trial run counts only titles actually filed, and keeps reading the lists until it has them.
+    batch_or_trial(listed() if LIMIT else list(listed()), one, 'pouet')
     if broken:  # the prods listed were done; this marks the section as stopped so a rerun fills the gap
         raise RuntimeError(f'pouet.net {", ".join(broken)} could not be fetched')
 
@@ -1480,7 +1489,7 @@ def main():
     say(f'{len(lib.used)} titles already in the library')
     for s in SECTIONS:
         say(f'\n== {s} ==')
-        t0 = time.time()
+        t0, missed = time.time(), MISSED[0]
         try:
             if s in ZX_HW:
                 made, broken = zxart(lib, s)
@@ -1500,6 +1509,9 @@ def main():
         except Exception as e:
             say(f'  {s} stopped: {e}')
             log(s, 'stopped', e)
+            failed.append(s)
+        if MISSED[0] > missed and s not in failed:   # the others were filed; these wait for a rerun
+            say(f'  {s}: {MISSED[0] - missed} titles could not be fetched')
             failed.append(s)
         say(f'== {s} done in {int(time.time() - t0)}s ==')
     n = sum(1 for t in os.listdir(TITLES) if os.path.exists(os.path.join(TITLES, t, 'title.json')))
