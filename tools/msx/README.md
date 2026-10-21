@@ -16,12 +16,14 @@ curl -A "$UA" -o fh.torrent "$FH/download.file-hunter.com%20-%2024-06-2026.torre
 curl -A "$UA" -o pics.xlsx "$FH/Archive/MSX%20Games%20with%20Pictures.xlsx"
 curl -o softwaredb.xml https://raw.githubusercontent.com/openMSX/openMSX/master/share/softwaredb.xml
 python3 ../tor.py fh.torrent sizes.json      # path -> size for every file
+cd ..
 ```
 
 File Hunter answers 405 without a browser User-Agent.
 
 Screenshots from the spreadsheet: run the snippet at the end of this file to
-write `meta/xlimg/<n>.png` and `meta/xlimg.json`.
+write `meta/xlimg/<n>.png` and `meta/xlimg.json`. Run every command in this
+file from `tools/msx`.
 
 ## 2. Game and demo files (into `msx-dl/`)
 
@@ -77,7 +79,8 @@ bad dumps ([b]) are skipped.
 ## Spreadsheet screenshots
 
 ```python
-import openpyxl, re, json, os
+import openpyxl, re, json, os, io
+from PIL import Image
 wb = openpyxl.load_workbook('meta/pics.xlsx'); out = {}; n = 0
 os.makedirs('meta/xlimg', exist_ok=True)
 for ws in wb.worksheets[1:]:
@@ -90,7 +93,7 @@ for ws in wb.worksheets[1:]:
         if not m:
             continue
         p = 'xlimg/%d.png' % n; n += 1
-        open('meta/' + p, 'wb').write(im._data())
+        Image.open(io.BytesIO(im._data())).convert('RGB').save('meta/' + p)   # the sheet holds JPEG and GIF too
         out.setdefault(m.group(1), []).append({'type': m.group(2), 'file': p})
 json.dump(out, open('meta/xlimg.json', 'w'))
 ```

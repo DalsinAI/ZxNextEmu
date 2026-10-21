@@ -19,6 +19,15 @@ def slug(s):
     return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')[:60].strip('-') or 'untitled'
 
 
+def good_zip(path):
+    # checked before claim() replaces an existing title
+    try:
+        with zipfile.ZipFile(path) as z:
+            return z.testzip() is None
+    except (zipfile.BadZipFile, OSError, EOFError):
+        return False
+
+
 def unzip(path, dest):
     with zipfile.ZipFile(path) as z:
         out = []
@@ -90,6 +99,9 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
     if not os.path.exists(z):
         skipped.append(name + ' (part of the SymbOS core package)')
         continue
+    if not good_zip(z):
+        skipped.append(name + ' (damaged download)')
+        continue
     tid = claim('symbos-' + slug(name))
     tdir = os.path.join(OUT, tid)
     fdir = os.path.join(tdir, 'files')
@@ -140,7 +152,7 @@ systems = [
 built = {}
 for tid, name, remote, local, machines, slot, needs, text in systems:
     z = os.path.join(osdir, local)
-    if not os.path.exists(z) or not zipfile.is_zipfile(z):
+    if not os.path.exists(z) or not good_zip(z):
         continue
     tid = built[tid] = claim(tid)
     fdir = os.path.join(OUT, tid, 'files')
@@ -156,7 +168,7 @@ man = os.path.join(osdir, 'SymbOS-40-Manual.pdf')
 if os.path.exists(man):
     for t in (built.get('symbos-next'), built.get('symbos-msx')):
         if t:   # only titles actually built above
-            shutil.copy(man, os.path.join(OUT, t, 'SymbOS-40-Manual.pdf'))
+            shutil.copy(man, os.path.join(OUT, t, 'files', 'SymbOS-40-Manual.pdf'))
 
 fh = os.path.join(FHDL, 'OS', 'SymbOS')
 extras = [('symbos-hdd-4-0', 'SymbOS 4.0 hard disk image (File-Hunter)', 'SymbOS 4.0 Harddisk Image [File-Hunter.com].zip', MSX, 'ide0', [],
@@ -166,7 +178,7 @@ extras = [('symbos-hdd-4-0', 'SymbOS 4.0 hard disk image (File-Hunter)', 'SymbOS
           ('symbos-msx-drivers', 'SymbOS MSX drivers', 'SymbOS-MSX Drivers.zip', MSX, 'ide0', ['symbos'], 'Extra SymbOS device drivers for MSX.')]
 for tid, name, src, machines, slot, needs, text in extras:
     z = os.path.join(fh, src)
-    if not os.path.exists(z):
+    if not os.path.exists(z) or not good_zip(z):
         continue
     tid = claim(tid)
     fdir = os.path.join(OUT, tid, 'files')
@@ -188,6 +200,9 @@ for sub in ('Apps', 'Development'):
         if k in seen or any(k.startswith(s) or s.startswith(k) for s in seen if len(s) > 3) or not f.lower().endswith('.zip'):
             continue
         seen.add(k)
+        if not good_zip(os.path.join(d, f)):
+            skipped.append(base + ' (damaged download)')
+            continue
         tid = claim('symbos-' + slug(base))
         fdir = os.path.join(OUT, tid, 'files')
         files = ['files/' + x for x in unzip(os.path.join(d, f), fdir)]
