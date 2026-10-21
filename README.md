@@ -153,6 +153,10 @@ CRC32 `f18710b4`) and `basic11b.rom` (Atmos, BASIC 1.1, CRC32 `c3a92bef`),
 almost at once by handing bytes to the ROM's own routines; any other
 loader gets the real 2400/1200 Hz signal on the VIA's CB1.
 
+With the ROMs in a folder, `zxmrun` (below) loads a tape and types for you:
+
+    build/zxmrun -m atmos -r ~/oric-roms -f 400 -T 150:'CLOAD""\n' -s shot.ppm tape=game.tap
+
 ### MSX1 and MSX2
 
 `msx1` and `msx2` are 60 Hz machines, `msx1eu` and `msx2eu` their 50 Hz
@@ -202,7 +206,7 @@ mid-frame changes land where they do on the hardware.
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
 | 6502 core | done: every opcode, documented and not, cycle by cycle on the bus; NMOS decimal mode; interrupt polling on the last cycle but one |
-| Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Checked with a test ROM; the real BASIC ROMs still to be tried. Microdisc not yet |
+| Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Both BASIC ROMs boot, run BASIC and CLOAD a tape, fast and in real time. Microdisc not yet |
 | SAM Coupé | boots ROM 3.0 to BASIC and SAMDOS from disk. 512K paging, ASIC screen modes 1 to 4 with the CLUT, memory and ASIC port contention, line and frame interrupts, light pen and attribute ports, SAA1099, beeper, keyboard, two VL1772 drives in real time (MGT, SAD, DSK, EDSK), tape. Still to come: mouse, external memory, mode-change artefacts |
 | Beta 128 (TR-DOS) | WD1793 on raw tracks, timed to the byte (seeks, rotation, DRQ per byte); .trd images written back, .scl read; Pentagon, Scorpion, ATM |
 | Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |

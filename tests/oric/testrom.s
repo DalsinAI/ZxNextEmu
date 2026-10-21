@@ -246,8 +246,8 @@ k3: inc byte
     bne k1
     rts
 
-; ---- tape - falling CB1 edges timed with T2 ---------------------------------
-; A 1 is 416 cycles from fall to fall, a 0 is 832.
+; ---- tape - rising CB1 edges timed with T2 ---------------------------------
+; A 1 is 416 cycles from rise to rise, a 0 is 832.
 tape:
     lda #0
     sta tcnt
@@ -259,7 +259,7 @@ tape:
     lda #>$0400
     sta ptr+1
     lda PCR
-    and #$ef            ; CB1 on falling edges
+    ora #$10            ; CB1 on rising edges, as the BASIC ROM does
     sta PCR
     lda #$ff            ; T2 runs down from $ffff
     sta T2CL
@@ -324,7 +324,7 @@ r2: pha
 r3: lda byte
     rts
 
-; Carry = the next bit. Uses the time since the last falling edge - T2
+; Carry = the next bit. Uses the time since the last rising edge - T2
 ; ran down from $ffff, so its high byte is $ff less the elapsed pages
 ; (a 1 is 416 cycles, page 1; a 0 is 832, page 3).
 rdbit:
