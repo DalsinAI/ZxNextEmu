@@ -3,7 +3,8 @@
 
 import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
-  importCollection, label, machineLabels, rgbaToPng, pictureScore, toToml, runParts, attachFiles, romsAdded,
+  importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, attachFiles, romsAdded,
+  normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -13,8 +14,12 @@ const LICENSES = ['unknown', 'freeware', 'public-domain', 'shareware', 'commerci
 const JOYSTICKS = ['', 'kempston', 'sinclair', 'cursor', 'none'];
 
 let titles = [];
-let opts = null;          // { machines(): [{id, name}], runnable(id), run(title, run, machine) }
-const facets = { machine: new Set(), kind: new Set(), genre: new Set(), decade: new Set() };
+let opts = null;          // { machines(): [{id, name}], runnable(id), run(title, run, machine), current?(): machine id }
+const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), license: new Set() };
+// Instance mode: show only what runs on one set-up {machine, offers, name}.
+// null shows everything. It follows the running machine unless the user
+// chose Show everything.
+let setup = null, everything = false, needsOpen = false;
 const urls = new Map();   // blob -> object URL
 let openId = null;
 
@@ -40,7 +45,9 @@ export async function initLibraryView(o) {
 
 export async function reload() {
   try { titles = await titleAll(); } catch { titles = []; status('This browser is not keeping files for this page, so the library cannot be stored.'); }
-  for (const t of titles) delete t._hay;
+  for (const t of titles) { delete t._hay; t.meta = normalize(t.meta); }
+  try { everything = localStorage.getItem('zxc-lib-everything') === '1'; } catch { /* storage off */ }
+  if (!setup && opts.current) setup = setupFor(opts.current());
   render();
   if (openId) showDetail(openId);
   queueShots();
@@ -52,6 +59,59 @@ function status(text) {
   const el = $('lib-status');
   el.textContent = text || '';
   el.hidden = !text;
+}
+
+// ---- instance mode ------------------------------------------------------------
+
+const setupFor = (machine, offers, name) => machine ? { machine, offers: offers || offersOf(machine), name: name || opts.machineName(machine) } : null;
+
+// Show only what runs on this set-up (an instance or a recipe). offers
+// defaults to what the machine has built in.
+export function showFor(machine, offers, name) {
+  setup = setupFor(machine, offers, name);
+  setEverything(false);
+}
+
+// The running machine changed.
+export function machineChanged(machine) {
+  if (!opts) return;
+  setup = setupFor(machine);
+  render();
+}
+
+function setEverything(on) {
+  everything = on;
+  try { localStorage.setItem('zxc-lib-everything', on ? '1' : '0'); } catch { /* storage off */ }
+  render();
+}
+
+const instanceMode = () => setup && !everything;
+
+function renderMode(needs) {
+  let bar = $('lib-mode');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'lib-mode';
+    bar.className = 'lib-mode';
+    $('lib-grid').before(bar);
+  }
+  const machines = (opts.machines?.() || []).filter(mc => Object.keys(machineLabels).includes(mc.id));
+  if (instanceMode()) {
+    const offers = setup.offers.filter(o => NEEDS[o] && !o.startsWith('ram:')).map(needWord);
+    bar.innerHTML = `<p><span class="fit fit-runs" aria-hidden="true">R</span> Showing what runs on <b>${esc(setup.name)}</b>${offers.length ? ` <small>· ${esc(offers.join(', '))}</small>` : ''}
+      <button class="zxc-btn small" data-everything>Show everything</button></p>
+      ${needs.length ? `<details class="lib-needs"${needsOpen ? ' open' : ''}><summary>${needs.length} more would run with a change to this machine</summary>
+        <ul>${needs.slice(0, 200).map(x => `<li><button class="linkish" data-id="${esc(x.t.id)}">${esc(x.t.meta.name)}</button> <small>${x.broken ? 'Known not to work here' : `needs ${esc(x.missing.map(needWord).join(', '))}`}</small></li>`).join('')}</ul></details>` : ''}`;
+    bar.querySelector('[data-everything]').addEventListener('click', () => setEverything(true));
+    bar.querySelector('details')?.addEventListener('toggle', e => { needsOpen = e.target.open; });
+    bar.querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => showDetail(b.dataset.id)));
+  } else {
+    bar.innerHTML = `<p>Showing everything. <label>Only what runs on <select data-for aria-label="Machine">
+      <option value="">any machine</option>${machines.map(mc => `<option value="${esc(mc.id)}">${esc(mc.name)}</option>`).join('')}</select></label></p>`;
+    bar.querySelector('[data-for]').addEventListener('change', e => {
+      if (e.target.value) showFor(e.target.value);
+    });
+  }
 }
 
 // ---- adding -----------------------------------------------------------------
@@ -87,29 +147,52 @@ async function addCollection() {
 // ---- the grid -----------------------------------------------------------------
 
 function facetValues(t) {
+  const machines = instanceMode() ? [setup.machine] : facets.machine.size ? titleMachines(t).filter(m => facets.machine.has(m)) : titleMachines(t);
   return {
     machine: titleMachines(t),
     kind: [t.meta.kind || 'game'],
+    works: [...new Set(machines.map(m => compatOf(t, m)))],
     genre: t.meta.genres || [],
     decade: [decade(t.meta.year)].filter(Boolean),
+    needs: [...new Set((t.meta.runs || []).flatMap(r => r.needs || []))],
+    license: [t.meta.license || 'unknown'],
   };
 }
 
-function visible() {
+// The titles the search and the filters leave, ignoring one filter (so its
+// counts say what picking a value there would leave).
+function visible(except) {
   const q = $('lib-q').value.trim();
   return titles.filter(t => {
     if (!matches(t, q)) return false;
     const v = facetValues(t);
-    return Object.entries(facets).every(([k, set]) => !set.size || v[k].some(x => set.has(x)));
+    return Object.entries(facets).every(([k, set]) => k === except || !set.size || v[k].some(x => set.has(x)));
   });
 }
 
 function render() {
+  if (!opts) return;
   const sort = $('lib-sort').value;
-  const list = visible().sort((a, b) =>
+  const bySort = (a, b) =>
     sort === 'year' ? (a.meta.year || 9999) - (b.meta.year || 9999) || a.meta.name.localeCompare(b.meta.name)
       : sort === 'added' ? b.added - a.added
-        : a.meta.name.localeCompare(b.meta.name));
+        : a.meta.name.localeCompare(b.meta.name);
+  let list = visible().sort(bySort);
+  const fits = new Map();
+  let needs = [];
+  const wantNeeds = /(^|\s)fit:needs(\s|$)/i.test($('lib-q').value);
+  if (instanceMode()) {
+    // Runs titles keep the chosen sort inside each band: verified, works, the rest.
+    const all = titlesFor(list, setup);
+    for (const x of all) fits.set(x.t.id, x);
+    needs = all.filter(x => x.fit === 'needs');
+    const band = x => ({ verified: 0, works: 1 })[x.compat] ?? 2;
+    list = all.filter(x => (x.fit === 'runs') !== wantNeeds).sort((a, b) => band(a) - band(b) || bySort(a.t, b.t)).map(x => x.t);
+  } else if (setup && facets.machine.size === 1) {
+    const only = [...facets.machine][0];
+    for (const t of list) fits.set(t.id, fitFor(t, { machine: only }));
+  }
+  renderMode(needs);
   opts.onCount?.(titles.length);
   $('lib-count').textContent = titles.length === list.length
     ? `${titles.length} title${titles.length === 1 ? '' : 's'}`
@@ -127,7 +210,7 @@ function render() {
       <span class="lib-card-text">
         <b>${esc(t.meta.name)}</b>
         <small>${esc([t.meta.year, t.meta.publisher || (t.meta.authors || [])[0]].filter(Boolean).join(' · ') || kindWord(t.meta.kind))}</small>
-        <span class="badges">${machines.slice(0, 4).map(m => `<span class="badge${opts.runnable(m) ? '' : ' off'}">${esc(label(m))}</span>`).join('')}${machines.length > 4 ? `<span class="badge more">${machines.length - 4} more</span>` : ''}</span>
+        ${fits.has(t.id) ? fitChip(fits.get(t.id)) : `<span class="badges">${machines.slice(0, 4).map(m => `<span class="badge${opts.runnable(m) ? '' : ' off'}">${esc(label(m))}</span>`).join('')}${machines.length > 4 ? `<span class="badge more">${machines.length - 4} more</span>` : ''}</span>`}
       </span></button>`;
     li.firstElementChild.addEventListener('click', () => showDetail(t.id));
     grid.append(li);
@@ -138,25 +221,42 @@ function render() {
 
 const kindWord = k => (k || 'game').replace(/^./, c => c.toUpperCase()).replace('-', ' ');
 
+// R Runs / N Needs, always a letter and a word, with what is known.
+function fitChip(x) {
+  if (x.fit === 'no') return '<span class="badges"><span class="badge off">Not for this machine</span></span>';
+  const word = x.fit === 'runs' ? 'Runs' : x.broken ? 'Broken here' : `Needs ${needWord(x.missing[0])}`;
+  return `<span class="badges"><span class="fit fit-${x.fit}" title="${esc(word)}">${x.fit === 'runs' ? 'R' : 'N'}</span><span class="fit-word">${esc(word)}</span>${x.compat && x.compat !== 'untested' && !x.broken ? `<small class="compat compat-${x.compat}">${esc(x.compat)}</small>` : ''}</span>`;
+}
+
 function renderFilters() {
   const box = $('lib-filters');
-  const counts = { machine: new Map(), kind: new Map(), genre: new Map(), decade: new Map() };
-  for (const t of titles) for (const [k, vs] of Object.entries(facetValues(t))) for (const v of vs) counts[k].set(v, (counts[k].get(v) || 0) + 1);
-  const heads = { machine: 'Runs on', kind: 'Kind', genre: 'Genre', decade: 'Decade' };
-  const names = { machine: label, kind: kindWord, genre: g => g, decade: d => d };
+  const counts = Object.fromEntries(Object.keys(facets).map(k => [k, new Map()]));
+  for (const t of titles) for (const [k, vs] of Object.entries(facetValues(t))) for (const v of vs) counts[k].set(v, 0);
+  const inMode = instanceMode() ? t => fitFor(t, setup).fit === 'runs' : () => true;
+  for (const k of Object.keys(counts))
+    for (const t of visible(k)) if (inMode(t)) for (const v of facetValues(t)[k]) counts[k].set(v, counts[k].get(v) + 1);
+  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', license: 'Licence' };
+  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, license: l => l.replace('-', ' ') };
   box.textContent = '';
+  if (instanceMode()) {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h3>Runs on</h3><p class="lib-locked">${esc(setup.name)} <small>locked</small></p>`;
+    box.append(sec);
+  }
   for (const k of Object.keys(heads)) {
-    if (!counts[k].size) continue;
+    if (!counts[k].size || (k === 'machine' && instanceMode())) continue;
     const sec = document.createElement('section');
     sec.innerHTML = `<h3>${heads[k]}</h3>`;
     const order = Object.keys(machineLabels);
     const entries = [...counts[k]].sort((a, b) => k === 'decade' ? a[0].localeCompare(b[0])
+      : k === 'works' ? COMPAT.indexOf(a[0]) - COMPAT.indexOf(b[0])
       : k === 'machine' ? ((order.indexOf(a[0]) + 1) || 99) - ((order.indexOf(b[0]) + 1) || 99)
         : b[1] - a[1] || String(a[0]).localeCompare(b[0]));
     for (const [v, n] of entries) {
       const l = document.createElement('label');
       l.className = 'check';
       l.innerHTML = `<input type="checkbox"${facets[k].has(v) ? ' checked' : ''}><span>${esc(names[k](v))}</span><small>${n}</small>`;
+      if (!n && !facets[k].has(v)) l.classList.add('dim');
       l.querySelector('input').addEventListener('change', e => { e.target.checked ? facets[k].add(v) : facets[k].delete(v); render(); });
       sec.append(l);
     }
@@ -186,16 +286,22 @@ export async function showDetail(id) {
   const runs = (m.runs || []).map((r, i) => {
     const machines = r.machines || [];
     const ok = machines.filter(x => opts.runnable(x));
+    if (setup && ok.includes(setup.machine)) ok.unshift(...ok.splice(ok.indexOf(setup.machine), 1));
     const paths = r.files || (r.file ? [r.file] : []);
+    const known = machines.filter(x => compatOf(t, x) !== 'untested')
+      .map(x => `${label(x)}: ${compatOf(t, x)}${m.compat[x].note ? ` (${m.compat[x].note})` : ''}`);
     const file = paths.length > 1 ? `${paths.length} files` : (paths[0] || '').replace(/^files\//, '');
     const { missing } = runParts(t, r);
     const need = missing.map(p => p.replace(/^.*\//, ''));
     return `<li class="det-run">
       <div><span class="badges">${machines.map(x => `<span class="badge${opts.runnable(x) ? '' : ' off'}">${esc(label(x))}</span>`).join('')}</span>
-      <small>${esc(file)}${r.notes ? ` · ${esc(r.notes)}` : ''}</small></div>
+      <small>${esc(file)}${r.notes ? ` · ${esc(r.notes)}` : ''}</small>
+      ${(r.needs || []).length ? `<small>Needs ${esc(r.needs.map(needWord).join(', '))}</small>` : ''}
+      ${known.length ? `<small class="det-known">${esc(known.join(' · '))}</small>` : ''}</div>
       ${missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
         : ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
-        <button class="zxc-btn zxc-btn--primary small" data-play="${i}">Run</button></div>`
+        <button class="zxc-btn zxc-btn--primary small" data-play="${i}">Run</button>
+        <span class="det-say"><button class="zxc-btn small" data-works="${i}">Works here</button><button class="zxc-btn small" data-broken="${i}">Doesn't work here</button></span></div>`
         : `<small class="det-later">${machines.includes('next') ? 'The Next is not in the browser yet' : 'Not in the browser yet'}</small>`}
     </li>`;
   }).join('');
@@ -229,7 +335,7 @@ export async function showDetail(id) {
     <footer class="det-foot">
       <button class="zxc-btn" data-edit>Edit info</button>
       <button class="zxc-btn" data-export>Export as .zip</button>
-      <button class="zxc-btn" data-toml>Show title.toml</button>
+      <button class="zxc-btn" data-toml>Show title.json</button>
       <span class="spacer"></span>
       <button class="zxc-btn zxc-btn--danger" data-remove>Remove from library</button>
     </footer>
@@ -263,6 +369,13 @@ export async function showDetail(id) {
     closeDetail();
     opts.run(t, m.runs[i], d.querySelector(`select[data-run="${i}"]`)?.value || m.runs[i].machines[0]);
   }));
+  for (const [attr, status] of [['works', 'works'], ['broken', 'broken']])
+    d.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', async () => {
+      const i = Number(b.dataset[attr]);
+      const machine = d.querySelector(`select[data-run="${i}"]`)?.value || m.runs[i].machines[0];
+      setCompat(t, machine, compatOf(t, machine) === status ? 'untested' : status, 'you');
+      await save(t);
+    }));
   d.querySelector('[data-cover]')?.addEventListener('click', async () => {
     t.screens.unshift(...t.screens.splice(shot, 1));
     await save(t);
@@ -283,7 +396,7 @@ export async function showDetail(id) {
     if (!meta.screens.length) delete meta.screens;
     const pre = document.createElement('pre');
     pre.className = 'zxc-shell det-toml';
-    pre.textContent = toToml(meta);
+    pre.textContent = toJson(meta, t.id);
     d.querySelector('.det-info').prepend(pre);
     d.querySelector('[data-toml]').remove();
   });
@@ -336,6 +449,7 @@ function edit(t) {
       <label>Joystick<select name="joystick">${JOYSTICKS.map(k => `<option value="${k}"${k === (m.controls?.joystick || '') ? ' selected' : ''}>${k || '—'}</option>`).join('')}</select></label>
       ${(m.runs || []).map((r, i) => `<fieldset class="wide"><legend>Runs on: ${esc((r.file || (r.files || [])[0] || '').replace(/^files\//, ''))}</legend>
         <div class="edit-machines">${all.map(x => `<label class="check"><input type="checkbox" name="run${i}" value="${esc(x.id)}"${(r.machines || []).includes(x.id) ? ' checked' : ''}>${esc(label(x.id))}</label>`).join('')}</div>
+        <div class="edit-machines">${Object.keys(NEEDS).map(n => `<label class="check"><input type="checkbox" name="needs${i}" value="${esc(n)}"${(r.needs || []).includes(n) ? ' checked' : ''}>${esc(needWord(n))}</label>`).join('')}</div>
         <label>Notes<input name="notes${i}" value="${esc(r.notes || '')}"></label></fieldset>`).join('')}
       <label class="wide">About <small>what it is, how to play, credits</small><textarea name="about" rows="6">${esc(t.about || '')}</textarea></label>
     </div>
@@ -363,6 +477,7 @@ function edit(t) {
       const picked = f.getAll(`run${i}`).map(String);
       // Keep the order (the first is the one Run uses); add new ones at the end.
       r.machines = [...(r.machines || []).filter(x => picked.includes(x)), ...picked.filter(x => !(r.machines || []).includes(x))];
+      r.needs = f.getAll(`needs${i}`).map(String).concat((r.needs || []).filter(x => !NEEDS[x]));
       const n = String(f.get(`notes${i}`)).trim();
       if (n) r.notes = n; else delete r.notes;
     });
@@ -435,12 +550,14 @@ async function takeShots(t) {
   const fresh = await titleGet(t.id);
   if (!fresh) return;
   if (worked && worked !== run.machines[0]) {
-    const fr = fresh.meta.runs.find(r => r.file === run.file && String(r.files) === String(run.files));
+    const fr = fresh.meta.runs.find(r => String(r.files) === String(run.files));
     if (fr) fr.machines = [worked, ...fr.machines.filter(m => m !== worked)];
   }
   for (const [i, sh] of keep.slice(0, 3).entries())
     fresh.screens.push({ path: `screens/auto-${Date.now().toString(36)}-${i + 1}.png`, blob: await rgbaToPng(sh.pixels, sh.w, sh.h), caption: '', auto: true });
   fresh.needsShots = false;
+  fresh.meta = normalize(fresh.meta);
+  if (worked && compatOf(fresh, worked) === 'untested') setCompat(fresh, worked, 'verified', 'cradle');
   // Pictures of a tape that never finished loading are no use; say so instead.
   fresh.loadFailed = !worked ? tried : undefined;
   await titlePut(fresh);

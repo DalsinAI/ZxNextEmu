@@ -1,6 +1,7 @@
 // ZX Cradle software library: titles (games, demos, utilities...) with their
-// files, screenshots and a title.toml saying what each one is and what it
-// runs on. See docs/cradle/titles.md for the format.
+// files, screenshots and a title.json saying what each one is and what it
+// runs on. See docs/cradle/titles.md for the format. Older folders with a
+// title.toml are still read, and are written back as title.json.
 //
 // In the browser, titles live in IndexedDB. Export and import use a .zip of
 // the title's folder, so a title moves between Cradles unchanged.
@@ -85,10 +86,10 @@ export function detect(name, bytes) {
   }
   case 'nex': return { platform: 'zx-spectrum', slot: 'sd0', machines: ['next'] };
   case 'dsk': return { platform: 'zx-spectrum', slot: 'disk.a', machines: ['plus3'] };
-  case 'trd': case 'scl': return { platform: 'zx-spectrum', slot: 'beta.a', machines: ['pentagon', 'scorpion', 'atm2'] };
+  case 'trd': case 'scl': return { platform: 'zx-spectrum', slot: 'beta.a', machines: ['pentagon', 'scorpion', 'atm2'], needs: ['beta'] };
   case 'mgt': case 'sad': return { platform: 'sam-coupe', slot: 'disk.1', machines: ['sam'] };
   case 'mx1': case 'mx2': return { platform: 'msx', slot: 'cart1', machines: e === 'mx1' ? ['msx1', 'msx2'] : ['msx2'] };
-  case 'mdr': return { platform: 'zx-spectrum', slot: 'md.1', machines: ['zx48'] };
+  case 'mdr': return { platform: 'zx-spectrum', slot: 'md.1', machines: ['zx48'], needs: ['interface1'] };
   default: return null;
   }
 }
@@ -213,6 +214,109 @@ export function toToml(meta) {
   for (const k of ['runs', ...keys.filter(k => k !== 'runs' && k !== 'screens'), 'screens'].filter(k => isTableArray(meta[k])))
     for (const t of meta[k]) out += `\n[[${k}]]\n` + body(t);
   return out;
+}
+
+// ---- title.json -------------------------------------------------------------
+
+// Format 2: the fields of title.toml, plus runs[].files always an array,
+// runs[].needs and runs[].likes, compat per machine and ids elsewhere.
+export function parseTitle(text, path = 'title.json') {
+  if (/\.toml$/i.test(path)) return normalize(parseToml(text));
+  try { return normalize(JSON.parse(text)); } catch (err) { throw new Error(`${path}: ${err.message}`); }
+}
+
+// Bring a title read from any format up to format 2, keeping unknown keys.
+export function normalize(meta) {
+  const m = { ...meta, format: 2 };
+  m.runs = (m.runs || []).map(r => {
+    const { file, ...rest } = r;
+    const files = rest.files || (file ? [file] : []);
+    const needs = [...new Set([...(rest.needs || []), ...(rest.slot === 'beta.a' ? ['beta'] : []), ...(rest.slot === 'md.1' ? ['interface1'] : [])])];
+    return { ...rest, files, needs };
+  });
+  if (m.zxdb_id || m.zxart_id) {
+    m.ids = { ...(m.ids || {}), ...(m.zxdb_id ? { zxdb: m.zxdb_id } : {}), ...(m.zxart_id ? { zxart: m.zxart_id } : {}) };
+    delete m.zxdb_id;
+    delete m.zxart_id;
+  }
+  m.compat ??= {};
+  return m;
+}
+
+const JSON_ORDER = ['format', 'id', 'name', 'kind', 'year', 'authors', 'publisher', 'genres', 'tags', 'summary', 'license', 'source', 'sources', 'ids', 'added', 'runs', 'compat', 'controls', 'screens'];
+
+export function toJson(meta, id) {
+  const m = { ...meta, format: 2, ...(id ? { id } : {}) };
+  const keys = Object.keys(m).filter(k => m[k] != null && m[k] !== '')
+    .sort((a, b) => ((JSON_ORDER.indexOf(a) + 1) || 99) - ((JSON_ORDER.indexOf(b) + 1) || 99));
+  return JSON.stringify(Object.fromEntries(keys.map(k => [k, m[k]])), null, 2) + '\n';
+}
+
+// ---- what runs where -----------------------------------------------------------
+
+// The fixed list of things a run can need beyond the bare machine, shared
+// with recipes. A set-up offers some of them; a run that needs one the
+// set-up lacks is a Needs, not a Runs.
+export const NEEDS = {
+  'ram:128': '128K of memory', 'ram:256': '256K of memory', 'ram:1024': '1 MB of memory', 'ram:2048': '2 MB of memory',
+  ay: 'an AY sound chip', turbosound: 'TurboSound', gs: 'General Sound', covox: 'Covox',
+  beta: 'a Beta Disk (TR-DOS)', interface1: 'Interface 1', divmmc: 'divMMC with esxDOS', plus3dos: 'the +3 disk drive',
+  kempston: 'a Kempston joystick', mouse: 'a Kempston mouse', ulaplus: 'ULAplus', 'timex-hires': 'Timex hi-res modes',
+  spec256: 'Spec256 graphics', pi: 'the NextPi', wifi: 'wifi', mb03: 'an MB03+ interface',
+};
+export const needWord = n => NEEDS[n] || (n.startsWith('next:core>=') ? `Next core ${n.slice(11)} or newer` : n);
+
+// What each machine offers out of the box. An instance can offer more (a
+// Beta Disk on a 128K, a mouse) by passing its own list.
+export const MACHINE_OFFERS = {
+  zx48: ['kempston'],
+  zx128: ['ram:128', 'ay', 'kempston'],
+  plus2: ['ram:128', 'ay', 'kempston'],
+  plus2a: ['ram:128', 'ay', 'kempston'],
+  plus3: ['ram:128', 'ay', 'kempston', 'plus3dos'],
+  pentagon: ['ram:128', 'ay', 'kempston', 'beta'],
+  scorpion: ['ram:128', 'ram:256', 'ay', 'kempston', 'beta'],
+  atm2: ['ram:128', 'ram:256', 'ram:1024', 'ay', 'kempston', 'beta'],
+  spec256: ['ram:128', 'ay', 'kempston', 'spec256'],
+  next: ['ram:128', 'ram:256', 'ram:1024', 'ay', 'turbosound', 'kempston', 'mouse', 'divmmc', 'ulaplus', 'timex-hires'],
+  sam: [], msx1: [], msx1eu: [], msx2: [], msx2eu: [], oric1: [], atmos: [],
+};
+export const offersOf = (machine, extra = []) => [...new Set([...(MACHINE_OFFERS[machine] || []), ...extra])];
+
+export const COMPAT = ['verified', 'works', 'partial', 'untested', 'broken'];
+export const compatOf = (t, machine) => t.meta.compat?.[machine]?.status || 'untested';
+const RANK = { verified: 0, works: 1, partial: 2, untested: 3, broken: 4 };
+
+// How a title fits a set-up {machine, offers}: 'runs', 'needs' or 'no', with
+// the run to use and what is missing. A run known to be broken on the
+// machine counts as needs, with the reason.
+export function fitFor(t, setup) {
+  const offers = setup.offers || offersOf(setup.machine);
+  let best = null;
+  for (const run of t.meta.runs || []) {
+    if (!(run.machines || []).includes(setup.machine)) continue;
+    const missing = (run.needs || []).filter(n => !offers.includes(n) && !(n.startsWith('next:core') && setup.machine === 'next'));
+    const fit = missing.length ? 'needs' : 'runs';
+    if (!best || (best.fit === 'needs' && fit === 'runs')) best = { fit, run, missing };
+  }
+  if (!best) return { fit: 'no', run: null, missing: [] };
+  const compat = compatOf(t, setup.machine);
+  if (best.fit === 'runs' && compat === 'broken') return { ...best, fit: 'needs', compat, broken: true };
+  return { ...best, compat };
+}
+
+// The titles a set-up can run, best first: Runs (verified, then works, then
+// untested), then Needs. Titles with no run for the machine are left out.
+export function titlesFor(list, setup) {
+  return list.map(t => ({ t, ...fitFor(t, setup) })).filter(x => x.fit !== 'no')
+    .sort((a, b) => (a.fit === 'runs' ? 0 : 1) - (b.fit === 'runs' ? 0 : 1) || RANK[a.compat] - RANK[b.compat]);
+}
+
+// Record what is known about a title on a machine. by: 'cradle' or 'you'.
+export function setCompat(t, machine, status, by, note) {
+  t.meta.compat ??= {};
+  if (status === 'untested') delete t.meta.compat[machine];
+  else t.meta.compat[machine] = { status, by, date: new Date().toISOString().slice(0, 10), ...(note ? { note } : {}) };
 }
 
 // ---- zip (store to write; store and deflate to read) --------------------------
@@ -343,7 +447,7 @@ function hashPixels(px) {
 
 // Turn dropped files (with folder paths when a folder was dropped) and zip
 // files into titles:
-// - a folder or zip with a title.toml is one title, as described;
+// - a folder or zip with a title.json (or an older title.toml) is one title, as described;
 // - other folders become one title each, named after the folder;
 // - loose software files become one title each.
 // Returns the ids added.
@@ -357,9 +461,9 @@ export async function importFiles(files) {
       for (const e of await readZip(bytes.buffer)) items.push({ path: `${base}/${e.path}`, bytes: e.bytes, fromZip: true });
     } else items.push({ path, bytes });
   }
-  // Group by the folder that holds a title.toml, else by top-level folder.
+  // Group by the folder that holds a title.json (or title.toml), else by top-level folder.
   const groups = new Map();
-  const tomlDirs = items.filter(i => /(^|\/)title\.toml$/i.test(i.path)).map(i => i.path.replace(/title\.toml$/i, ''));
+  const tomlDirs = items.filter(i => /(^|\/)title\.(json|toml)$/i.test(i.path)).map(i => i.path.replace(/title\.(json|toml)$/i, ''));
   for (const it of items) {
     let key = tomlDirs.find(d => it.path.startsWith(d));
     if (key == null) {
@@ -381,11 +485,11 @@ export async function importFiles(files) {
 async function titleFromGroup(key, group) {
   const prefix = key.endsWith('#') ? key.slice(0, -1).replace(/[^/]*$/, '') : key;
   const rel = it => it.path.slice(prefix.length);
-  const toml = group.find(i => /(^|\/)title\.toml$/i.test(i.path) && rel(i).toLowerCase() === 'title.toml');
+  const desc = group.find(i => rel(i).toLowerCase() === 'title.json') || group.find(i => rel(i).toLowerCase() === 'title.toml');
   const files = [], screens = [];
   let about = '';
-  if (toml) {
-    const meta = parseToml(new TextDecoder().decode(toml.bytes));
+  if (desc) {
+    const meta = parseTitle(new TextDecoder().decode(desc.bytes), desc.path);
     for (const it of group) {
       const r = rel(it);
       if (r.startsWith('files/')) files.push({ path: r, bytes: it.bytes });
@@ -408,7 +512,7 @@ async function titleFromGroup(key, group) {
     if (what) {
       const path = `files/${r}`;
       files.push({ path, bytes: it.bytes });
-      runs.push({ platform: what.platform, machines: what.machines, file: path, slot: what.slot });
+      runs.push({ platform: what.platform, machines: what.machines, files: [path], slot: what.slot, needs: what.needs || [] });
     } else if (isImage(r)) {
       const png = await imageToPng(r, it.bytes);
       if (png) screens.push({ path: `screens/${screens.length + 1}.png`, blob: png, caption: '' });
@@ -419,23 +523,23 @@ async function titleFromGroup(key, group) {
   if (!files.length) return null;
   // Best run first: the one that suits the most machines' newest member last.
   runs.sort((a, b) => (b.machines.includes('zx128') ? 1 : 0) - (a.machines.includes('zx128') ? 1 : 0));
-  const meta = { format: 1, name, kind: 'game', runs, added: new Date().toISOString().slice(0, 10) };
+  const meta = normalize({ name, kind: 'game', runs, added: new Date().toISOString().slice(0, 10) });
   const id = await freeId(slug(name));
   return { id, meta, about, files, screens, added: Date.now(), needsShots: !screens.length };
 }
 
 // ---- the shared collection --------------------------------------------------
 
-// collection.json, packed from a folder of titles: {titles: [{id, toml, about,
-// files: [{path, b64}], screens: [{path, b64}]}]}. Titles already in the
-// library are left alone. Returns the ids added.
+// collection.json, packed from a folder of titles: {titles: [{id, json (or
+// toml), about, files: [{path, b64}], screens: [{path, b64}]}]}. Titles
+// already in the library are left alone. Returns the ids added.
 export async function importCollection(data) {
   const have = new Set((await titleAll()).map(t => t.id));
   const bytes = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   const added = [];
   for (const c of data.titles) {
     if (have.has(c.id)) continue;
-    const meta = parseToml(c.toml);
+    const meta = c.json ? normalize(typeof c.json === 'string' ? JSON.parse(c.json) : c.json) : normalize(parseToml(c.toml));
     const screens = c.screens.filter(s => isImage(s.path)).map(s => ({
       path: s.path, blob: new Blob([bytes(s.b64)], { type: 'image/png' }),
       caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
@@ -453,7 +557,7 @@ export async function exportTitle(t) {
   const enc = new TextEncoder();
   const meta = { ...t.meta, screens: t.screens.map(s => ({ file: s.path, ...(s.caption ? { caption: s.caption } : {}) })) };
   if (!meta.screens.length) delete meta.screens;
-  const entries = [{ path: `${t.id}/title.toml`, bytes: enc.encode(toToml(meta)) }];
+  const entries = [{ path: `${t.id}/title.json`, bytes: enc.encode(toJson(meta, t.id)) }];
   if (t.about) entries.push({ path: `${t.id}/about.md`, bytes: enc.encode(t.about) });
   for (const f of t.files) entries.push({ path: `${t.id}/${f.path}`, bytes: f.bytes });
   for (const s of t.screens) entries.push({ path: `${t.id}/${s.path}`, bytes: new Uint8Array(await s.blob.arrayBuffer()) });
@@ -469,16 +573,33 @@ export function haystack(t) {
     .filter(Boolean).join(' ').toLowerCase();
 }
 
+// Plain words match anywhere; key:value words filter, the same in the search
+// box, the shell and MCP: machine:next kind:demo needs:beta compat:verified
+// year:1984 decade:1990s genre:platform. (fit: is the library view's.)
 export function matches(t, query) {
   if (!query) return true;
   const h = t._hay ??= haystack(t);
-  return query.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(w));
+  const m = t.meta;
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every(w => {
+    const [, key, v] = w.match(/^(\w+):(.+)$/) || [];
+    switch (key) {
+    case 'machine': return titleMachines(t).some(x => x === v || label(x).toLowerCase() === v);
+    case 'kind': return (m.kind || 'game') === v;
+    case 'needs': return (m.runs || []).some(r => (r.needs || []).includes(v));
+    case 'compat': return Object.values(m.compat || {}).some(c => c.status === v);
+    case 'year': return String(m.year) === v;
+    case 'decade': return m.year && `${Math.floor(m.year / 10) * 10}s` === v;
+    case 'genre': return (m.genres || []).some(g => g.toLowerCase().includes(v));
+    case 'fit': return true;
+    default: return h.includes(w);
+    }
+  });
 }
 
 // The files a run loads, in order, and where each goes. A multi-file run
 // (Spec256: graphics files, then the snapshot) sends its snapshot last.
 export function runParts(t, run) {
-  const paths = run.files || (run.file ? [run.file] : []);
+  const paths = run.files?.length ? run.files : run.file ? [run.file] : [];
   const missing = paths.filter(p => !t.files.some(f => f.path === p));
   const parts = paths.filter(p => !missing.includes(p)).map(p => {
     const name = p.replace(/^.*\//, '');

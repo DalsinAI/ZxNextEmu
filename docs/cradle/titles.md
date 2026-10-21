@@ -13,7 +13,7 @@ machine ids (`a500`, `a1200`) and its own media kinds (`adf`, `hdf`, `lha`).
 
 ```
 library/titles/sanxion/
-  title.toml        what it is and what it runs on
+  title.json        what it is and what it runs on
   about.md          optional: longer notes, controls, history, credits
   files/            the software, exactly as downloaded
     sanxion48v3.tap
@@ -28,60 +28,69 @@ in `~/.zxcradle/library/titles/` under Node.js and in the browser's own
 storage (IndexedDB) in the browser. **Export** writes a title as a `.zip` of
 exactly this folder; **Import** reads such a `.zip`, a folder, or loose files.
 
-## `title.toml`
+## `title.json`
 
-```toml
-format    = 1
-name      = "Sanxion"
-kind      = "game"            # game, demo, utility, application, music, system, education
-year      = 1986
-authors   = ["Stavros Fasoulas"]
-publisher = "Thalamus"
-genres    = ["shoot-em-up"]
-tags      = ["horizontal scroller", "AY music"]
-summary   = "Horizontal shooter with a top-down radar view."
-license   = "freeware"        # freeware, public-domain, shareware, commercial, unknown
-source    = "https://..."     # where the files came from
-added     = 2026-10-21
-
-# One [[runs]] table per way to run it, best first.
-[[runs]]
-platform = "zx-spectrum"
-machines = ["zx128", "plus2", "plus2a", "plus3"]
-file     = "files/sanxion128v3.tap"
-slot     = "tape"
-notes    = "128K version with AY music."
-
-[[runs]]
-platform = "zx-spectrum"
-machines = ["zx48"]
-file     = "files/sanxion48v3.tap"
-slot     = "tape"
-
-[controls]
-keyboard = "Q up, A down, O left, P right, Space fire"
-joystick = "kempston"         # kempston, sinclair, cursor, none
-
-[[screens]]
-file    = "screens/1.png"
-caption = "Title screen"
+```json
+{
+  "format": 2,
+  "id": "sanxion",
+  "name": "Sanxion",
+  "kind": "game",
+  "year": 1986,
+  "authors": ["Stavros Fasoulas"],
+  "publisher": "Thalamus",
+  "genres": ["shoot-em-up"],
+  "tags": ["horizontal scroller", "AY music"],
+  "summary": "Horizontal shooter with a top-down radar view.",
+  "license": "freeware",
+  "source": "https://...",
+  "ids": { "zxdb": 4290 },
+  "added": "2026-10-21",
+  "runs": [
+    { "platform": "zx-spectrum", "machines": ["zx128", "plus2", "plus2a", "plus3"],
+      "files": ["files/sanxion128v3.tap"], "slot": "tape", "needs": ["ram:128", "ay"],
+      "notes": "128K version with AY music." },
+    { "platform": "zx-spectrum", "machines": ["zx48"],
+      "files": ["files/sanxion48v3.tap"], "slot": "tape", "needs": [], "likes": ["kempston"] }
+  ],
+  "compat": { "zx128": { "status": "verified", "by": "cradle", "date": "2026-10-21" } },
+  "controls": { "keyboard": "Q up, A down, O left, P right, Space fire", "joystick": "kempston" },
+  "screens": [{ "file": "screens/1.png", "caption": "Title screen" }]
+}
 ```
 
-Only `format`, `name` and one `[[runs]]` entry are required. Everything else
+`kind` is one of game, demo, utility, application, music, system, education;
+`license` one of freeware, public-domain, shareware, commercial, unknown.
+Only `format`, `name` and one entry in `runs` are required. Everything else
 helps search and filtering. Unknown keys are kept when the file is
-rewritten, so newer versions and other Cradles can add fields.
+rewritten, so newer versions and other Cradles can add fields. Folders with
+the older `title.toml` (format 1, a single `file` per run) are still read and
+are written back as `title.json`.
 
-`machines` lists machine ids from the machine manifests
-([machines.md](machines.md)). `slot` is where `file` goes: `tape`,
-`snapshot`, `disk.a`, `sd0`, `cart`. A title that needs several files (a
-multi-disk game, a tape plus a disk) lists them in `files`:
+One `runs` entry per way to run it, best first. `machines` lists machine ids
+from the machine manifests ([machines.md](machines.md)), best first. `slot`
+is where the files go: `tape`, `snapshot`, `disk.a`, `beta.a`, `sd0`,
+`cart1`, `md.1`, `disk.1`. A multi-disk game lists every file in `files`.
 
-```toml
-[[runs]]
-machines = ["plus3"]
-files    = ["files/side-a.dsk", "files/side-b.dsk"]
-slot     = "disk.a"
-```
+## What runs where
+
+`needs` lists what a run must have beyond the bare machine, from a fixed list
+shared with recipes: `ram:128`, `ram:256`, `ram:1024`, `ram:2048`, `ay`,
+`turbosound`, `gs`, `covox`, `beta`, `interface1`, `divmmc`, `plus3dos`,
+`kempston`, `mouse`, `ulaplus`, `timex-hires`, `spec256`, `pi`, `wifi`,
+`mb03`, `next:core>=X`. `likes` lists extras it uses when they are there; it
+never hides a title.
+
+A set-up (an instance or a recipe) offers its machine plus what it has built
+in or added. A title **runs** on it when a run lists the machine and every
+need is offered, **needs** a change when a run lists the machine but
+something is missing (or it is known broken there), and is left out
+otherwise. In instance mode the library shows only titles that run, best
+known first, with the near misses in a "would run with a change" row.
+
+`compat` records what is known per machine: `verified` (Cradle loaded it on a
+hidden machine and saw it run), `works` or `broken` (a person said so on the
+title page), `partial`, or `untested` (the default, not written).
 
 ## Filling it in
 
@@ -103,5 +112,7 @@ rest:
 ## Searching
 
 Search matches the name, authors, publisher, genres, tags, summary and file
-names. Filters narrow by machine ("runs on this"), kind, genre and decade.
+names. Words of the form `machine:next`, `kind:demo`, `needs:beta`,
+`compat:verified`, `year:1984`, `decade:1990s`, `genre:platform` and
+`fit:needs` filter, the same in the search box, the shell and MCP. Filters narrow by machine ("runs on this"), kind, genre and decade.
 Results sort by name, year or date added.
