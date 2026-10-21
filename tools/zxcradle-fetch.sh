@@ -86,11 +86,13 @@ LOG = open(os.path.join(LIB, 'fetch.log'), 'a', encoding='utf-8')
 FAM48 = ['zx48', 'zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 FAM128 = ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 BETA = ['pentagon', 'scorpion', 'atm2']
-# Only formats the core loads (src/core/zxm_zx.c); .szx, .slt, .pzx, .csw, .fdi, .dck and .rom stay in files/ without a run.
-RUN_EXT = {'.nex': 'sd0', '.snx': 'sd0', '.tap': 'tape', '.tzx': 'tape',
-           '.sna': 'snapshot', '.z80': 'snapshot',
-           '.trd': 'beta.a', '.scl': 'beta.a', '.dsk': 'disk.a', '.mgt': 'disk.1', '.sad': 'disk.1',
-           '.mdr': 'md.1', '.img': 'sd0'}
+# Only media the browser player can mount today (src/core/zxm_zx.c, zxm_sam.c, web/worker.js): tape,
+# snapshot, Beta disks and SAM disks, all inserted as plain bytes. SD cards, IDE disks and MSX floppies
+# need block media the player has no path for yet, and the classic Spectrums have no +3 disk or
+# Microdrive slot, so .nex, .snx, .img, Spectrum .dsk, .mdr, .szx, .pzx and the like stay in files/
+# without a run.
+RUN_EXT = {'.tap': 'tape', '.tzx': 'tape', '.sna': 'snapshot', '.z80': 'snapshot',
+           '.trd': 'beta.a', '.scl': 'beta.a', '.dsk': 'disk.1', '.mgt': 'disk.1', '.sad': 'disk.1'}
 ARCHIVES = ('.zip', '.rar', '.7z', '.lzh', '.lha', '.arj')
 
 
@@ -346,18 +348,16 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
     m, nd = list(machines), list(needs)
     if ext in ('.trd', '.scl'):
         nd.append('beta')
-        if not set(m) & set(BETA):
-            m += BETA
-    if ext == '.dsk' and platform == 'zx-spectrum':
-        m = [x for x in m if x in ('plus3', 'plus2a')] or ['plus3']
-    if ext == '.mdr':
-        nd.append('interface1')
+        # Only the clones have Beta drives; a plain Spectrum family list means any of them.
+        m = [x for x in m if x in BETA]
+        if m in ([], ['pentagon']):
+            m = list(BETA)
+    if ext in ('.dsk', '.mgt', '.sad') and platform != 'sam-coupe':
+        return None
     if slot == 'snapshot':
         m = [x for x in m if x != 'next']  # the Next has no snapshot slot
         if not m:
             return None
-    if platform == 'sam-coupe' and ext in ('.dsk', '.mgt', '.sad'):
-        slot = 'disk.1'
     r = {'platform': platform, 'machines': list(dict.fromkeys(m)), 'files': [f], 'slot': slot, 'needs': sorted(set(nd))}
     if likes:
         r['likes'] = sorted(set(likes))
@@ -373,7 +373,7 @@ def group_runs(runs):
     for r in runs:
         if not r:
             continue
-        if r['slot'] in ('tape', 'snapshot', 'sd0'):
+        if r['slot'] in ('tape', 'snapshot'):
             out[id(r)] = r
             continue
         k = (os.path.splitext(r['files'][0])[1].lower(), r['slot'], tuple(r['machines']), tuple(r['needs']))
@@ -471,7 +471,7 @@ def zx_title(lib, p, rels, hw):
     sam = hw == 'samcoupe'
     sid = lib.claim(name, '-sam' if sam else '', 'zxart', p['id'])
     tdir = os.path.join(TITLES, sid)
-    runs, nfiles, versions, vids, unrun = [], 0, [], set(), False
+    runs, nfiles, versions, vids = [], 0, [], set()
     plang = (p.get('language') or ['en'])[0]
     for r in rels:
         lang = (r.get('language') or [plang])[0] if isinstance(r.get('language'), list) else (r.get('language') or plang)
@@ -485,7 +485,9 @@ def zx_title(lib, p, rels, hw):
         rpubs = [NAMES[str(i)] for i in r.get('publishersIds', []) if str(i) in NAMES]
         versions.append({'id': vid, 'label': ', '.join(x for x in (r.get('releaseType') or 'release', r.get('version'),
                                                                   '/'.join(r.get('releaseFormat') or []), str(r.get('year') or '')) if x),
-                         'year': r.get('year') or None, 'language': lang or None, 'authors': [],
+                         'year': r.get('year') or None, 'language': lang or None,
+                         'authors': list(dict.fromkeys(NAMES[str(a['authorId'])] for a in r.get('authorsInfo', [])
+                                                       if str(a.get('authorId')) in NAMES)),
                          'publisher': rpubs[0] if rpubs else None,
                          'source': f'https://zxart.ee/eng/software/?id={p["id"]}', 'ids': {'zxart_release': r['id']},
                          'notes': safe_name(r['fileName'])})
@@ -503,15 +505,11 @@ def zx_title(lib, p, rels, hw):
         nfiles += len(files)
         vruns = group_runs([run_table(f, mach, 'sam-coupe' if sam or 'sam' in mach else 'zx-spectrum', needs, likes,
                                       versions[-1]['label']) for f in files]) if mach else []
-        unrun = unrun or big
         for x in vruns:
             x['version'] = vid
         runs += vruns
     if not nfiles:
         return None
-    if not runs and not unrun:
-        runs = [{'platform': 'sam-coupe' if sam else 'zx-spectrum', 'machines': HW_MACH.get(hw) or FAM48,
-                 'files': [], 'slot': 'sd0', 'needs': [], 'notes': 'No runnable file found; see files/.'}]
     url = f'https://zxart.ee/eng/software/?id={p["id"]}'
     desc = html.unescape(p.get('description') or '').strip()
     cat = html.unescape(p.get('categoriesString') or '')
@@ -616,8 +614,7 @@ def mb03_site(lib, made=0):
     try:
         page = fetch(f'https://drive.google.com/embeddedfolderview?id={MB03_DRIVE}').decode('utf-8', 'replace')
     except Exception as e:
-        say(f'  MB03+ site: {e}')
-        return
+        raise RuntimeError(f'MB03+ site: {e}')
     ids = {html.unescape(n): i for i, n in re.findall(r'/file/d/([^/"]+).*?flip-entry-title">([^<]+)', page, re.S)}
     say(f'MB03+ site: {len(MB03_RECS)} titles')
     for name, kind, year, fn, summary in MB03_RECS:
@@ -631,8 +628,7 @@ def mb03_site(lib, made=0):
         files = get_files(tdir, f'https://drive.usercontent.google.com/download?id={ids[fn]}&export=download&confirm=t', fn)
         if not files:
             continue
-        runs = group_runs([run_table(f, FAM128, needs=['mb03']) for f in files]) or \
-            [{'platform': 'zx-spectrum', 'machines': FAM128, 'files': files, 'slot': 'sd0', 'needs': ['mb03']}]
+        runs = group_runs([run_table(f, FAM128, needs=['mb03']) for f in files])
         lib.finish(sid, {'name': name, 'kind': kind, 'year': year, 'tags': ['mb03+'], 'summary': summary,
                          'license': 'freeware', 'source': MB03_SITE, 'sources': [MB03_SITE], 'ids': {'mb03site': fn}, 'runs': runs})
         say(f'[mb03 site] {name} ({len(files)} files)')
@@ -693,9 +689,6 @@ def worldofsam(lib, made=0):
               'authors': wos_field(p, 'Author'), 'publisher': (wos_field(p, 'Publisher') or [None])[0],
               'tags': ['sam coupe'], 'summary': desc[:200] or None, 'license': 'unknown', 'source': u, 'sources': [u],
               'ids': {'worldofsam': h}, 'runs': runs, 'screens': get_screens(tdir, imgs)}
-        if not runs:
-            tt['runs'] = [{'platform': 'sam-coupe', 'machines': ['sam'], 'files': [], 'slot': 'disk.1', 'needs': [],
-                           'notes': 'No runnable file found; see files/.'}]
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': tt['runs']},
                    f'# {name}\n\n{desc}\n\nFrom {u}' if desc else None)
         return f'{name} ({n} files)'
@@ -757,7 +750,9 @@ def vtrd(lib):
                     needs.append('gs')
                 shots = re.findall(r'<meta property="og:image" content="([^"]+)"', rp)
             except Exception as e:
-                log('vtrd release', e)
+                # Leave the title unfinished: the release page is where General Sound is noted.
+                log('vtrd release', href, e)
+                return None
         am = re.match(r"(.*?)'(\d\d)$", auth)
         year = None
         if am:
@@ -795,8 +790,7 @@ def msx(lib):
     try:
         listing = fetch(FH + 'allfiles.txt').decode('utf-8-sig', 'replace')
     except Exception as e:
-        say(f'  file-hunter.com: {e}')
-        return
+        raise RuntimeError(f'file-hunter.com list: {e}')
     groups = {}
     for line in listing.splitlines():
         p = line.strip().replace('\\', '/')
@@ -830,9 +824,8 @@ def msx(lib):
                 return None
             n += len(files)
             keep = [f for f in files if not f.lower().endswith(('.txt', '.nfo', '.png', '.jpg', '.pdf', '.diz'))]
-            if keep:
-                if slot == 'disk0':
-                    keep = [f for f in keep if f.lower().endswith(('.dsk', '.di1', '.di2'))] or keep
+            # Only cartridges get runs: floppy and hard disk slots take block media the player cannot make yet.
+            if keep and slot == 'cart1':
                 runs.append({'platform': 'msx', 'machines': FH_MACH[gen], 'files': keep, 'slot': slot, 'needs': [],
                              'notes': d.split('/')[-1]})
         if not n:
@@ -862,8 +855,7 @@ def symbos(lib):
     try:
         src = fetch(SY + 'apps.js').decode('latin-1')
     except Exception as e:
-        say(f'  symbos.de: {e}')
-        return
+        raise RuntimeError(f'symbos.de app list: {e}')
     apps = [r for r in js_rows(src.split('garrApps', 1)[-1]) if len(r) >= 17]
     say(f'symbos.de: {len(apps)} apps + SymbOS itself')
     made = 0
@@ -875,10 +867,9 @@ def symbos(lib):
             got[f] = get_files(tdir, SY + 'download/20250131-V40/' + f, f)
         if got['SymbOS-MSX40.zip'] and got['SymbOS-ZNX40.zip']:  # otherwise the next run tries again
             made += 1
-            # The Next package is loose files that go onto a NextZXOS SD card (the SymbOS recipe does that),
-            # so it has no run of its own here. The MSX package gets a run only for a ready disk image.
-            imgs = [f for f in got['SymbOS-MSX40.zip'] if f.lower().endswith(('.img', '.hdd', '.dsk'))]
-            runs = [{'platform': 'msx', 'machines': ['msx2', 'msx2eu'], 'files': [f], 'slot': 'ide0', 'needs': []} for f in imgs[:1]]
+            # Both packages are files to install onto a NextZXOS SD card or an MSX hard disk (the SymbOS
+            # recipe does that), and the player cannot mount either medium from bytes yet, so no runs.
+            runs = []
             lib.finish(sid, {'name': 'SymbOS', 'kind': 'system', 'year': 2025, 'authors': ['Prodatron'], 'tags': ['symbos'],
                              'summary': 'Multitasking windowed operating system for Z80 machines.', 'license': 'freeware',
                              'source': SY, 'sources': [SY], 'ids': {'symbos': 'os'}, 'runs': runs})
@@ -895,19 +886,17 @@ def symbos(lib):
         files = get_files(tdir, SY + 'download/apps/' + zipn, zipn)
         if not files:
             return None
-        mach = []
-        if plats == '0' or '7' in plats:
-            mach.append(('zx-spectrum', ['next'], 'sd0'))
-        if plats == '0' or '2' in plats:
-            mach.append(('msx', ['msx2', 'msx2eu'], 'ide0'))
-        runs = [{'platform': pl, 'machines': m, 'files': files, 'slot': sl, 'needs': ['symbos']} for pl, m, sl in mach]
+        # An app is copied onto a running SymbOS's drive, not mounted, so it has no run of its own.
+        on = [n for n, k in (('ZX Spectrum Next', '7'), ('MSX2', '2')) if plats == '0' or k in plats]
+        runs = []
         shots = [f'{SY}gfx/shots/{a[13]}{i}.gif' for i in range(1, min(3, int(a[12] or 0)) + 1)] if a[13] else []
         ym = re.search(r'(\d{4})$', date)
         tt = {'name': name, 'kind': 'application', 'year': int(ym.group(1)) if ym else None, 'authors': [a[5]] if a[5] else [],
               'tags': ['symbos'], 'summary': a[15] or None, 'license': 'freeware', 'source': SY, 'sources': [SY + 'apps.htm'],
               'ids': {'symbos': aid}, 'runs': runs, 'screens': get_screens(tdir, shots)}
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': runs},
-                   f'# {name} {ver}\n\n{html.unescape(re.sub("<[^>]+>", " ", a[16]))}' if a[16] else None)
+                   f'# {name} {ver}\n\n{html.unescape(re.sub("<[^>]+>", " ", a[16] or ""))}\n\n'
+                   f'A SymbOS app for {" and ".join(on)}: copy files/ onto the drive of a set-up that boots SymbOS.')
         return f'{name} ({len(files)} files)'
     batch(todo, one, 'symbos')
 
@@ -1059,9 +1048,18 @@ def pouet_reviews(pid):
     return ratings, reviews
 
 
+def pouet_runs(files, plat):
+    platform, mach = POUET_PLATFORMS[plat]
+    if platform == 'msx':  # cartridges only: MSX floppies need block media the player cannot make yet
+        return [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': 'cart1', 'needs': []}
+                for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.mx1', '.mx2')]
+    return group_runs([run_table(f, mach, platform) for f in files])
+
+
 def demos(lib):
-    made = 0
-    for plat, (platform, mach) in POUET_PLATFORMS.items():
+    """One title per pouet prod, with runs for every platform of ours it is listed under."""
+    made, seen = 0, {}
+    for plat in POUET_PLATFORMS:
         if LIMIT and made >= LIMIT:
             break
         ids, page = [], 1
@@ -1077,58 +1075,56 @@ def demos(lib):
             ids += new
             page += 1
             # Count only productions not yet in the library, so trial runs page on past ones already done.
-            if LIMIT and sum(1 for i in ids if not lib.has('pouet', i)) >= (LIMIT - made) * 4:
+            if LIMIT and sum(1 for i in ids if not lib.has('pouet', i) and i not in seen) >= (LIMIT - made) * 4:
                 break
-        todo = [i for i in ids if not lib.has('pouet', i)]
+        todo = [i for i in ids if not lib.has('pouet', i) and i not in seen]
         say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
         if LIMIT:
             todo = todo[:LIMIT - made]
         made += len(todo)
+        for i in todo:
+            seen[i] = plat
 
-        def one(pid, platform=platform, mach=mach, plat=plat):
-            p = pouet_prod(pid)
-            name = html.unescape(p.get('name') or '').strip() or pid
-            dl = (p.get('download') or '').strip()
-            if not dl:
-                return None
-            if 'files.scene.org/view/' in dl:
-                dl = dl.replace('files.scene.org/view/', 'files.scene.org/get/')
-            elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|rom|nex)(\?|$)', dl, re.I):
-                return None
-            groups = [html.unescape(g.get('name') or '') for g in p.get('groups') or [] if g.get('name')]
-            sid = lib.claim(name, '-' + slug(plat), 'pouet', pid)
-            tdir = os.path.join(TITLES, sid)
-            files = get_files(tdir, dl, urllib.parse.unquote(dl.rsplit('/', 1)[-1].split('?')[0]), 'ru' if platform == 'zx-spectrum' else None)
-            if not files:
-                return None
-            if platform == 'msx':
-                keep = [f for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.dsk', '.mx1', '.mx2')]
-                slot = lambda f: {'.rom': 'cart1', '.mx1': 'cart1', '.mx2': 'cart1'}.get(os.path.splitext(f)[1].lower(), 'disk0')
-                runs = [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': slot(f), 'needs': []} for f in keep]
-            else:
-                runs = group_runs([run_table(f, mach, platform) for f in files])
-            if not runs:
-                if platform != 'zx-spectrum':
-                    return None  # MSX and SAM have no SD card slot to fall back on
-                runs = [{'platform': platform, 'machines': mach, 'files': files, 'slot': 'sd0', 'needs': [],
-                         'notes': 'No runnable file recognised; see files/.'}]
-            pl = (p.get('placings') or [{}])[0] if p.get('placings') else {}
-            party = {'name': html.unescape(((pl.get('party') or {}).get('name')) or ''), 'year': int(pl['year']) if str(pl.get('year') or '').isdigit() else None,
-                     'compo': pl.get('compo_name'), 'place': int(pl['ranking']) if str(pl.get('ranking') or '').isdigit() and int(pl['ranking']) < 97 else None} if pl else None
-            yr = (p.get('releaseDate') or '')[:4]
-            url = f'https://www.pouet.net/prod.php?which={pid}'
-            types = p.get('types') or [p.get('type')]
-            ids = {'pouet': int(pid)}
-            if str(p.get('demozoo') or '0') not in ('0', ''):
-                ids['demozoo'] = int(p['demozoo'])
-            tt = {'name': name, 'kind': POUET_KIND.get((types[0] or '').lower(), 'demo'), 'year': int(yr) if yr.isdigit() else None,
-                  'authors': groups, 'publisher': groups[0] if groups else None, 'genres': [t for t in types if t],
-                  'tags': ['demoscene', plat.lower()], 'license': 'freeware', 'source': url, 'sources': [url, dl],
-                  'ids': ids, 'party': party, 'runs': runs,
-                  'screens': get_screens(tdir, [p['screenshot']] if p.get('screenshot') else [], None, 1)}
-            lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [], '')} | {'runs': runs})
-            return f'{name} ({len(files)} files)'
-        batch(todo, one, f'pouet {plat}')
+    def one(pid):
+        p = pouet_prod(pid)
+        name = html.unescape(p.get('name') or '').strip() or pid
+        dl = (p.get('download') or '').strip()
+        if not dl:
+            return None
+        if 'files.scene.org/view/' in dl:
+            dl = dl.replace('files.scene.org/view/', 'files.scene.org/get/')
+        elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|rom|nex)(\?|$)', dl, re.I):
+            return None
+        # A prod listed under several of our platforms gets runs for each, so none is lost.
+        listed = [(x or {}).get('name') for x in (p.get('platforms') or {}).values()] if isinstance(p.get('platforms'), dict) else []
+        plats = [x for x in POUET_PLATFORMS if x in listed] or [seen[pid]]
+        plat = plats[0]
+        groups = [html.unescape(g.get('name') or '') for g in p.get('groups') or [] if g.get('name')]
+        sid = lib.claim(name, '-' + slug(plat), 'pouet', pid)
+        tdir = os.path.join(TITLES, sid)
+        files = get_files(tdir, dl, urllib.parse.unquote(dl.rsplit('/', 1)[-1].split('?')[0]),
+                          'ru' if POUET_PLATFORMS[plat][0] == 'zx-spectrum' else None)
+        if not files:
+            return None
+        runs = [r for x in plats for r in pouet_runs(files, x)]
+        # Nothing the player can mount: the title is still filed, with its files and no run.
+        pl = (p.get('placings') or [{}])[0] if p.get('placings') else {}
+        party = {'name': html.unescape(((pl.get('party') or {}).get('name')) or ''), 'year': int(pl['year']) if str(pl.get('year') or '').isdigit() else None,
+                 'compo': pl.get('compo_name'), 'place': int(pl['ranking']) if str(pl.get('ranking') or '').isdigit() and int(pl['ranking']) < 97 else None} if pl else None
+        yr = (p.get('releaseDate') or '')[:4]
+        url = f'https://www.pouet.net/prod.php?which={pid}'
+        types = p.get('types') or [p.get('type')]
+        ids = {'pouet': int(pid)}
+        if str(p.get('demozoo') or '0') not in ('0', ''):
+            ids['demozoo'] = int(p['demozoo'])
+        tt = {'name': name, 'kind': POUET_KIND.get((types[0] or '').lower(), 'demo'), 'year': int(yr) if yr.isdigit() else None,
+              'authors': groups, 'publisher': groups[0] if groups else None, 'genres': [t for t in types if t],
+              'tags': ['demoscene'] + [x.lower() for x in plats], 'license': 'freeware', 'source': url, 'sources': [url, dl],
+              'ids': ids, 'party': party, 'runs': runs,
+              'screens': get_screens(tdir, [p['screenshot']] if p.get('screenshot') else [], None, 1)}
+        lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [], '')} | {'runs': runs})
+        return f'{name} ({len(files)} files)'
+    batch(list(seen), one, 'pouet')
 
 
 # ---------------------------------------------------------------- ratings and reviews
