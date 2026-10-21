@@ -78,7 +78,7 @@ is where the files go: `tape`, `snapshot`, `disk.a`, `beta.a`, `sd0`,
 shared with recipes: `ram:128`, `ram:256`, `ram:1024`, `ram:2048`, `ay`,
 `turbosound`, `gs`, `covox`, `beta`, `interface1`, `divmmc`, `plus3dos`,
 `kempston`, `mouse`, `ulaplus`, `timex-hires`, `spec256`, `pi`, `wifi`,
-`mb03`, `next:core>=X`. `likes` lists extras it uses when they are there; it
+`mb03`, `symbos` (a SymbOS app: the set-up must boot SymbOS), `next:core>=X`. `likes` lists extras it uses when they are there; it
 never hides a title.
 
 A set-up (an instance or a recipe) offers its machine plus what it has built
