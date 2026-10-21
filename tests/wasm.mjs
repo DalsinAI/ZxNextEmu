@@ -32,10 +32,17 @@ const romNames = dv().getUint32(info + 28, true);
 // zxm_rom_set: four pointers, then four lengths.
 const roms = x.malloc(32);
 u8().fill(0, roms, roms + 32);
+const romOptional = dv().getUint32(info + 44, true);
 for (let i = 0; ; i++) {
   const np = dv().getUint32(romNames + 4 * i, true);
   if (!np) break;
-  const data = readFileSync(`${romDir}/${readCstr(np)}`);
+  let data;
+  try {
+    data = readFileSync(`${romDir}/${readCstr(np)}`);
+  } catch (e) {
+    if (romOptional >> i & 1) continue;
+    throw e;
+  }
   const p = x.malloc(data.length);
   u8().set(data, p);
   dv().setUint32(roms + 4 * i, p, true);

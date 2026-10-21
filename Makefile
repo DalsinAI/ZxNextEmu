@@ -16,19 +16,25 @@ DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
 ORIC_SRC = src/m6502/m6502.c src/devices/via6522.c src/oric/oric.c src/oric/tape.c
-ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c $(ORIC_SRC)
+MSX_SRC  = src/msx/msx.c src/msx/vdp.c src/msx/vdpcmd.c src/msx/cart.c src/msx/scc.c src/msx/rtc.c \
+           src/msx/fdc.c src/msx/ide.c
+ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c src/core/zxm_msx.c $(ORIC_SRC) $(MSX_SRC)
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
-ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/core/*.h)
+ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/msx/*.h src/core/*.h)
 
 .PHONY: all desktop test sst sst6502 oric vfat esp nextpi state wasm wasmtest clean
 
-all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/sst6502 $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
+all: $(BUILD)/zxrun $(BUILD)/zxmrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/sst6502 $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
 
 $(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zex.c $(CORE_SRC)
 
 $(BUILD)/zxrun: src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC)
+
+# Any machine through the zxm interface (MSX and the rest).
+$(BUILD)/zxmrun: src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
 
 # Desktop front end (needs SDL2 development files).
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
@@ -86,7 +92,7 @@ $(BUILD)/zxm: tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zx
 # Save, run on, load, run again: every machine must repeat itself exactly.
 # The Orics run the test ROM (their own ROMs are not in the repository).
 state: $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next msx1 msx1eu msx2 msx2eu; do \
 	    $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done
 	@for mc in oric1 atmos; do \
 	    $(BUILD)/zxm $(BUILD)/oric-roms $$mc 300 "print 2+2\n" || exit 1; done
@@ -126,7 +132,7 @@ $(BUILD)/zxcore.wasm: $(WASM_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 
 # The WebAssembly core must give exactly the native core's pictures and sound.
 wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next oric1 atmos; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next oric1 atmos msx1 msx1eu msx2 msx2eu; do \
 	    case $$mc in oric1|atmos) rd=$(BUILD)/oric-roms;; *) rd=roms;; esac; \
 	    a=$$($(BUILD)/zxm $$rd $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm $$rd $$mc 300 'print 2+2\n') || exit 1; \
