@@ -45,7 +45,8 @@ typedef struct zxm_slot {
 typedef enum {
     ZXM_IN_KEYBOARD = 1,         /* 8x5 Spectrum matrix (+ Next extra keys) */
     ZXM_IN_KEMPSTON,             /* Kempston joystick */
-    ZXM_IN_MOUSE                 /* Kempston mouse */
+    ZXM_IN_MOUSE,                /* Kempston mouse */
+    ZXM_IN_ORIC_KEYBOARD         /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
 } zxm_input_kind;
 
 typedef struct zxm_input_desc {
@@ -63,9 +64,12 @@ typedef struct zxm_info {
     const char *const *roms;     /* ROM file names in order, NULL-terminated */
     const zxm_slot *slots;       /* media slots, ending with a NULL id */
     const zxm_input_desc *inputs;     /* inputs, ending with a NULL id */
+    const char *cpu;             /* "z80", "6502": how zxm_regs reads */
+    uint32_t rom_optional;       /* bit i: roms[i] may be left out */
 } zxm_info;
 
-/* ROM images in the order zxm_info.roms names them, 16K each. */
+/* ROM images in the order zxm_info.roms names them (16K each on the
+ * Spectrums and Orics). */
 typedef struct zxm_rom_set {
     const uint8_t *rom[4];
     uint32_t len[4];
@@ -102,7 +106,9 @@ typedef struct zxm_media {
     struct zx_serial *serial;
 } zxm_media;
 
-/* Debugging: CPU registers, memory as the CPU sees it, frame count. */
+/* Debugging: CPU registers, memory as the CPU sees it, frame count.
+ * A 6502 (zxm_info.cpu "6502") uses af = A << 8 | P, bc = X, de = Y,
+ * sp = 0x100 | S and pc; the other fields are zero. */
 typedef struct zxm_regs {
     uint16_t af, bc, de, hl, af_, bc_, de_, hl_, ix, iy, sp, pc, memptr;
     uint8_t i, r, iff1, iff2, im, halted;
