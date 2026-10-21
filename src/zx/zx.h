@@ -135,6 +135,21 @@ typedef struct zx {
     uint16_t *wide;        /* ATM: the 640x256 picture (allocated) */
 } zx;
 
+/* RGB333 colours of the ULA, indexed BRIGHT<<3 | GRB. */
+extern const uint16_t zx_colours[16];
+
+/* ULA+ palette entry (GGGRRRBB) to RGB333; the missing low blue bit is the
+ * OR of the other two, as the ULAplus specification says. */
+static inline uint16_t ulaplus_colour(uint8_t v)
+{
+    uint16_t g = v >> 5, r = (v >> 2) & 7, b = v & 3;
+    return (uint16_t)(r << 6 | g << 3 | b << 1 | ((b >> 1) | (b & 1)));
+}
+
+/* Eight paper pixels from a pixel byte and its attribute, in the machine's
+ * colours (ULA+ palette, FLASH). */
+void zx_ula_chunk(const zx *m, uint8_t bits, uint8_t attr, uint16_t px[8]);
+
 /* Create a machine from its ROM images: roms[i] is 16K for each name
  * zx_rom_file(model, i) gives (the Next needs none). No file I/O. */
 int zx_create(zx *m, zx_model model, const uint8_t *const roms[4]);

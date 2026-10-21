@@ -3,7 +3,8 @@
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
 // ZXM_SPEC256=folder loads a Spec256 game, as tests/zxm.c does.
-// ZXM_IFACE / ZXM_IFACE_ROM plug in an interface, as for tests/zxm.c.
+// ZXM_IFACE / ZXM_IFACE_ROM (/ ZXM_GS_ROM) plug in an interface, as for tests/zxm.c.
+// ZXM_SNAP=file loads a snapshot, as tests/zxm.c does.
 // ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
 // waits before typing.
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -30,7 +31,7 @@ function readCstr(p) {
 
 const info = x.zxm_lookup(cstr(id));
 if (!info) { console.error(`unknown machine ${id}`); process.exit(2); }
-const fbW = dv().getUint16(info + 16, true), fbH = dv().getUint16(info + 18, true);
+const fbH = dv().getUint16(info + 18, true);
 const romNames = dv().getUint32(info + 28, true);
 const romsOptional = dv().getUint32(info + 40, true);
 
@@ -84,7 +85,17 @@ if (process.env.ZXM_IFACE) {
   u8().set(data, p);
   dv().setUint32(ir, p, true);
   dv().setUint32(ir + 16, data.length, true);
+  if (process.env.ZXM_GS_ROM) {
+    const g = readFileSync(process.env.ZXM_GS_ROM), q = x.malloc(g.length);
+    u8().set(g, q);
+    dv().setUint32(ir + 4, q, true);
+    dv().setUint32(ir + 20, g.length, true);
+  }
   if (x.zxm_attach(m, cstr(process.env.ZXM_IFACE), ir)) { console.error('cannot plug in'); process.exit(1); }
+}
+if (process.env.ZXM_SNAP) {
+  const path = process.env.ZXM_SNAP, i = path.lastIndexOf('/');
+  if (insert('snapshot', i < 0 ? '.' : path.slice(0, i), path.slice(i + 1))) { console.error('cannot load snapshot'); process.exit(1); }
 }
 if (process.env.ZXM_DISK) {
   // zxm_media: kind, name, data, len, blocks, serial
@@ -112,10 +123,10 @@ function run(n, h) {
     x.zxm_run_frame(m);
     const fb = x.zxm_framebuffer(m, out);
     const pitch = dv().getInt32(out, true);
-    const mem = u8();
+    const mem = u8(), w = x.zxm_fb_width(m);
     for (let y = 0; y < fbH; y++) {
       const a = fb + y * pitch * 2;
-      h = fnv(h, mem.subarray(a, a + fbW * 2));
+      h = fnv(h, mem.subarray(a, a + w * 2));
     }
     const au = x.zxm_audio(m, out);
     const samples = dv().getInt32(out, true);

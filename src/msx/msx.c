@@ -838,7 +838,7 @@ int msx_state_load(msx *m, const void *buf, size_t len)
         c->type = l->type;
         c->base = l->base;
         m->fdc.disk[i] = live.fdc.disk[i];
-        m->ide.dev[i].bd = live.ide.dev[i].bd;
+        m->ide.bus.dev[i].bd = live.ide.bus.dev[i].bd;
     }
     memcpy(m->ram, p, m->ram_size);
     p += m->ram_size;

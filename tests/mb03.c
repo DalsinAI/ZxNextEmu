@@ -1,7 +1,9 @@
 /*
  * Expansion-port interfaces (src/zx/expansion.c): the divMMC's paging and
  * automapping, TurboSound, the DACs, the Kempston mouse and the Timex
- * screens, driven through the machine's own bus.
+ * screens and hi-res, Radastan, GigaScreen, the SAA1099, the SID and the
+ * ZXi registers, General Sound, the MBIDE and the RTC, driven through the
+ * machine's own bus.
  *
  * usage: mb03 romdir
  */
@@ -169,10 +171,10 @@ static void test_divmmc_more(const char *romdir)
     CHECK(cmd8(&m) == 0x01, "the card is still idle after a state without it");
 
     /* a state from one interface does not load into another */
-    if (machine(&d, ZX_128K, romdir, ZX_EXP_DIVMMC, rom))
+    if (machine(&d, ZX_128K, romdir, ZX_EXP_MB03 & ~ZX_EXP_MOUSE, rom))
         return;
     CHECK(zx_state_size(&d) == zx_state_size(&m), "same state size");
-    CHECK(zx_state_load(&d, state, sizeof state) != 0, "an MB03+ state is refused by a divMMC machine");
+    CHECK(zx_state_load(&d, state, sizeof state) != 0, "an MB03+ state is refused by an interface without the mouse");
     zx_free(&m);
     zx_free(&d);
 }
@@ -229,6 +231,8 @@ static void test_dac(const char *romdir)
     CHECK(swing(&m, 0) > 4000 && swing(&m, 1) < 100, "stereo Covox left stays left");
     square(&m, 0x5f);
     CHECK(swing(&m, 1) > 4000 && swing(&m, 0) < 100, "SounDrive D is on the right");
+    square(&m, 0x3f);
+    CHECK(swing(&m, 0) > 1500 && swing(&m, 1) > 1500, "Czech DAC B plays on both sides");
     zx_free(&m);
 }
 
@@ -276,6 +280,454 @@ static void test_timex(const char *romdir)
     zx_free(&m);
 }
 
+static void saa(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x01ff, reg);
+    out(m, 0x00ff, v);
+}
+
+static void zxi(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x703b, reg);
+    out(m, 0x713b, v);
+}
+
+static void test_saa(const char *romdir)
+{
+    static zx m;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_SAA, NULL))
+        return;
+    park(&m);
+    saa(&m, 0x1c, 0x02);                 /* reset generators */
+    saa(&m, 0x1c, 0x01);                 /* sound on */
+    saa(&m, 0x00, 0xff);                 /* channel 0: left full, right off */
+    saa(&m, 0x08, 0x80);                 /* tone frequency */
+    saa(&m, 0x10, 0x03);                 /* octave 3 */
+    saa(&m, 0x14, 0x01);                 /* tone 0 on */
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) > 2000, "the SAA1099 plays a tone");
+    zx_free(&m);
+
+    /* on the MB03+ the SAA starts off and the ZXi register switches it on */
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_SAA | ZX_EXP_ZXI, NULL))
+        return;
+    park(&m);
+    out(&m, 0x703b, 1);
+    CHECK(in(&m, 0x713b) == ZXI_AUDIO_DEFAULT, "ZXi register 1 reads back the sound devices");
+    saa(&m, 0x1c, 0x01); saa(&m, 0x00, 0xff); saa(&m, 0x08, 0x80); saa(&m, 0x10, 0x03); saa(&m, 0x14, 0x01);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 100, "the SAA1099 is off by default");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT | ZXI_SAA);
+    /* this time through the ZXi ports: 6F3B register, 6E3B data */
+    out(&m, 0x6f3b, 0x1c); out(&m, 0x6e3b, 0x01);
+    out(&m, 0x6f3b, 0x00); out(&m, 0x6e3b, 0xff);
+    out(&m, 0x6f3b, 0x08); out(&m, 0x6e3b, 0x80);
+    out(&m, 0x6f3b, 0x10); out(&m, 0x6e3b, 0x03);
+    out(&m, 0x6f3b, 0x14); out(&m, 0x6e3b, 0x01);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) > 2000, "OUT 28731,1: OUT 28987,n turns the SAA1099 on");
+    zx_free(&m);
+}
+
+static void sidw(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0x6c3b, reg);
+    out(m, 0x6d3b, v);
+}
+
+static void test_sid(const char *romdir)
+{
+    static zx m;
+    int loud, i;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_SID, NULL))
+        return;
+    park(&m);
+    sidw(&m, 0x18, 0x0f);                /* volume 15, no filter */
+    sidw(&m, 0x00, 0x00);
+    sidw(&m, 0x01, 0x1d);                /* about 440 Hz */
+    sidw(&m, 0x05, 0x00);                /* attack 2 ms, decay 6 ms */
+    sidw(&m, 0x06, 0xf0);                /* sustain 15, release 6 ms */
+    sidw(&m, 0x04, 0x21);                /* sawtooth, gate on */
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    loud = swing(&m, 0);
+    CHECK(loud > 3000, "the SID plays a sawtooth");
+    CHECK(swing(&m, 1) == loud, "the SID is mono");
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0x00, "ENV3 is voice 3's, not voice 1's");
+    sidw(&m, 0x12, 0x21);                /* voice 3 gate on; read its envelope */
+    sidw(&m, 0x13, 0x00);
+    sidw(&m, 0x14, 0xf0);
+    zx_run_frame(&m);
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0xff, "ENV3 reads the attacked envelope");
+    sidw(&m, 0x12, 0x20);
+    sidw(&m, 0x04, 0x20);                /* gate off: release */
+    for (i = 0; i < 3; i++)
+        zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 50, "the note dies away after release");
+    out(&m, 0x6c3b, 0x1c);
+    CHECK(in(&m, 0x6d3b) == 0x00, "ENV3 reads zero after release");
+
+    /* low-pass at the bottom of its range takes most of a 440 Hz saw away */
+    sidw(&m, 0x04, 0x21);
+    sidw(&m, 0x15, 0x00);
+    sidw(&m, 0x16, 0x00);
+    sidw(&m, 0x17, 0x01);                /* voice 1 through the filter */
+    sidw(&m, 0x18, 0x1f);                /* low-pass */
+    for (i = 0; i < 3; i++)
+        zx_run_frame(&m);
+    CHECK(swing(&m, 0) < loud / 3, "the low-pass filter quietens the saw");
+    zx_free(&m);
+}
+
+static void test_zxi(const char *romdir)
+{
+    static zx m;
+    int ch;
+    /* With the AY switched off in register 1, a 128K's own AY answers. */
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_TURBOSOUND | ZX_EXP_ZXI | ZX_EXP_TIMEX, NULL))
+        return;
+    park(&m);
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_AY);
+    out(&m, 0xfffd, 0); out(&m, 0xbffd, 0x55);
+    CHECK(m.ay.reg[0] == 0x55, "the machine's AY takes the writes");
+    out(&m, 0xfffd, 0); out(&m, 0xbffd, 0xfc);
+    out(&m, 0xfffd, 1); out(&m, 0xbffd, 0x00);
+    out(&m, 0xfffd, 7); out(&m, 0xbffd, 0x3e);
+    out(&m, 0xfffd, 8); out(&m, 0xbffd, 0x0f);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    ch = swing(&m, 0);
+    CHECK(ch > 2000, "and plays");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 100, "with TurboSound back on, the machine's AY is not heard");
+
+    /* register 12 bit 0 switches the Timex port off */
+    out(&m, 0x00ff, 1);
+    CHECK(m.exp->port_ff == 1, "Timex port on by default");
+    zxi(&m, 12, 0);
+    CHECK(m.exp->port_ff == 0, "Timex off resets the screen mode");
+    out(&m, 0x00ff, 1);
+    CHECK(m.exp->port_ff == 0, "and ignores port FF");
+    out(&m, 0x703b, 12);
+    CHECK(in(&m, 0x713b) == 0, "register 12 reads back");
+    /* m_zxi_101 is column 1 on the second row (723B) */
+    out(&m, 0x703b, 1);
+    out(&m, 0x723b, 0x02);
+    CHECK(in(&m, 0x723b) == 0x02 && in(&m, 0x713b) == ZXI_AUDIO_DEFAULT, "rows are separate");
+    out(&m, 0x7c3b, 8);
+    out(&m, 0x7d3b, 3);
+    CHECK(in(&m, 0x7d3b) == 3 && in(&m, 0x7c3b) == 8, "g_zxi registers read back");
+    zx_free(&m);
+}
+
+static void test_mutes(const char *romdir)
+{
+    static zx m;
+    if (machine(&m, ZX_PENTAGON, romdir, ZX_EXP_DAC | ZX_EXP_ZXI, NULL))
+        return;
+    out(&m, 0x5f, 0xff);                           /* a DAC level, then the DACs off */
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_DAC);
+    park(&m);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1) + 1] == 0, "the DACs off are silent");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_BEEPER);
+    out(&m, 0x00fe, 0x10);                         /* EAR high */
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1)] == 0, "the beeper muted");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT);
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1)] > 0, "and back on");
+    zx_free(&m);
+}
+
+static void test_hires(const char *romdir)
+{
+    static zx m;
+    const uint16_t *row;
+    int x;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_TIMEX, NULL))
+        return;
+    CHECK(m.screen_w == 640 && m.pixels == m.wide, "the Timex modes make the picture 640 wide");
+    park(&m);
+    memset(m.ram[5], 0, 0x4000);
+    memset(m.ram[5] + 0x1800, 0x38, 768);
+    m.ram[5][0x0000] = 0xf0;                       /* column 0 from screen 0 */
+    m.ram[5][0x2000] = 0x0f;                       /* column 1 from screen 1 */
+    out(&m, 0x00ff, 6 | 1 << 3);                   /* hi-res, blue on yellow */
+    zx_run_frame(&m);
+    row = m.pixels + ZX_BORDER_Y * m.pitch + ZX_BORDER_X * 2;
+    for (x = 0; x < 16; x++)
+        CHECK(row[x] == ((x < 4 || x >= 12) ? 0x007 : 0x1f8), "hi-res: 16 pixels from two screens");
+    CHECK(m.pixels[0] == 0x1f8, "hi-res: the border takes the paper colour");
+    out(&m, 0x00ff, 0);
+    zx_run_frame(&m);
+    CHECK(row[0] == 0x000 && row[1] == 0x000 && row[8] == 0x16d, "standard screen: each pixel twice");
+    zx_free(&m);
+    CHECK(m.screen_w == 320 && !m.wide, "the picture is 320 wide again without the interface");
+}
+
+static void ulaplus(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0xbf3b, reg);
+    out(m, 0xff3b, v);
+}
+
+static void uno(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0xfc3b, reg);
+    out(m, 0xfd3b, v);
+}
+
+static void test_radastan(const char *romdir)
+{
+    static zx m;
+    static const char id[] = "eLeMeNt MB";
+    int i, ok = 1;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_RADASTAN, NULL))
+        return;
+    park(&m);
+    for (i = 0; i < 64; i++)
+        ulaplus(&m, (uint8_t)i, (uint8_t)(i * 4));  /* entry i: red i, a colour each */
+    memset(m.ram[5], 0, 0x4000);
+    m.ram[5][0] = 0x12;
+    m.ram[5][64] = 0x34;                           /* line 1 */
+    uno(&m, 0x40, 3);
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(4) && m.screen[ZX_BORDER_Y][ZX_BORDER_X + 1] == ulaplus_colour(4),
+          "Radastan: the left nibble, two pixels wide");
+    CHECK(m.screen[ZX_BORDER_Y + 1][ZX_BORDER_X + 2] == ulaplus_colour(8), "Radastan: the right nibble, two lines high");
+    CHECK(m.screen[ZX_BORDER_Y + 2][ZX_BORDER_X] == ulaplus_colour(12), "Radastan: 64 bytes a line");
+    out(&m, 0x00fe, 2);
+    zx_run_frame(&m);
+    CHECK(m.screen[0][0] == ulaplus_colour(2 * 4), "Radastan: the border from the palette");
+    uno(&m, 0x43, 4);                              /* BOR3 */
+    zx_run_frame(&m);
+    CHECK(m.screen[0][0] == ulaplus_colour(10 * 4), "Radastan: BOR3 picks border colours 8-15");
+    uno(&m, 0x43, 1);                              /* the second palette quarter */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(17 * 4), "Radastan: palette quarter");
+    out(&m, 0xfc3b, 0x41);
+    out(&m, 0xfd3b, 64);
+    out(&m, 0xfd3b, 0);                            /* offset 64: one line down */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(19 * 4), "Radastan: the screen offset scrolls");
+    uno(&m, 0x40, 0);
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] != ulaplus_colour(19 * 4), "Radastan off");
+    ulaplus(&m, 0x40, 3);                          /* or through the ULA+ mode register */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(19 * 4), "Radastan from ULA+ mode 3");
+    out(&m, 0xfc3b, 0xff);
+    for (i = 0; i < 10; i++)
+        ok &= in(&m, 0xfd3b) == (uint8_t)id[i];
+    CHECK(ok && in(&m, 0xfd3b) == 0 && in(&m, 0xfd3b) == 'e', "COREID reads eLeMeNt MB, a zero, then again");
+    zx_free(&m);
+}
+
+static void test_giga(const char *romdir)
+{
+    static zx m;
+    int i;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_GIGA | ZX_EXP_ZXI, NULL))
+        return;
+    park(&m);
+    memset(m.ram[5], 0, 0x1800);
+    memset(m.ram[7], 0, 0x1800);
+    memset(m.ram[5] + 0x1800, 0x38, 768);          /* white paper */
+    memset(m.ram[7] + 0x1800, 0x00, 768);          /* black */
+    zxi(&m, 0x0b, 1);                              /* mode 0: the two screens mixed */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == 0x0db, "GigaScreen mode 0 mixes banks 5 and 7");
+    zxi(&m, 0x0b, 2);                              /* mode 1: frames mixed */
+    zx_run_frame(&m);
+    memset(m.ram[5] + 0x1800, 0x00, 768);
+    zx_run_frame(&m);
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x0db, "GigaScreen mode 1 mixes this frame with the last");
+    zxi(&m, 0x0b, 3);                              /* mode 2: only while flipping */
+    memset(m.ram[5] + 0x1800, 0x38, 768);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x16d, "GigaScreen mode 2: a still screen is left alone");
+    for (i = 0; i < 4; i++) {
+        out(&m, 0x7ffd, (uint8_t)(i & 1 ? 0x08 : 0x00));   /* show bank 7, then 5, ... */
+        zx_run_frame(&m);
+    }
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x0db, "GigaScreen mode 2 mixes flipped screens");
+    zx_free(&m);
+}
+
+/* General Sound commands: send a command, wait until the GS has taken it. */
+static int gs_wait(zx *m, uint8_t bit, int set)
+{
+    int i;
+    for (i = 0; i < 400; i++) {
+        if (!(in(m, 0x00bb) & bit) == !set)
+            return 1;
+        zx_run_frame(m);
+    }
+    return 0;
+}
+
+static int gs_cmd(zx *m, uint8_t cmd)
+{
+    out(m, 0x00bb, cmd);
+    return gs_wait(m, 1, 0);
+}
+
+static void test_gs(const char *romdir)
+{
+    static zx m;
+    static uint8_t rom[GS_ROM];
+    char path[1024];
+    FILE *fp;
+    int32_t l = 0, r = 0;
+    int i;
+    snprintf(path, sizeof path, "%s/../tests-data/gs/gs105a.rom", romdir);
+    if (!(fp = fopen(path, "rb")) || fread(rom, 1, sizeof rom, fp) != sizeof rom) {
+        if (fp)
+            fclose(fp);
+        printf("skipped: General Sound (no tests-data/gs/gs105a.rom)\n");
+        return;
+    }
+    fclose(fp);
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    CHECK(zx_exp_attach_gs(&m, rom, sizeof rom) == 0, "the General Sound fits");
+    park(&m);
+    CHECK(gs_cmd(&m, 0x00), "the GS takes a command");
+    CHECK(gs_cmd(&m, 0x23), "the GS answers 'number of RAM pages'");
+    CHECK(gs_wait(&m, 0x80, 1), "and sends data");
+    CHECK(in(&m, 0x00b3) == GS_PAGES - 1, "512K: 15 pages besides the ROM");
+    CHECK(!(in(&m, 0x00bb) & 0x80), "reading the data clears the flag");
+
+    /* channel 0 (left) at full volume, its DAC at FF */
+    out(&m, 0x00b3, 0); CHECK(gs_cmd(&m, 0x04), "set E");
+    out(&m, 0x00b3, 0x3f); CHECK(gs_cmd(&m, 0x05), "volume");
+    out(&m, 0x00b3, 0xff); CHECK(gs_cmd(&m, 0x06), "DAC");
+    zx_run_frame(&m);
+    for (i = 0; i < m.audio_samples; i++) {
+        l += m.audio[2 * i];
+        r += m.audio[2 * i + 1];
+    }
+    CHECK(m.audio_samples && l / m.audio_samples > 3000 && r / m.audio_samples < 100,
+          "the left DAC moves the left side only");
+    zx_free(&m);
+}
+
+/* A CF card in memory: sector n holds n in every byte. */
+#define CF_BLOCKS 64
+static uint8_t cf_data[CF_BLOCKS][512];
+static int cf_read(zx_blockdev *bd, uint64_t lba, uint8_t *buf) { (void)bd; memcpy(buf, cf_data[lba], 512); return 0; }
+static int cf_write(zx_blockdev *bd, uint64_t lba, const uint8_t *buf) { (void)bd; memcpy(cf_data[lba], buf, 512); return 0; }
+static void cf_close(zx_blockdev *bd) { free(bd); }
+
+static zx_blockdev *cf_new(void)
+{
+    zx_blockdev *bd = calloc(1, sizeof *bd);
+    int i;
+    for (i = 0; i < CF_BLOCKS; i++)
+        memset(cf_data[i], i, 512);
+    bd->blocks = CF_BLOCKS;
+    bd->read = cf_read;
+    bd->write = cf_write;
+    bd->close = cf_close;
+    return bd;
+}
+
+static void test_ide(const char *romdir)
+{
+    static zx m;
+    int i, ok;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    CHECK(zx_exp_attach_ide(&m, 0, cf_new()) == 0, "a CF card fits");
+    CHECK(m.exp->zxi[0][0x02] == 0, "the IDE starts off");
+    CHECK(in(&m, 0x00bf) != 0x50, "with it off, BF is not the IDE");
+
+    /* PVL: read LBA 5 */
+    zxi(&m, 0x02, 2);
+    CHECK(in(&m, 0x00bf) == 0x50, "PVL: the status on BF says ready");
+    out(&m, 0x00bb, 0xe0);      /* LBA, master */
+    out(&m, 0x00ab, 1);
+    out(&m, 0x00af, 5);
+    out(&m, 0x00b3, 0);
+    out(&m, 0x00b7, 0);
+    out(&m, 0x00bf, 0x20);
+    CHECK(in(&m, 0x00bf) & 0x08, "READ SECTORS has data waiting");
+    for (i = 0, ok = 1; i < 512; i++)
+        ok &= in(&m, 0x00a3) == 5;
+    CHECK(ok, "the sector reads back a byte at a time");
+    CHECK(!(in(&m, 0x00bf) & 0x08), "and the command is done");
+
+    /* PVL: write LBA 7, low byte then high byte of each word */
+    out(&m, 0x00ab, 1);
+    out(&m, 0x00af, 7);
+    out(&m, 0x00bf, 0x30);
+    for (i = 0; i < 512; i++)
+        out(&m, 0x00a3, (uint8_t)i);
+    for (i = 0, ok = 1; i < 512; i++)
+        ok &= cf_data[7][i] == (uint8_t)i;
+    CHECK(ok, "WRITE SECTORS lands on the card in order");
+
+    /* DRON: the same registers on C3-DF */
+    zxi(&m, 0x02, 1);
+    CHECK(in(&m, 0x00df) == 0x50, "DRON: the status on DF");
+    out(&m, 0x00df, 0xec);
+    CHECK(in(&m, 0x00df) & 0x08, "DRON: IDENTIFY on DF");
+    for (i = 0; i < 512; i++)
+        in(&m, 0x00c3);
+    CHECK(in(&m, 0x00df) == 0x50, "DRON: 512 bytes of IDENTIFY");
+
+    /* HOOD: the even registers on DRON's ports, the odd on PVL's */
+    zxi(&m, 0x02, 3);
+    out(&m, 0x00cf, 9);         /* sector (3) is odd: not on DRON */
+    out(&m, 0x00af, 3);         /* but on PVL */
+    out(&m, 0x00cb, 1);         /* count (2) on DRON */
+    out(&m, 0x00db, 0xe0);
+    out(&m, 0x00d3, 0);
+    out(&m, 0x00b7, 0);
+    out(&m, 0x00bf, 0x20);
+    CHECK(in(&m, 0x00c3) == 3, "HOOD: sector on AF, count on CB, data on C3");
+    zx_free(&m);
+}
+
+static void test_rtc(const char *romdir)
+{
+    static zx m;
+    static const uint8_t start[13] = { 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 6, 2, 4 };
+    static const uint8_t west[13] = { 1, 0, 0, 0, 6, 1, 1, 3, 2, 1, 5, 2, 3 };
+    int i, ok;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    park(&m);
+    for (i = 0, ok = 1; i < 13; i++)
+        ok &= in(&m, (uint16_t)(i << 8 | 0x03)) == start[i];
+    CHECK(ok, "the RTC starts at Thursday 2026-01-01 00:00:00");
+    CHECK(in(&m, 0x0f03) == 4, "in 24-hour mode");
+    CHECK(in(&m, 0xab03) == 2, "A15-A12 are not decoded");
+    for (i = 0; i < 60; i++)
+        zx_run_frame(&m);
+    CHECK(in(&m, 0x0003) == 1, "a second later");
+    zxi(&m, 0x40, 0xf8);        /* GMT-8 */
+    for (i = 0, ok = 1; i < 13; i++)
+        ok &= in(&m, (uint16_t)(i << 8 | 0x03)) == west[i];
+    CHECK(ok, "GMT-8: Wednesday 2025-12-31 16:00:01");
+    zxi(&m, 0x03, 0);
+    {
+        uint8_t v;
+        CHECK(!zx_exp_io_read(&m, 0x0003, &v), "m_zxi_003 switches it off");
+    }
+    zx_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
@@ -285,6 +737,16 @@ int main(int argc, char **argv)
     test_dac(romdir);
     test_mouse(romdir);
     test_timex(romdir);
+    test_saa(romdir);
+    test_sid(romdir);
+    test_zxi(romdir);
+    test_mutes(romdir);
+    test_hires(romdir);
+    test_radastan(romdir);
+    test_giga(romdir);
+    test_gs(romdir);
+    test_ide(romdir);
+    test_rtc(romdir);
     printf("%s\n", fails ? "mb03: FAILED" : "mb03: all passed");
     return fails != 0;
 }

@@ -8,7 +8,6 @@
 
 static const zxm_family *const families[] = {
     &zxm_family_zx,
-    &zxm_family_oric,
     &zxm_family_sam,
     &zxm_family_msx,
 };
@@ -77,6 +76,7 @@ const zxm_info *zxm_info_of(const zxm *m) { return m->info; }
 void zxm_reset(zxm *m, zxm_reset_kind kind) { m->fam->reset(m, kind); }
 void zxm_run_frame(zxm *m) { m->fam->run_frame(m); }
 const void *zxm_framebuffer(const zxm *m, int *pitch) { return m->fam->framebuffer(m, pitch); }
+int zxm_fb_width(const zxm *m) { return m->fam->fb_width ? m->fam->fb_width(m) : m->info->fb_w; }
 const int16_t *zxm_audio(const zxm *m, int *samples) { return m->fam->audio(m, samples); }
 void zxm_input(zxm *m, const zxm_input_event *ev) { m->fam->input(m, ev); }
 void zxm_type(zxm *m, const char *text, int delay_frames) { m->fam->type(m, text, delay_frames); }
@@ -145,4 +145,10 @@ int zxm_media_active(const zxm *m, const char *slot)
 {
     const zxm_slot *s = find_slot(m, slot);
     return s && m->fam->media_active ? m->fam->media_active(m, s) : 0;
+}
+
+int zxm_media_progress(const zxm *m, const char *slot)
+{
+    const zxm_slot *s = find_slot(m, slot);
+    return s && m->fam->media_progress ? m->fam->media_progress(m, s) : -1;
 }
