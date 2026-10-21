@@ -2,7 +2,7 @@
 # Turns the file-hunter.com MSX mirror (Games/MSX1, Games/MSX2, Demos) into
 # library titles in title.json format 2. One title per game; each variant
 # (ROM, disk set, tape, binary, alternate dump, hack, translation) is a run.
-import sys, os, re, json, zipfile, shutil, subprocess, hashlib, unicodedata, datetime
+import sys, os, re, json, zipfile, gzip, shutil, subprocess, hashlib, unicodedata, datetime
 import xml.etree.ElementTree as ET
 
 DL, META, OUT = sys.argv[1:4]
@@ -43,18 +43,27 @@ except Exception as e:
     print('xlsx', e)
 xlimg = {norm(k): v for k, v in json.load(open(os.path.join(META, 'xlimg.json'))).items()}
 
-# openMSX's softwaredb.xml keeps everything in child elements: <software><title>, <company>, <year>,
-# <country>, <genmsxid>, then <dump> with a <rom> or <megarom> holding <type> (the mapper) and
-# <hash algo="sha1">, and maybe <original value="true">GoodMSX</original> and <remark><text>.
+# openMSX's softwaredb.xml. The current file keeps it all in attributes:
+# <software title= company= year= country= genmsxid=> with <rom sha1= type= status= remark=/> children.
+# Older copies use child elements: <title>, <company>, ..., then <dump> holding a <rom> or <megarom>
+# with <type> (the mapper) and <hash algo="sha1">, and maybe <original value="true"> and <remark>.
+# Both are read.
 def _text(e, tag):
     x = e.find(tag)
     return ' '.join(''.join(x.itertext()).split()) or None if x is not None else None
 
 
+def _field(e, tag):
+    return (e.get(tag) or '').strip() or _text(e, tag)
+
+
 sdb = {}
 for sw in ET.parse(os.path.join(META, 'softwaredb.xml')).getroot().iter('software'):
-    info = dict(title=_text(sw, 'title'), company=_text(sw, 'company'), year=_text(sw, 'year'),
-                country=_text(sw, 'country'), genmsx=_text(sw, 'genmsxid'))
+    info = dict(title=_field(sw, 'title'), company=_field(sw, 'company'), year=_field(sw, 'year'),
+                country=_field(sw, 'country'), genmsx=_field(sw, 'genmsxid'))
+    for rom in [e for e in sw if e.tag in ('rom', 'megarom') and e.get('sha1')]:
+        sdb[rom.get('sha1').strip().lower()] = dict(info, mapper=rom.get('type') or None,
+                                                    status=rom.get('status') or None, remark=rom.get('remark') or None)
     for dump in sw.iter('dump'):
         orig = dump.find('original')
         status = (orig.text or '').strip() or None if orig is not None and orig.get('value') == 'true' else None
@@ -83,7 +92,7 @@ def mark_mapper(tdir, path, mapper):
 
 def parse(base, typ):
     """Split a file-hunter / TOSEC name into title, year, publisher, lang, part, flags."""
-    b = re.sub(r'\.(zip|lzh|7z|rar)$', '', base, flags=re.I)
+    b = re.sub(r'\.(zip|lzh|lha|pma|arj|gz|7z|rar)$', '', base, flags=re.I)
     m = re.search(r'\s*[(\[]', b)    # the first ( or [, with or without a space before it
     i = m.start() if m and m.start() > 0 else len(b)
     title, rest = b[:i].strip(), b[i:]
@@ -121,11 +130,14 @@ def variant_rank(p):
     return r
 
 
+ARCHIVES = ('.zip', '.lzh', '.lha', '.pma', '.arj', '.gz', '.7z', '.rar')
+
+
 def unpack(path, dest):
     os.makedirs(dest, exist_ok=True)
     low = path.lower()
     try:
-        if low.endswith(('.zip', '.lzh', '.lha', '.7z', '.rar')) and os.path.getsize(path) == 0:
+        if low.endswith(ARCHIVES) and os.path.getsize(path) == 0:
             raise ValueError('empty file')
         if low.endswith('.zip') and not zipfile.is_zipfile(path):
             raise ValueError('not a zip (truncated, or an error page)')
@@ -148,10 +160,14 @@ def unpack(path, dest):
                     with z.open(m) as s, open(out, 'wb') as d:
                         shutil.copyfileobj(s, d)
             return True
-        if low.endswith(('.lzh', '.lha')):
+        if low.endswith(('.lzh', '.lha', '.pma')):   # lhasa reads PMarc too
             return subprocess.run(['lha', '-xqw=' + dest, path], capture_output=True).returncode == 0
-        if low.endswith(('.7z', '.rar')):
+        if low.endswith(('.7z', '.rar', '.arj')):
             return subprocess.run(['7z', 'x', '-y', '-o' + dest, path], capture_output=True).returncode == 0
+        if low.endswith('.gz'):
+            with gzip.open(path) as s, open(os.path.join(dest, os.path.basename(path)[:-3]), 'wb') as d:
+                shutil.copyfileobj(s, d)
+            return True
     except Exception as e:
         print('  unpack failed', path, e)
         return False
@@ -203,7 +219,7 @@ for folder, (typ, machines, slot, needs) in SRC.items():
         if is_bad(p['flags']):
             continue
         if typ == 'BIN':   # binaries are named by 8.3 file names; use them as-is
-            p['title'] = re.sub(r'\.(lzh|zip)$', '', fn, flags=re.I)
+            p['title'] = re.sub(r'\.(lzh|lha|pma|arj|gz|zip)$', '', fn, flags=re.I)
         key = norm(p['title']) or norm(fn)
         x = xl.get(key)
         t = titles.setdefault(key, {'names': [], 'variants': {}, 'machines': set(), 'years': [], 'pubs': [], 'langs': set()})
