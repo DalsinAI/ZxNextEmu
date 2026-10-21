@@ -22,6 +22,14 @@ the core already has, then the large families, then the rest.
 | `ts2068`, `tc2048` | Timex Sinclair 2068, Timex Computer 2048 | ULA hi-res and hi-colour modes, cartridge slot |
 | `zx80`, `zx81` | ZX80, ZX81 (Timex TS1000/TS1500) | the CPU generates the picture; needs the core's per-T-state bus |
 
+Interfaces for the classic models (`zxm_attach`, which adds the
+interface's slots and inputs to the instance):
+
+| Id | Interface | Notes |
+| --- | --- | --- |
+| `divmmc` | divMMC | esxDOS ROM, 512K, slot `sd0` |
+| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens; General Sound, SAA1099, SID, GigaScreen, MBIDE and the config registers to come |
+
 ## Wave 2: the big Z80 families
 
 | Id | Machine | Notes |
