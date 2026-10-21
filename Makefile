@@ -16,6 +16,7 @@ DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
 ORIC_SRC = src/m6502/m6502.c src/devices/via6522.c src/oric/oric.c src/oric/tape.c
+ORIC_ROMS = $(BUILD)/oric-roms/basic10.rom $(BUILD)/oric-roms/basic11b.rom   # built from tests/oric/testrom.s
 ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c $(ORIC_SRC)
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/core/*.h)
@@ -92,7 +93,6 @@ state: $(BUILD)/zxm $(ORIC_ROMS)
 	    $(BUILD)/zxm $(BUILD)/oric-roms $$mc 300 "print 2+2\n" || exit 1; done
 
 # ---- Oric: tests/oric/testrom.s stands in for the BASIC ROM (needs xa65). --
-ORIC_ROMS = $(BUILD)/oric-roms/basic10.rom $(BUILD)/oric-roms/basic11b.rom
 
 $(BUILD)/oric-roms/basic11b.rom: tests/oric/testrom.s | $(BUILD)
 	mkdir -p $(BUILD)/oric-roms
