@@ -125,6 +125,14 @@ void zx_exp_write(zx *m, uint16_t addr, uint8_t v)
     e->div_ram[bank][addr & 0x1fff] = v;
 }
 
+/* The 48K BASIC ROM is paged in at 0000 (TR-DOS's 3Dxx entry only
+ * counts then, as on the Next). */
+static int rom48_paged(const zx *m)
+{
+    int r = m->model == ZX_48K ? 0 : (m->model == ZX_PLUS2A || m->model == ZX_PLUS3) ? 3 : 1;
+    return m->rd[0] == m->rom[r];
+}
+
 static int entry_point(uint16_t a)
 {
     return a == 0x0000 || a == 0x0008 || a == 0x0038 || a == 0x0066 || a == 0x04c6 || a == 0x0562;
@@ -137,7 +145,7 @@ uint8_t zx_exp_fetch(zx *m, uint16_t addr)
     if (!(e->features & ZX_EXP_DIVMMC))
         return m->rd[addr >> 14][addr & 0x3fff];
     /* 3D00-3DFF (the TR-DOS entry) pages in during the fetch itself */
-    if ((addr & 0xff00) == 0x3d00 && !e->automap) {
+    if ((addr & 0xff00) == 0x3d00 && !e->automap && rom48_paged(m)) {
         e->automap = 1;
         update_map(m);
     }
@@ -314,7 +322,7 @@ void zx_exp_state_save(const zx *m, uint8_t *out)
     }
 }
 
-void zx_exp_state_load(zx *m, const uint8_t *in)
+void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
 {
     zx_exp *e = m->exp;
     struct nx_sd *sd[2];
@@ -325,7 +333,7 @@ void zx_exp_state_load(zx *m, const uint8_t *in)
     in += sizeof *e;
     for (i = 0; i < 2; i++, in += nx_sd_state_size()) {
         e->sd[i] = sd[i];
-        if (sd[i])
+        if (sd[i] && has_sd[i])
             nx_sd_state_load(sd[i], in);
     }
     update_map(m);
