@@ -125,6 +125,8 @@ export async function refresh() {
 const machineOf = id => o.machines().find(m => m.id === id);
 const machineName = id => machineOf(id)?.name || id;
 const usable = id => id !== 'next' && !!machineOf(id)?.available;
+// Instances saved for a machine this build no longer has (the Orics).
+const gone = id => o.machines().length > 0 && !machineOf(id);
 
 function when(t) {
   if (!t) return 'Never';
@@ -139,6 +141,7 @@ const kb = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1,
 function chipFor(inst) {
   const cur = o.current();
   if (cur.id === inst.id) return cur.running ? ['running', 'R', 'Running'] : ['paused', 'P', 'Paused'];
+  if (gone(inst.machine)) return ['failed', 'X', 'Removed'];
   if (!usable(inst.machine)) return ['failed', 'X', 'ROM needed'];
   return inst.state ? ['stopped', 'S', 'Saved'] : ['stopped', 'S', 'Stopped'];
 }
@@ -183,6 +186,7 @@ async function renderInstances(all) {
 }
 
 async function go(inst) {
+  if (gone(inst.machine)) return;
   if (!usable(inst.machine)) return o.romDialog(inst.machine);
   o.start(inst);
 }
@@ -209,9 +213,10 @@ function inspect(inst) {
       <dt>Made</dt><dd>${esc(new Date(inst.created).toLocaleString())}</dd>
     </dl>
     ${inst.notes ? `<p class="insp-notes">${esc(inst.notes)}</p>` : ''}
-    ${ok ? '' : `<p class="insp-warn">The ${esc(machineName(inst.machine))} needs ROM files before it can start.</p>`}
+    ${ok ? '' : gone(inst.machine) ? '<p class="insp-warn">This machine is no longer part of ZX Cradle. You can still delete the instance.</p>'
+      : `<p class="insp-warn">The ${esc(machineName(inst.machine))} needs ROM files before it can start.</p>`}
     <div class="insp-actions">
-      <button class="zxc-btn zxc-btn--primary" data-act="start">${ok ? (o.current().id === inst.id ? 'Show it' : 'Start') : 'Add ROMs'}</button>
+      <button class="zxc-btn zxc-btn--primary" data-act="start"${gone(inst.machine) ? ' disabled' : ''}>${ok ? (o.current().id === inst.id ? 'Show it' : 'Start') : 'Add ROMs'}</button>
       <button class="zxc-btn" data-act="library">Software for it</button>
       <button class="zxc-btn" data-act="rename">Rename</button>
       <button class="zxc-btn" data-act="copy">Duplicate</button>
