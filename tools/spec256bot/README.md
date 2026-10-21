@@ -18,6 +18,10 @@ Without it, skip that step: `emit` then colours each sprite in the ramp of
 the colour the game drew it in. `plan.json` is plain JSON, so it can also be
 written or touched up by hand.
 
+`emit` checks that it is given the snapshot `trace` played, and the same
+ROMs (`--roms`, default `roms/`), because the traced memory, ROM included,
+becomes the uncoloured part of the graphics planes.
+
 ## How it works
 
 **Trace.** `s256trace` runs the game on the Spec256 machine with the
