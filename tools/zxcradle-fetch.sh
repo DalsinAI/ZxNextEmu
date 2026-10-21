@@ -86,11 +86,11 @@ LOG = open(os.path.join(LIB, 'fetch.log'), 'a', encoding='utf-8')
 FAM48 = ['zx48', 'zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 FAM128 = ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 BETA = ['pentagon', 'scorpion', 'atm2']
-# Only formats the core loads (src/core/zxm_zx.c); .szx, .slt, .pzx and .csw stay in files/ without a run.
+# Only formats the core loads (src/core/zxm_zx.c); .szx, .slt, .pzx, .csw, .fdi, .dck and .rom stay in files/ without a run.
 RUN_EXT = {'.nex': 'sd0', '.snx': 'sd0', '.tap': 'tape', '.tzx': 'tape',
            '.sna': 'snapshot', '.z80': 'snapshot',
-           '.trd': 'beta.a', '.scl': 'beta.a', '.fdi': 'beta.a', '.dsk': 'disk.a', '.mgt': 'disk.1', '.sad': 'disk.1',
-           '.mdr': 'md.1', '.dck': 'cart', '.rom': 'cart', '.img': 'sd0'}
+           '.trd': 'beta.a', '.scl': 'beta.a', '.dsk': 'disk.a', '.mgt': 'disk.1', '.sad': 'disk.1',
+           '.mdr': 'md.1', '.img': 'sd0'}
 ARCHIVES = ('.zip', '.rar', '.7z', '.lzh', '.lha', '.arj')
 
 
@@ -344,7 +344,7 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
     if not slot:
         return None
     m, nd = list(machines), list(needs)
-    if ext in ('.trd', '.scl', '.fdi'):
+    if ext in ('.trd', '.scl'):
         nd.append('beta')
         if not set(m) & set(BETA):
             m += BETA
@@ -352,6 +352,10 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
         m = [x for x in m if x in ('plus3', 'plus2a')] or ['plus3']
     if ext == '.mdr':
         nd.append('interface1')
+    if slot == 'snapshot':
+        m = [x for x in m if x != 'next']  # the Next has no snapshot slot
+        if not m:
+            return None
     if platform == 'sam-coupe' and ext in ('.dsk', '.mgt', '.sad'):
         slot = 'disk.1'
     r = {'platform': platform, 'machines': list(dict.fromkeys(m)), 'files': [f], 'slot': slot, 'needs': sorted(set(nd))}
@@ -363,10 +367,14 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
 
 
 def group_runs(runs):
-    """Merge runs of one release that share a slot and machines (tape sides, disk sets) into one run."""
+    """Merge disk sets of one release that share a slot and machines into one run. Tapes and snapshots stay
+    separate runs, because the player loads every tape or snapshot part in turn and the last one would win."""
     out = {}
     for r in runs:
         if not r:
+            continue
+        if r['slot'] in ('tape', 'snapshot', 'sd0'):
+            out[id(r)] = r
             continue
         k = (os.path.splitext(r['files'][0])[1].lower(), r['slot'], tuple(r['machines']), tuple(r['needs']))
         if k in out:
@@ -409,8 +417,8 @@ ZX_HW = {
     'mb03': ['gs', 'tsfm', 'saa', 'ulaplus', 'soundrive', 'specdrum', 'divmmc', 'divide', 'zxuno'],
 }
 HW_MACH = {'zx16': ['zx16'] + FAM48, 'zx48': FAM48, 'zx128': FAM128, 'zx+2': FAM128, 'zx+2a': ['plus2a', 'plus3'],
-           'zx+3': ['plus3', 'plus2a'], 'zx+2b': ['plus2a', 'plus3'], 'pentagon128': BETA, 'pentagon512': ['pentagon'],
-           'pentagon1024': ['pentagon'], 'scorpion': ['scorpion'], 'atm': ['atm2'], 'atm2': ['atm2'], 'zxnext': ['next'],
+           'zx+3': ['plus3', 'plus2a'], 'zx+2b': ['plus2a', 'plus3'], 'pentagon128': BETA,
+           'scorpion': ['scorpion'], 'atm': ['atm2'], 'atm2': ['atm2'], 'zxnext': ['next'],
            'samcoupe': ['sam']}
 HW_NEEDS = {'gs': 'gs', 'tsfm': 'turbosound', 'saa': 'mb03', 'ulaplus': 'ulaplus', 'soundrive': 'covox',
             'specdrum': 'covox', 'covox': 'covox', 'divmmc': 'divmmc', 'divide': 'divmmc', 'zxuno': 'mb03'}
@@ -430,10 +438,15 @@ def kind_of(cat):
     return 'game'
 
 
+def zx_people(p):
+    return {str(a['authorId']) for a in p.get('authorsInfo', []) if a.get('authorId')} | {str(i) for i in p.get('publishersIds', [])}
+
+
 def zx_names(prods):
-    want = sorted({str(a['authorId']) for p in prods for a in p.get('authorsInfo', []) if a.get('authorId')} |
-                  {str(i) for p in prods for i in p.get('publishersIds', [])})
-    want = [i for i in want if i not in NAMES]
+    """Fill NAMES; returns the ids whose lookup failed, so their titles can wait for the next run."""
+    want = sorted(i for p in prods for i in zx_people(p) if i not in NAMES)
+    want = list(dict.fromkeys(want))
+    lost = set()
     for i in range(0, len(want), 50):
         ch = ','.join(want[i:i + 50])
         for typ, f in (('author', 'authorId'), ('group', 'groupId')):
@@ -443,6 +456,8 @@ def zx_names(prods):
                     NAMES[str(a['id'])] = html.unescape(a['title'])
             except Exception as e:
                 log('zxart names', e)
+                lost.update(want[i:i + 50])
+    return lost
 
 
 def zx_title(lib, p, rels, hw):
@@ -456,7 +471,7 @@ def zx_title(lib, p, rels, hw):
     sam = hw == 'samcoupe'
     sid = lib.claim(name, '-sam' if sam else '', 'zxart', p['id'])
     tdir = os.path.join(TITLES, sid)
-    runs, nfiles, versions, vids = [], 0, [], set()
+    runs, nfiles, versions, vids, unrun = [], 0, [], set(), False
     plang = (p.get('language') or ['en'])[0]
     for r in rels:
         lang = (r.get('language') or [plang])[0] if isinstance(r.get('language'), list) else (r.get('language') or plang)
@@ -475,7 +490,9 @@ def zx_title(lib, p, rels, hw):
                          'source': f'https://zxart.ee/eng/software/?id={p["id"]}', 'ids': {'zxart_release': r['id']},
                          'notes': safe_name(r['fileName'])})
         hwr = r.get('hardwareRequired') or []
-        mach = [m for h in hwr for m in HW_MACH.get(h, [])] or HW_MACH.get(hw) or FAM48
+        # No emulated machine has a Pentagon's 512K or 1 MB, so those releases are kept in files/ without a run.
+        big = bool(set(hwr) & {'pentagon512', 'pentagon1024'})
+        mach = [] if big else [m for h in hwr for m in HW_MACH.get(h, [])] or HW_MACH.get(hw) or FAM48
         needs = [HW_NEEDS[h] for h in hwr if h in HW_NEEDS] or ([HW_NEEDS[hw]] if hw in HW_NEEDS and not hwr else [])
         likes = [HW_LIKES[h] for h in hwr if h in HW_LIKES]
         files = get_files(tdir, r['file'], r['fileName'], charset, sub=vid)
@@ -485,13 +502,14 @@ def zx_title(lib, p, rels, hw):
             return None
         nfiles += len(files)
         vruns = group_runs([run_table(f, mach, 'sam-coupe' if sam or 'sam' in mach else 'zx-spectrum', needs, likes,
-                                      versions[-1]['label']) for f in files])
+                                      versions[-1]['label']) for f in files]) if mach else []
+        unrun = unrun or big
         for x in vruns:
             x['version'] = vid
         runs += vruns
     if not nfiles:
         return None
-    if not runs:
+    if not runs and not unrun:
         runs = [{'platform': 'sam-coupe' if sam else 'zx-spectrum', 'machines': HW_MACH.get(hw) or FAM48,
                  'files': [], 'slot': 'sd0', 'needs': [], 'notes': 'No runnable file found; see files/.'}]
     url = f'https://zxart.ee/eng/software/?id={p["id"]}'
@@ -564,7 +582,10 @@ def zxart(lib, section):
                         lost.update(ids[i:i + 50])
                 # A title whose release details did not arrive waits for the next run instead of being filed short.
                 todo = [p for p in todo if not lost & set(p.get('releasesIds', []))]
-                zx_names(todo + list(rels.values()))
+                gone = zx_names(todo + list(rels.values()))
+                # Likewise a title whose author or publisher names did not arrive.
+                todo = [p for p in todo if not gone & (zx_people(p) | {x for i in p.get('releasesIds', []) if i in rels
+                                                                         for x in zx_people(rels[i])})]
                 batch(todo, lambda p: zx_title(lib, p, [rels[i] for i in p.get('releasesIds', []) if i in rels], hw),
                       f'{hw} {start}/{total}', len(todo))
                 made += len(todo)
@@ -645,8 +666,6 @@ def worldofsam(lib, made=0):
             page += 1
     say(f'worldofsam.org: {len(links)} titles')
     todo = [x for x in links.items() if not lib.has('worldofsam', x[0])]
-    if LIMIT:
-        todo = todo[:max(0, LIMIT - made)]
 
     def one(item):
         h, kind = item
@@ -655,16 +674,18 @@ def worldofsam(lib, made=0):
         name = html.unescape(re.search(r'<h1[^>]*>(?:\s*<span[^>]*>)?\s*([^<]+)', p).group(1)).strip()
         urls = sorted(set(re.findall(r'href="(https://www\.worldofsam\.org/system/files/[^"]+)"', p)))
         if not urls or os.path.exists(os.path.join(TITLES, slug(name) + '-sam', 'title.json')):
-            return None  # an unfinished folder from an earlier run is picked up again by claim()
+            return False  # already filed from zxart.ee; an unfinished folder from an earlier run is picked up by claim()
         sid = lib.claim(name, '-sam', 'worldofsam', h)
         tdir = os.path.join(TITLES, sid)
         runs, n = [], 0
         for f in urls:
             got = get_files(tdir, f, urllib.parse.unquote(f.rsplit('/', 1)[-1]))
+            if not got:
+                # Leave the title unfinished so the next run tries every download again.
+                log('worldofsam', h, f, 'gave no files')
+                return None
             n += len(got)
             runs += group_runs([run_table(x, ['sam'], 'sam-coupe') for x in got])
-        if not n:
-            return None
         imgs = list(dict.fromkeys(re.findall(r'href="(https://www\.worldofsam\.org/sites/default/files/[^"]+\.(?:png|jpg|gif))"', p, re.I)))
         yr = wos_field(p, 'Release Year')
         desc = re.sub(r'\s+', ' ', ' '.join(wos_field(p, 'Description'))).strip()
@@ -678,7 +699,24 @@ def worldofsam(lib, made=0):
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': tt['runs']},
                    f'# {name}\n\n{desc}\n\nFrom {u}' if desc else None)
         return f'{name} ({n} files)'
-    batch(todo, one, 'worldofsam')
+    if not LIMIT:
+        batch(todo, one, 'worldofsam')
+        return
+    # A trial run goes one title at a time, so titles already filed from zxart.ee do not use up the limit.
+    left = max(0, LIMIT - made)
+    for item in todo:
+        if left <= 0:
+            break
+        try:
+            msg = one(item)
+        except Exception as e:
+            msg = None
+            log('worldofsam', 'failed', e)
+        if msg is False:
+            continue
+        left -= 1
+        if msg:
+            say(f'[worldofsam] {msg}')
 
 
 # ---------------------------------------------------------------- vtrd.in
@@ -698,15 +736,14 @@ def vtrd(lib):
             rows.append((t, href, html.unescape(re.sub('<[^>]+>', '', name)).replace('\xa0', ' ').strip(),
                          html.unescape(auth).strip(), html.unescape(grp).strip(), rel))
     say(f'vtrd.in: {len(rows)} titles')
-    todo = [r for r in rows if not lib.has('vtrd', r[1])]
+    # A full version whose name zxart.ee already filed is skipped before LIMIT, so trial runs keep moving on.
+    todo = [r for r in rows if not lib.has('vtrd', r[1])
+            and not (r[0] == 'full_ver' and lib.has_name(re.sub(r'\s*\(.*\)$', '', r[2]) or r[2]))]
     if LIMIT:
         todo = todo[:LIMIT]
 
     def one(row):
         t, href, name, auth, grp, rel = row
-        base = re.sub(r'\s*\(.*\)$', '', name) or name
-        if t == 'full_ver' and lib.has_name(base):
-            return None
         sid = lib.claim(name, '-pentagon', 'vtrd', href)
         tdir = os.path.join(TITLES, sid)
         files = get_files(tdir, 'https://vtrd.in' + href, href.rsplit('/', 1)[-1], 'ru')
@@ -741,11 +778,10 @@ def vtrd(lib):
 
 FH = 'https://download.file-hunter.com/'
 # No CAS folders: the MSX machines have no tape slot yet.
-FH_DIRS = {'Games/MSX1/ROM': ('cart1', []), 'Games/MSX1/DSK': ('disk0', ['msx-disk']),
-           'Games/MSX1/MSX-Binaries': ('disk0', ['msx-disk']), 'Games/MSX1/HDD': ('ide0', ['nextor']),
-           'Games/MSX2/ROM': ('cart1', []), 'Games/MSX2/DSK': ('disk0', ['msx-disk']),
-           'Games/MSX2/MSX-Binaries': ('disk0', ['msx-disk']), 'Games/MSX2/Harddisk': ('ide0', ['nextor']),
-           'Demos': ('disk0', ['msx-disk'])}
+FH_DIRS = {'Games/MSX1/ROM': 'cart1', 'Games/MSX1/DSK': 'disk0', 'Games/MSX1/MSX-Binaries': 'disk0',
+           'Games/MSX1/HDD': 'ide0', 'Games/MSX2/ROM': 'cart1', 'Games/MSX2/DSK': 'disk0',
+           'Games/MSX2/MSX-Binaries': 'disk0', 'Games/MSX2/Harddisk': 'ide0', 'Demos': 'disk0'}
+FH_MACH = {'msx1': ['msx1', 'msx1eu', 'msx2', 'msx2eu'], 'msx2': ['msx2', 'msx2eu']}
 
 
 def msx_name(fn):
@@ -772,9 +808,8 @@ def msx(lib):
         gen = 'msx2' if 'MSX2' in p else 'msx1'
         name = msx_name(fn)
         key = ('msx-demo-' if demo else 'msx-') + slug(name)
-        g = groups.setdefault(key, {'name': name, 'demo': demo, 'gen': set(), 'files': []})
-        g['gen'].add(gen)
-        g['files'].append((d, p))
+        g = groups.setdefault(key, {'name': name, 'demo': demo, 'files': []})
+        g['files'].append((d, p, gen))
     say(f'file-hunter.com MSX: {len(groups)} titles')
     todo = [(k, g) for k, g in groups.items() if not lib.has('filehunter', k)]
     if LIMIT:
@@ -785,17 +820,20 @@ def msx(lib):
         key, g = kg
         sid = lib.claim(key, '', 'filehunter', key)
         tdir = os.path.join(TITLES, sid)
-        mach = ['msx1', 'msx1eu', 'msx2', 'msx2eu'] if 'msx1' in g['gen'] else ['msx2', 'msx2eu']
         runs, n = [], 0
-        for d, p in sorted(g['files'], key=lambda x: order.index(x[0])):
-            slot, needs = FH_DIRS[d]
+        for d, p, gen in sorted(g['files'], key=lambda x: order.index(x[0])):
+            slot = FH_DIRS[d]
             files = get_files(tdir, FH + p, p.rsplit('/', 1)[-1])
+            if not files:
+                # Leave the title unfinished so the next run tries every file of the group again.
+                log('filehunter', p, 'gave no files')
+                return None
             n += len(files)
             keep = [f for f in files if not f.lower().endswith(('.txt', '.nfo', '.png', '.jpg', '.pdf', '.diz'))]
             if keep:
                 if slot == 'disk0':
                     keep = [f for f in keep if f.lower().endswith(('.dsk', '.di1', '.di2'))] or keep
-                runs.append({'platform': 'msx', 'machines': mach, 'files': keep, 'slot': slot, 'needs': needs,
+                runs.append({'platform': 'msx', 'machines': FH_MACH[gen], 'files': keep, 'slot': slot, 'needs': [],
                              'notes': d.split('/')[-1]})
         if not n:
             return None
@@ -828,6 +866,7 @@ def symbos(lib):
         return
     apps = [r for r in js_rows(src.split('garrApps', 1)[-1]) if len(r) >= 17]
     say(f'symbos.de: {len(apps)} apps + SymbOS itself')
+    made = 0
     if not lib.has('symbos', 'os'):
         sid = lib.claim('SymbOS', '', 'symbos', 'os')
         tdir = os.path.join(TITLES, sid)
@@ -835,15 +874,18 @@ def symbos(lib):
         for f in ('SymbOS-MSX40.zip', 'SymbOS-ZNX40.zip', 'SymbOS-40-MassStorageCompletion.zip', 'SymbOS-40-Manual.pdf'):
             got[f] = get_files(tdir, SY + 'download/20250131-V40/' + f, f)
         if got['SymbOS-MSX40.zip'] and got['SymbOS-ZNX40.zip']:  # otherwise the next run tries again
-            runs = [{'platform': 'zx-spectrum', 'machines': ['next'], 'files': got['SymbOS-ZNX40.zip'], 'slot': 'sd0', 'needs': []},
-                    {'platform': 'msx', 'machines': ['msx2', 'msx2eu'], 'files': got['SymbOS-MSX40.zip'], 'slot': 'ide0', 'needs': []}]
+            made += 1
+            # The Next package is loose files that go onto a NextZXOS SD card (the SymbOS recipe does that),
+            # so it has no run of its own here. The MSX package gets a run only for a ready disk image.
+            imgs = [f for f in got['SymbOS-MSX40.zip'] if f.lower().endswith(('.img', '.hdd', '.dsk'))]
+            runs = [{'platform': 'msx', 'machines': ['msx2', 'msx2eu'], 'files': [f], 'slot': 'ide0', 'needs': []} for f in imgs[:1]]
             lib.finish(sid, {'name': 'SymbOS', 'kind': 'system', 'year': 2025, 'authors': ['Prodatron'], 'tags': ['symbos'],
                              'summary': 'Multitasking windowed operating system for Z80 machines.', 'license': 'freeware',
                              'source': SY, 'sources': [SY], 'ids': {'symbos': 'os'}, 'runs': runs})
             say('[symbos] SymbOS 4.0')
     todo = [a for a in apps if not lib.has('symbos', a[0]) and (a[7] == '0' or set(a[7]) & {'2', '7'})]
     if LIMIT:
-        todo = todo[:LIMIT]
+        todo = todo[:max(0, LIMIT - made)]
 
     def one(a):
         aid, name, ver, date, plats = a[0], a[1], a[2], a[3], a[7]
@@ -878,7 +920,10 @@ SPEC256 = os.environ.get('SPEC256_URLS', 'https://codeload.github.com/helpquick/
 
 def spec256(lib):
     work = os.path.join(LIB, '.spec256')
+    made = 0
     for n, u in enumerate(SPEC256):
+        if LIMIT and made >= LIMIT:
+            break
         z = os.path.join(work, f'{n}.zip')
         if not save(u, z) or not unpack(z, os.path.join(work, str(n))):
             say(f'  Spec256: could not get {u}')
@@ -891,7 +936,8 @@ def spec256(lib):
         say(f'Spec256 {u.split("/")[3]}: {len(games)} titles')
         games = [g for g in games if not lib.has('spec256', slug(g))]
         if LIMIT:
-            games = games[:LIMIT]
+            games = games[:LIMIT - made]
+        made += len(games)
         for g in games:
             key = slug(g)
             sid = lib.claim(g, '-spec256', 'spec256', key)
@@ -919,7 +965,9 @@ def spec256(lib):
                 continue
             runs = [{'platform': 'zx-spectrum', 'machines': ['spec256'], 'files': game, 'slot': 'gfx', 'needs': [],
                      'notes': '256 colours (Spec256). Load every file into the gfx slot, then the .sna into snapshot.'}]
-            runs += [run_table(f, ['zx48', 'zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'], notes='The original game in Spectrum colours.')
+            # A 128K snapshot (longer than the 49179-byte 48K one) will not load on a 48K machine.
+            runs += [run_table(f, (['zx48'] if os.path.getsize(os.path.join(tdir, f)) <= 49179 else []) +
+                               ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'], notes='The original game in Spectrum colours.')
                      for f in game if f.lower().endswith('.sna')]
             name = re.sub(r'\s+', ' ', g).strip()
             lib.finish(sid, {'name': name, 'kind': 'game', 'tags': ['spec256', '256 colours'], 'license': 'unknown',
@@ -1028,7 +1076,8 @@ def demos(lib):
                 break
             ids += new
             page += 1
-            if LIMIT and len(ids) >= LIMIT * 4:
+            # Count only productions not yet in the library, so trial runs page on past ones already done.
+            if LIMIT and sum(1 for i in ids if not lib.has('pouet', i)) >= (LIMIT - made) * 4:
                 break
         todo = [i for i in ids if not lib.has('pouet', i)]
         say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
@@ -1055,8 +1104,7 @@ def demos(lib):
             if platform == 'msx':
                 keep = [f for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.dsk', '.mx1', '.mx2')]
                 slot = lambda f: {'.rom': 'cart1', '.mx1': 'cart1', '.mx2': 'cart1'}.get(os.path.splitext(f)[1].lower(), 'disk0')
-                runs = [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': slot(f),
-                         'needs': {'disk0': ['msx-disk'], 'tape': ['msx-tape']}.get(slot(f), [])} for f in keep]
+                runs = [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': slot(f), 'needs': []} for f in keep]
             else:
                 runs = group_runs([run_table(f, mach, platform) for f in files])
             if not runs:
