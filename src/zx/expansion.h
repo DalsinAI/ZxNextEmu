@@ -69,6 +69,8 @@ enum {
     ZX_EXP_GIGA       = 512
 };
 
+#define ZX_EXP_ALL 0xffffffffu
+
 #define ZX_EXP_MB03 (ZX_EXP_DIVMMC | ZX_EXP_TURBOSOUND | ZX_EXP_DAC | ZX_EXP_MOUSE | ZX_EXP_TIMEX \
                      | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI | ZX_EXP_RADASTAN | ZX_EXP_GIGA)
 
@@ -133,7 +135,8 @@ typedef struct zx_exp {
     uint8_t giga_buf, giga_flips;
 } zx_exp;
 
-/* A device is fitted and, where the ZXi registers are, switched on. */
+/* A device is fitted and, where the ZXi registers are, switched on
+ * (ZX_EXP_ALL for the machine's own sound: the beeper, the tape input). */
 static inline int zx_exp_on(const zx_exp *e, uint32_t feature, uint8_t zxi_audio)
 {
     return (e->features & feature) && (!(e->features & ZX_EXP_ZXI) || !zxi_audio || (e->zxi[0][1] & zxi_audio));

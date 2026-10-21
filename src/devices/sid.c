@@ -157,12 +157,13 @@ static void envelope(sid_voice *v)
 }
 
 /* All three envelopes are at rest at zero and the filter has settled:
- * the output is silence until a register is written. */
+ * the output is silence until a register is written. Not while a noise
+ * register or a sync has to be clocked as well. */
 static int silent(const sid *s)
 {
     int i;
     for (i = 0; i < 3; i++)
-        if (s->v[i].env || s->v[i].state == ATTACK)
+        if (s->v[i].env || s->v[i].state == ATTACK || (s->v[i].ctrl & 0x82))
             return 0;
     return !s->vlp && !s->vbp && !s->vhp;
 }

@@ -122,6 +122,7 @@ void zx_exp_reset(zx *m)
     e->port_ff = 0;
     saa_reset(&e->saa);
     sid_reset(&e->sid);
+    e->saa_frac = e->sid_frac = 0;
     e->sid_sel = 0;
     e->zxi_sel = e->gzxi_sel = 0;
     memset(e->uno, 0, sizeof e->uno);
@@ -431,7 +432,7 @@ void zx_exp_audio_run(zx *m, uint32_t dt)
         ay_run(&e->ay[1], c);
         ay_run(&e->ay[2], c);
     }
-    if (e->features & ZX_EXP_DAC) {
+    if (zx_exp_on(e, ZX_EXP_DAC, ZXI_DAC)) {
         int32_t mid = ((int32_t)e->dac[4] - 128) / 2;
         e->dac_l += (int64_t)((int32_t)e->dac[0] + e->dac[1] - 256 + mid) * dt;
         e->dac_r += (int64_t)((int32_t)e->dac[2] + e->dac[3] - 256 + mid) * dt;
@@ -466,7 +467,7 @@ void zx_exp_audio_take(zx *m, uint32_t span, int32_t *l, int32_t *r)
         }
     }
     if (e->features & ZX_EXP_DAC) {
-        if (span) {
+        if (span && zx_exp_on(e, ZX_EXP_DAC, ZXI_DAC)) {
             *l += (int32_t)(e->dac_l / (int64_t)span) * 24;
             *r += (int32_t)(e->dac_r / (int64_t)span) * 24;
         }
