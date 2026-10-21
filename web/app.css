@@ -667,3 +667,12 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .det-review summary { cursor: pointer; }
 .det-ver h4 .lang-flag, .det-review summary .lang-flag { margin: 0 6px 0 0; }
 .det-party { color: var(--zxc-muted); font-size: var(--zxc-size-sm); }
+
+/* Companies, series and the same game elsewhere */
+.lib-same { color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
+.lib-more { display: block; margin-top: 4px; color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
+.det-rel { font-size: var(--zxc-size-sm); }
+.det-rel > span { display: block; color: var(--zxc-muted); font-size: var(--zxc-size-xs); text-transform: uppercase; letter-spacing: 0.06em; }
+.det-rel small { color: var(--zxc-muted); }
+.det-same { margin: 0; padding: 0; list-style: none; }
+.det-same li { padding: 2px 0; }
