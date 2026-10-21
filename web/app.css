@@ -515,3 +515,14 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .det-need { display: grid; justify-items: end; gap: 4px; }
 .det-need small { color: var(--zxc-text-yellow); text-align: right; }
 #machine-pop { width: 360px; max-height: calc(100vh - 120px); overflow: auto; }
+
+/* Adding ROMs for machines whose ROMs are not shipped. */
+.rom-dlg { width: min(560px, calc(100vw - 32px)); }
+.rom-list { display: grid; margin: 0; padding: var(--zxc-space-2) var(--zxc-space-3); list-style: none; }
+.rom-list li { display: flex; align-items: center; gap: var(--zxc-space-2); padding: var(--zxc-space-2) 0; border-bottom: 1px solid var(--zxc-line); }
+.rom-list code { flex: 1; }
+.rom-list small { color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
+.rom-state { color: var(--zxc-text-yellow); font-size: var(--zxc-size-xs); }
+.rom-state.ok { color: var(--zxc-text-green); }
+.pop-item.needs-rom span { opacity: 0.6; }
+.pop-item.needs-rom small { color: var(--zxc-text-yellow); }

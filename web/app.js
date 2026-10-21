@@ -2,8 +2,8 @@
 // sound, keyboard and media. The machine runs in worker.js; the library and
 // saved states live in IndexedDB.
 
-import { tx, runParts } from './library.js';
-import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload } from './libview.js';
+import { tx, runParts, romsAdded, romAdd } from './library.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged } from './libview.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -55,6 +55,12 @@ worker.onmessage = async e => {
       run: runTitle,
       onCount: n => { $('lib-readout').textContent = n; },
     }).then(() => showView(prefs.view || 'library'));
+    break;
+  case 'machines':   // the user added ROMs
+    machines = msg.machines;
+    buildMachineMenu();
+    libraryReload();
+    if ($('rom-dlg').open) romDialog(romFor);
     break;
   case 'created':
     fbW = msg.fbW;
@@ -147,15 +153,62 @@ function buildMachineMenu() {
       b.disabled = true;
       b.querySelector('small').textContent = 'SD card next';
     } else if (!mc.available) {
-      b.disabled = true;
-      b.querySelector('small').textContent = 'ROM needed';
+      b.classList.add('needs-rom');
+      b.querySelector('small').textContent = 'Add ROM…';
     } else {
       b.querySelector('small').textContent = mc.id;
     }
-    b.addEventListener('click', () => { closeMenus(); if (mc.id !== machineId) create(mc.id); canvas.focus(); });
+    b.addEventListener('click', () => {
+      closeMenus();
+      if (!mc.available) return romDialog(mc.id);
+      if (mc.id !== machineId) create(mc.id);
+      canvas.focus();
+    });
     list.append(b);
   }
 }
+
+// ---- ROMs the user adds ---------------------------------------------------
+
+// Machines whose ROMs are not shipped (Scorpion, ATM Turbo, Oric) can be
+// turned on with the user's own ROM files. They are kept in this browser.
+let romFor = null;
+function romDialog(id) {
+  romFor = id;
+  const mc = machines.find(m => m.id === id);
+  const dlg = $('rom-dlg');
+  const optional = new Set(mc.roms.filter((r, k) => mc.optional >> k & 1));
+  dlg.innerHTML = `<form method="dialog" class="edit">
+    <header class="det-head"><div><h2>ROMs for the ${esc(mc.name)}</h2>
+      <p class="det-line">${mc.available ? 'Everything it needs is here.' : 'Pick each file from your computer. They stay in this browser and are not uploaded anywhere.'}</p></div></header>
+    <ul class="rom-list">${mc.roms.map(r => {
+      const have = !mc.missing.includes(r);
+      return `<li><code>${esc(r)}</code>${optional.has(r) ? '<small>optional</small>' : ''}
+        <span class="rom-state ${have ? 'ok' : ''}">${have ? 'Ready' : 'Missing'}</span>
+        <label class="zxc-btn">${have ? 'Replace' : 'Choose file'}<input type="file" hidden data-rom="${esc(r)}"></label></li>`;
+    }).join('')}</ul>
+    <footer class="det-foot"><span class="spacer"></span><button class="zxc-btn" value="close">Close</button>
+      <button class="zxc-btn zxc-btn--primary" value="start"${mc.available ? '' : ' disabled'}>Start the ${esc(mc.name)}</button></footer>
+  </form>`;
+  for (const inp of dlg.querySelectorAll('input[data-rom]')) inp.addEventListener('change', async () => {
+    const f = inp.files[0];
+    if (!f) return;
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (!bytes.length || bytes.length > 512 * 1024) return showError(`${f.name} doesn't look like a ROM.`);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const b64 = btoa(bin);
+    await romAdd(inp.dataset.rom, b64);
+    const roms = { [inp.dataset.rom]: b64 };
+    send('addRoms', { roms });
+    romsChanged(roms);
+  });
+  dlg.querySelector('form').addEventListener('submit', e => {
+    if (e.submitter?.value === 'start' && id !== machineId) { showView('machine'); create(id); }
+  });
+  if (!dlg.open) dlg.showModal();
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // ---- screen -------------------------------------------------------------
 
@@ -602,5 +655,5 @@ window.addEventListener('drop', e => {
 
 // ---- go -------------------------------------------------------------------
 
-send('init', { wasm: 'zxcore.wasm' });
+romsAdded().catch(() => ({})).then(extra => send('init', { wasm: 'zxcore.wasm', extra }));
 canvas.focus();
