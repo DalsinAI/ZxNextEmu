@@ -41,6 +41,7 @@ struct zxm_family {
 };
 
 extern const zxm_family zxm_family_zx;     /* zxm_zx.c: Spectrums and the Next */
+extern const zxm_family zxm_family_oric;   /* zxm_oric.c: Oric-1 and Atmos */
 
 /* zxm.c: case-insensitive file name extension test (".tap"). */
 int zxm_has_ext(const char *name, const char *ext);
