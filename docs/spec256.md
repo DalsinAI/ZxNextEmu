@@ -91,7 +91,8 @@ clean. Only the `Paper00InkFF` hint for four games is kept from its table.
 ### The games
 
 [mvvproject/Spec256-Games](https://github.com/mvvproject/Spec256-Games) has
-36 games; the 30 that include a snapshot all start and play here. The
+36 folders; the 29 that include a snapshot all start and play here (the
+other 7 ship only as EmuZWin .ezx files, not read yet). The
 repository has no licence, and the snapshots are mostly commercial games
 (its own readme says Ultimate and Codemasters refused distribution), so none
 are bundled. Point the emulator at your own copy.
