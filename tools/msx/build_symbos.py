@@ -203,6 +203,15 @@ for tid, name, src, machines, slot, needs, text in extras:
 for sub in ('Apps', 'Development'):
     d = os.path.join(fh, sub)
     if not os.path.isdir(d):
+        # Not downloaded: the titles an earlier build made from it stay.
+        for t in os.listdir(OUT):
+            try:
+                j = json.load(open(os.path.join(OUT, t, 'title.json'), encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            if os.path.exists(os.path.join(OUT, t, MARK)) and '/OS/SymbOS/%s/' % sub in (j.get('source') or ''):
+                kept.add(t)
+                index.append(t)
         continue
     for f in sorted(os.listdir(d)):
         base = re.sub(r'\.zip$', '', f, flags=re.I)

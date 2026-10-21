@@ -278,7 +278,8 @@ def safe(n):
 
 def hw_needs(text):
     """Hardware the emulated MSX1/MSX2 machines lack, named in a file or folder name."""
-    t = text.lower()
+    # "[No Turbo-R]", "not for MSX2+": the variant for the ordinary machines, not a requirement
+    t = re.sub(r'\b(no|not for|not on|without|non)[ -]+(turbo[ -]?r|msx ?2 ?\+|msx ?2 ?plus)', ' ', text.lower())
     needs = []
     if 'v9990' in t or 'gfx9000' in t: needs.append('v9990')
     if 'v9968' in t: needs.append('v9968')
@@ -289,6 +290,28 @@ def hw_needs(text):
     if re.search(r'msx[ -]?audio|y8950', t): needs.append('msx-audio')
     if re.search(r'msx[ -]?music|fm[ -]?pac|ym2413|\bopll\b', t): needs.append('msx-music')
     return needs
+
+
+def hz_machines(text, machines):
+    """"[60Hz]", "[NTSC]", "[Only works on 60Hz]": the Japanese/US machines; "[50Hz]", "[PAL]": the European ones."""
+    is60 = re.search(r'\b60 ?hz\b|\bntsc\b', text, re.I)
+    is50 = re.search(r'\b50 ?hz\b|\bpal\b', text, re.I)
+    if is60 and not is50:
+        return [m for m in machines if not m.endswith('eu')]
+    if is50 and not is60:
+        return [m for m in machines if m.endswith('eu')]
+    return list(machines)
+
+
+def msx1_only(text):
+    return re.search(r'\bmsx ?1 only\b|\bonly (for|on) (the )?msx ?1\b', text, re.I)
+
+
+def remark_blocks(remark):
+    """An openMSX remark saying the ROM does not run on its own: support ROMs, hardware or disk companions."""
+    return bool(remark) and bool(re.search(
+        r'\bnot (meant|intended|supposed) to be (executed|run|started)\b|\b(needs?|requires?)\b.*\b(cas|tape|disks?|hardware|cartridge|interface|keyboard)\b'
+        r'|\bonly (usable|useful|works?|to be used|runs?)\b.*\bwith\b|\bpart of\b.*\b(package|set|bundle)\b|\brelated hardware\b', remark, re.I))
 
 
 # ---- collect variants ----------------------------------------------------------
@@ -311,12 +334,15 @@ for folder, (typ, machines, slot, needs) in SRC.items():
     if not os.path.isdir(d):
         missing.append(folder)
         continue
-    for fn in sorted(os.listdir(d)):
-        if fn.endswith('.part'):
+    have = set(os.listdir(d))
+    for fn in sorted(have):
+        # get.sh leaves "<name>.part" when its last try fails: a source that failed, unless the
+        # whole file is there too
+        if fn.endswith('.part') and fn[:-5] in have:
             continue
         if re.fullmatch(r'msx\dgames?\.\w+', fn, re.I):   # the whole folder as one archive, and its list
             continue
-        p = parse(fn, typ)
+        p = parse(fn[:-5] if fn.endswith('.part') else fn, typ)
         if is_bad(p['flags']):
             continue
         if typ == 'BIN':   # binaries are named by 8.3 file names; use them as-is
@@ -384,6 +410,9 @@ for key, t in sorted(titles.items()):
         got = []
         for src in sorted(v['srcs'], key=lambda s: [int(c) if c.isdigit() else c for c in re.split(r'(\d+)', s)]):
             sp = os.path.join(DL, v['folder'], src)
+            if src.endswith('.part'):   # a download cut off: keep the earlier build
+                failed.append(src)
+                continue
             sources.append(FH + urllib.parse.quote(v['folder'] + '/' + src))
             tmp = os.path.join(tdir, '.x')
             shutil.rmtree(tmp, ignore_errors=True)
@@ -420,13 +449,8 @@ for key, t in sorted(titles.items()):
             continue
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
         # "[MSX1 Only]" in the name: not on the MSX2s the MSX1 folder otherwise lists
-        mach = [m for m in v['machines'] if m.startswith('msx1')] if any(re.search(r'\bmsx ?1 only\b', f, re.I) for f in v['parse']['flags']) else v['machines']
-        # "[60Hz]", "[NTSC]", "[Only works on 60Hz]": the Japanese/US machines; "[50Hz]", "[PAL]": the European ones
-        hz = ' '.join(v['parse']['flags'])
-        if re.search(r'\b60 ?hz\b|\bntsc\b', hz, re.I) and not re.search(r'\b50 ?hz\b|\bpal\b', hz, re.I):
-            mach = [m for m in mach if not m.endswith('eu')]
-        elif re.search(r'\b50 ?hz\b|\bpal\b', hz, re.I) and not re.search(r'\b60 ?hz\b|\bntsc\b', hz, re.I):
-            mach = [m for m in mach if m.endswith('eu')]
+        mach = [m for m in v['machines'] if m.startswith('msx1')] if any(msx1_only(f) for f in v['parse']['flags']) else v['machines']
+        mach = hz_machines(' '.join(v['parse']['flags']), mach)
         if not mach:
             unrun.append('%s (no matching machine)' % os.path.basename(runf[0]))
             continue
@@ -447,8 +471,10 @@ for key, t in sorted(titles.items()):
                 if h:
                     sdbhit = sdbhit or h
                     # A known bad dump, or a mapper the cartridge core cannot bank, stays in files/ only.
-                    if (h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'], os.path.join(tdir, g)):
-                        unrun.append('%s (openMSX: %s)' % (os.path.basename(g), 'bad dump' if (h.get('status') or '').lower() == 'bad' else h['mapper'] + ' mapper'))
+                    bad = (h.get('status') or '').lower() == 'bad'
+                    if bad or not mapper_ok(h['mapper'], os.path.join(tdir, g)) or remark_blocks(h.get('remark')):
+                        why = 'bad dump' if bad else h['remark'] if remark_blocks(h.get('remark')) else h['mapper'] + ' mapper'
+                        unrun.append('%s (openMSX: %s)' % (os.path.basename(g), why))
                         run = None
                         break
                     run['mapper'] = h['mapper']
@@ -464,9 +490,10 @@ for key, t in sorted(titles.items()):
             run['notes'] = '; '.join(notes)
         runs.append(run)
     # A title missing a variant keeps its earlier, complete build; with none, what unpacked is filed.
-    ok = bool(allfiles) and not (failed and had)
-    settle(tdir, ok)
+    # A source folder not downloaded may hold another variant of it, so an earlier build stays too.
+    ok = bool(allfiles) and not ((failed or missing) and had)
     if not ok:
+        settle(tdir, False)
         try:   # the earlier build is back: it stays in the index
             j = json.load(open(os.path.join(tdir, 'title.json')))
             index.append({'id': tid, 'name': j.get('name'), 'machines': sorted({m for r in j.get('runs', []) for m in r.get('machines', [])}),
@@ -517,19 +544,21 @@ for key, t in sorted(titles.items()):
     about += ['', 'Files from download.file-hunter.com (The File Hunter MSX archive), %s.' % TODAY]
     with open(os.path.join(tdir, 'about.md'), 'w') as f:
         f.write('\n'.join(about) + '\n')
+    settle(tdir, True)   # the earlier build goes only once this one is complete
     index.append({'id': tid, 'name': name, 'machines': sorted(t['machines']), 'runs': len(runs), 'screens': len(shots)})
 
-if only is None and missing:
-    # A source folder is not downloaded, so its titles did not come out of this build; keep their
-    # folders and index entries from the earlier one rather than sweeping them.
-    print('not downloaded, keeping earlier titles:', ', '.join(missing))
+if only is not None or missing:
+    # A selective build, or a source folder not downloaded: the titles not built this time keep
+    # their folders and index entries from the earlier build rather than being swept.
+    if missing:
+        print('not downloaded, keeping earlier titles:', ', '.join(missing))
     try:
         prev = json.load(open(os.path.join(OUT, '..', 'msx-index.json')))
     except (OSError, ValueError):
         prev = []
     seen = {e['id'] for e in index}
     index += [e for e in prev if e.get('id') not in seen and os.path.exists(os.path.join(OUT, e['id'], MARK))]
-elif only is None:   # a full build
+else:   # a full build
     # A titles folder this builder made that no longer comes out of the archive (a game gone, or a
     # renamed slug) is stale; only folders carrying the marker are touched.
     for d in os.listdir(OUT):
