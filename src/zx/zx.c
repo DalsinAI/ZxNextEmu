@@ -52,7 +52,7 @@ int zx_model_from_name(const char *name, zx_model *out)
 static int is_plus3(const zx *m) { return m->model == ZX_PLUS2A || m->model == ZX_PLUS3; }
 static int has_ay(const zx *m) { return m->model != ZX_48K; }
 /* An interface's TurboSound takes over the AY ports. */
-static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && (m->exp->features & ZX_EXP_TURBOSOUND)); }
+static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && zx_exp_turbosound(m->exp)); }
 static int is_atm(const zx *m) { return m->model == ZX_ATM2; }
 
 /* Absolute time in T-states, for the disk controller. */

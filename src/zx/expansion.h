@@ -13,9 +13,22 @@
  *   Kempston mouse  ports FBDF FFDF FADF
  *   Timex video   port FF: second screen, hi-colour (8x1 attributes),
  *                 interrupt disable
+ *   SAA1099       register select on 6F3B or 1FF, data on 6E3B or FF (FF
+ *                 is shared with the Timex port, as on the hardware)
+ *   SID           6581/8580 on 6C3B (register) and 6D3B (data); register
+ *                 1F picks the model and the PAL or NTSC clock
+ *   ZXi registers the MB03+'s settings (its Programmer's Reference): 703B
+ *                 selects a column and 713B-773B read or write it in the
+ *                 eight m_zxi rows; 7C3B and 7D3B do the same for the
+ *                 general g_zxi registers. m_zxi_001 switches the sound
+ *                 devices (zx_exp_on), m_zxi_00C the Timex modes and
+ *                 m_zxi_019 the SID model; the rest are kept and read back
+ *                 but do nothing yet.
  *
  * The "divmmc" interface is the divMMC alone; the MB03+ Ultimate fits them
  * all (its own ULA+ is the machine's, always present on the classic models).
+ * Without the ZXi registers every fitted device is on; with them, they start
+ * as the MB03+ SetUp leaves them: all on but the SAA1099.
  *
  * zx.c calls in from its memory, I/O, audio and video paths only when
  * m->exp is set, so a machine without an interface runs as before.
@@ -28,6 +41,8 @@
 
 #include "ay.h"
 #include "kmouse.h"
+#include "../devices/saa1099.h"
+#include "../devices/sid.h"
 
 struct zx;
 struct nx_sd;
@@ -38,10 +53,20 @@ enum {
     ZX_EXP_TURBOSOUND = 2,
     ZX_EXP_DAC        = 4,
     ZX_EXP_MOUSE      = 8,
-    ZX_EXP_TIMEX      = 16
+    ZX_EXP_TIMEX      = 16,
+    ZX_EXP_SAA        = 32,
+    ZX_EXP_SID        = 64,
+    ZX_EXP_ZXI        = 128
 };
 
-#define ZX_EXP_MB03 (ZX_EXP_DIVMMC | ZX_EXP_TURBOSOUND | ZX_EXP_DAC | ZX_EXP_MOUSE | ZX_EXP_TIMEX)
+#define ZX_EXP_MB03 (ZX_EXP_DIVMMC | ZX_EXP_TURBOSOUND | ZX_EXP_DAC | ZX_EXP_MOUSE | ZX_EXP_TIMEX \
+                     | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI)
+
+/* m_zxi_001, audio select */
+enum {
+    ZXI_BEEPER = 1, ZXI_AY = 2, ZXI_SAA = 4, ZXI_DAC = 8, ZXI_GS = 16, ZXI_SID = 32, ZXI_TAPEIN = 64
+};
+#define ZXI_AUDIO_DEFAULT (ZXI_BEEPER | ZXI_AY | ZXI_DAC | ZXI_GS | ZXI_SID | ZXI_TAPEIN)
 
 #define ZX_DIV_BANKS 64          /* 512K of divMMC RAM in 8K banks */
 
@@ -63,15 +88,40 @@ typedef struct zx_exp {
     uint8_t acb;                 /* stereo: 0 ABC, 1 ACB */
     uint32_t ay_half;
 
-    /* DACs: unsigned 8-bit, 0x80 is silence */
-    uint8_t dac[4];
+    /* DACs: unsigned 8-bit, 0x80 is silence. 0-1 left, 2-3 right, 4 (the
+     * Czech DAC's B on 3F) both. */
+    uint8_t dac[5];
     int64_t dac_l, dac_r;        /* level x T-states since the last sample */
 
     zx_kmouse mouse;
 
     /* Timex */
     uint8_t port_ff;
+
+    saa1099 saa;
+    uint64_t saa_frac;           /* 8 MHz clocks x cpu_hz still to run */
+
+    sid sid;
+    uint8_t sid_sel;
+    uint64_t sid_frac;
+
+    /* ZXi: m_zxi_000-7FF as zxi[row][column], g_zxi_000-0FF */
+    uint8_t zxi_sel, gzxi_sel;
+    uint8_t zxi[8][256];
+    uint8_t gzxi[256];
 } zx_exp;
+
+/* A device is fitted and, where the ZXi registers are, switched on. */
+static inline int zx_exp_on(const zx_exp *e, uint32_t feature, uint8_t zxi_audio)
+{
+    return (e->features & feature) && (!(e->features & ZX_EXP_ZXI) || !zxi_audio || (e->zxi[0][1] & zxi_audio));
+}
+
+/* The interface's AY chips stand in for the machine's own. */
+static inline int zx_exp_turbosound(const zx_exp *e)
+{
+    return zx_exp_on(e, ZX_EXP_TURBOSOUND, ZXI_AY);
+}
 
 /* Plug an interface into a classic machine (not the Next). div_rom is the
  * 8K esxDOS ROM when the features include the divMMC. 0 on success. */
@@ -104,6 +154,8 @@ void zx_exp_audio_take(struct zx *m, uint32_t span, int32_t *l, int32_t *r);
  * the screen page), given the standard offsets. */
 static inline void zx_exp_screen(const zx_exp *e, uint32_t *pix, uint32_t *attr)
 {
+    if (!(e->features & ZX_EXP_TIMEX))
+        return;
     switch (e->port_ff & 7) {
     case 1:                      /* second screen at 0x6000 */
         *pix += 0x2000;
