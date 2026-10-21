@@ -14,6 +14,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint8_t giga_mode(const zx_exp *e);
+static void giga_frame(zx *m);
+
+static void free_wide(zx *m, zx_exp *e)
+{
+    if (!e->own_wide)
+        return;
+    free(m->wide);
+    m->wide = NULL;
+    m->pixels = &m->screen[0][0];
+    m->screen_w = m->pitch = ZX_SCREEN_W;
+}
+
 static void update_map(zx *m)
 {
     const zx_exp *e = m->exp;
@@ -33,6 +46,23 @@ int zx_exp_attach(zx *m, uint32_t features, const uint8_t *div_rom, size_t rom_l
     e->features = features;
     if (features & ZX_EXP_DIVMMC)
         memcpy(e->div_rom, div_rom, sizeof e->div_rom);
+    /* Timex hi-res needs a 640-wide picture (the ATM has its own) */
+    if ((features & ZX_EXP_TIMEX) && !m->wide) {
+        m->wide = calloc((size_t)ZX_SCREEN_W * 2 * ZX_SCREEN_H, sizeof *m->wide);
+        if (!m->wide) {
+            free(e);
+            return -1;
+        }
+        e->own_wide = 1;
+        m->pixels = m->wide;
+        m->screen_w = m->pitch = ZX_SCREEN_W * 2;
+    }
+    if ((features & ZX_EXP_GIGA)
+        && !(e->giga_prev = calloc((size_t)m->pitch * ZX_SCREEN_H, sizeof *e->giga_prev))) {
+        free_wide(m, e);
+        free(e);
+        return -1;
+    }
     m->exp = e;
     zx_exp_power_on(m);
     return 0;
@@ -45,6 +75,8 @@ void zx_exp_free(zx *m)
         return;
     nx_sd_close(e->sd[0]);
     nx_sd_close(e->sd[1]);
+    free_wide(m, e);
+    free(e->giga_prev);
     free(e);
     m->exp = NULL;
     m->div_map = 0;
@@ -64,6 +96,7 @@ void zx_exp_power_on(zx *m)
     e->zxi[0][0x03] = 1;         /* RTC */
     e->zxi[0][0x06] = 1;         /* SD */
     e->zxi[0][0x07] = 1;         /* Kempston */
+    e->zxi[0][0x0b] = 3;         /* GigaScreen: automatic */
     e->zxi[0][0x0c] = 1;         /* Timex modes */
     e->zxi[0][0x0d] = 1;         /* ULAplus */
     sid_set_model(&e->sid, 0, 0);
@@ -91,6 +124,10 @@ void zx_exp_reset(zx *m)
     sid_reset(&e->sid);
     e->sid_sel = 0;
     e->zxi_sel = e->gzxi_sel = 0;
+    memset(e->uno, 0, sizeof e->uno);
+    e->uno_sel = e->uno_hi = e->uno_id = 0;
+    e->radas_offset = 0;
+    e->giga_flips = 0;
     update_map(m);
 }
 
@@ -99,6 +136,8 @@ void zx_exp_frame_end(zx *m)
     zx_exp *e = m->exp;
     nx_sd_tick(e->sd[0]);
     nx_sd_tick(e->sd[1]);
+    if (giga_mode(e) >= 2 && e->giga_prev)
+        giga_frame(m);
 }
 
 int zx_exp_attach_sd(zx *m, int slot, zx_blockdev *bd)
@@ -220,6 +259,36 @@ static void zxi_write(zx_exp *e, int row, uint8_t v)
     }
 }
 
+/* ZX-Uno registers on FC3B (select) and FD3B (data) */
+static const char core_id[] = "eLeMeNt MB";
+
+static uint8_t uno_read(zx_exp *e)
+{
+    switch (e->uno_sel) {
+    case 0x41: return (uint8_t)(e->uno_hi ? e->radas_offset >> 8 : e->radas_offset);
+    case 0xff:
+        if (e->uno_id >= sizeof core_id - 1) {
+            e->uno_id = 0;       /* a zero ends the string, then it starts again */
+            return 0;
+        }
+        return (uint8_t)core_id[e->uno_id++];
+    default: return e->uno[e->uno_sel];
+    }
+}
+
+static void uno_write(zx_exp *e, uint8_t v)
+{
+    if (e->uno_sel == 0x41) {    /* 14 bits, low byte first */
+        if (e->uno_hi)
+            e->radas_offset = (uint16_t)((e->radas_offset & 0xff) | (v & 0x3f) << 8);
+        else
+            e->radas_offset = (uint16_t)((e->radas_offset & 0x3f00) | v);
+        e->uno_hi ^= 1;
+        return;
+    }
+    e->uno[e->uno_sel] = v;
+}
+
 int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
 {
     zx_exp *e = m->exp;
@@ -244,6 +313,10 @@ int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
                : row >= 0 ? e->zxi[row][e->zxi_sel] : e->gzxi[e->gzxi_sel];
             return 1;
         }
+    }
+    if ((e->features & ZX_EXP_RADASTAN) && (port == 0xfc3b || port == 0xfd3b)) {
+        *v = port == 0xfc3b ? e->uno_sel : uno_read(e);
+        return 1;
     }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && port == 0x6d3b) {
         *v = e->sid_sel == 0x1f ? (uint8_t)(e->sid.model | e->sid.ntsc << 1) : sid_read(&e->sid, e->sid_sel);
@@ -290,6 +363,16 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
             e->gzxi[e->gzxi_sel] = v;
             return;
         }
+    }
+    if ((e->features & ZX_EXP_RADASTAN) && (port == 0xfc3b || port == 0xfd3b)) {
+        if (port == 0xfc3b) {
+            e->uno_sel = v;
+            e->uno_hi = 0;
+            e->uno_id = 0;
+        } else {
+            uno_write(e, v);
+        }
+        return;
     }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && (port == 0x6c3b || port == 0x6d3b)) {
         if (port == 0x6c3b)
@@ -402,12 +485,135 @@ void zx_exp_audio_take(zx *m, uint32_t span, int32_t *l, int32_t *r)
     }
 }
 
+/* ---- video ---------------------------------------------------------------- */
+
+static int radastan(const zx *m)
+{
+    const zx_exp *e = m->exp;
+    return (e->features & ZX_EXP_RADASTAN) && ((e->uno[0x40] & 3) == 3 || (m->ulaplus_mode & 3) == 3);
+}
+
+static int timex_hires(const zx_exp *e)
+{
+    return (e->features & ZX_EXP_TIMEX) && (e->port_ff & 6) == 6;
+}
+
+static uint8_t giga_mode(const zx_exp *e)
+{
+    if (!(e->features & ZX_EXP_GIGA))
+        return 0;
+    return e->gzxi[0x08] ? e->gzxi[0x08] & 3 : e->zxi[0][0x0b] & 3;
+}
+
+/* Half way between two RGB333 colours, channel by channel. */
+static uint16_t mix333(uint16_t a, uint16_t b)
+{
+    return (uint16_t)((((a >> 6) + (b >> 6) + 1) >> 1) << 6 | ((((a >> 3) & 7) + ((b >> 3) & 7) + 1) >> 1) << 3
+                      | (((a & 7) + (b & 7) + 1) >> 1));
+}
+
+static void double_up(const uint16_t *px, uint16_t *wide)
+{
+    int i;
+    if (wide)
+        for (i = 0; i < 8; i++)
+            wide[2 * i] = wide[2 * i + 1] = px[i];
+}
+
+int zx_exp_draw(zx *m, int row, int col, uint16_t *px, uint16_t *wide)
+{
+    const zx_exp *e = m->exp;
+    const uint8_t *scr = m->ram[m->screen_page];
+    int paper = row >= 0 && row < 192 && col >= 0 && col < 32, i;
+
+    if (radastan(m)) {
+        /* 128x96, a nibble per pixel (the left one high), each shown 2x2,
+         * colours from a quarter of the ULA+ palette */
+        const uint8_t *pal = &m->ulaplus_pal[(e->uno[0x43] & 3) * 16];
+        if (paper) {
+            uint32_t base = ((e->port_ff & 1) ? 0x2000u : 0) + e->radas_offset
+                            + (uint32_t)(row >> 1) * (64u + e->uno[0x42]) + (uint32_t)col * 2;
+            for (i = 0; i < 4; i++) {
+                uint8_t b = scr[(base + (uint32_t)(i >> 1)) & 0x3fff];
+                px[2 * i] = px[2 * i + 1] = ulaplus_colour(pal[(i & 1) ? b & 15 : b >> 4]);
+            }
+        } else {
+            uint16_t b = ulaplus_colour(pal[((e->uno[0x43] & 4) << 1) | m->border]);
+            for (i = 0; i < 8; i++)
+                px[i] = b;
+        }
+        double_up(px, wide);
+        return 1;
+    }
+    if (timex_hires(e)) {
+        /* 512x192: columns alternate between the two screens; one colour
+         * and its complement, bright; the border in the paper colour */
+        int c = (e->port_ff >> 3) & 7;
+        uint16_t ink = zx_colours[8 | c], pap = zx_colours[8 | (7 - c)];
+        if (paper) {
+            uint32_t po = ((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col;
+            uint16_t bits = (uint16_t)(scr[po] << 8 | scr[po + 0x2000]);
+            for (i = 0; i < 8; i++)
+                px[i] = (bits & (0xc000 >> (2 * i))) ? ink : pap;
+            if (wide)
+                for (i = 0; i < 16; i++)
+                    wide[i] = (bits & (0x8000 >> i)) ? ink : pap;
+        } else {
+            for (i = 0; i < 8; i++)
+                px[i] = pap;
+            double_up(px, wide);
+        }
+        return 1;
+    }
+    if (paper && giga_mode(e) == 1 && m->model != ZX_48K) {
+        /* GigaScreen mode 0: the 128K screens in banks 5 and 7 mixed */
+        uint32_t po = ((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col;
+        uint32_t ao = 6144 + (row >> 3) * 32 + col;
+        uint16_t other[8];
+        zx_exp_screen(e, &po, &ao);
+        zx_ula_chunk(m, m->ram[5][po], m->ram[5][ao], px);
+        zx_ula_chunk(m, m->ram[7][po], m->ram[7][ao], other);
+        for (i = 0; i < 8; i++)
+            px[i] = mix333(px[i], other[i]);
+        double_up(px, wide);
+        return 1;
+    }
+    return 0;
+}
+
+/* GigaScreen modes 1 and 2 at the end of a frame: show it mixed with the
+ * last one. Mode 2 does so only while the program shows a different screen
+ * (bank 5 or 7, Timex screen 0 or 1) every frame. */
+static void giga_frame(zx *m)
+{
+    zx_exp *e = m->exp;
+    uint8_t mode = giga_mode(e), buf = (uint8_t)(m->screen_page << 1 | (e->port_ff & 1));
+    uint16_t *pic = m->wide && e->own_wide ? m->wide : &m->screen[0][0];
+    size_t i, n = (size_t)m->pitch * ZX_SCREEN_H;
+    int mix;
+    e->giga_flips = buf != e->giga_buf ? (uint8_t)(e->giga_flips < 2 ? e->giga_flips + 1 : 2) : 0;
+    e->giga_buf = buf;
+    mix = mode == 2 || (mode == 3 && e->giga_flips >= 2);
+    for (i = 0; i < n; i++) {
+        uint16_t now = pic[i];
+        if (mix)
+            pic[i] = mix333(now, e->giga_prev[i]);
+        e->giga_prev[i] = now;
+    }
+}
+
 /* ---- state ---------------------------------------------------------------- */
 
-/* The struct as it is in memory, then each SD card's SPI state. */
+/* The struct as it is in memory, each SD card's SPI state, then the last
+ * frame GigaScreen mixes with. */
+static size_t giga_size(const zx *m)
+{
+    return m->exp->giga_prev ? (size_t)m->pitch * ZX_SCREEN_H * sizeof *m->exp->giga_prev : 0;
+}
+
 size_t zx_exp_state_size(const zx *m)
 {
-    return m->exp ? sizeof(zx_exp) + 2 * nx_sd_state_size() : 0;
+    return m->exp ? sizeof(zx_exp) + 2 * nx_sd_state_size() + giga_size(m) : 0;
 }
 
 void zx_exp_state_save(const zx *m, uint8_t *out)
@@ -422,21 +628,27 @@ void zx_exp_state_save(const zx *m, uint8_t *out)
         else
             memset(out, 0, nx_sd_state_size());
     }
+    if (e->giga_prev)
+        memcpy(out, e->giga_prev, giga_size(m));
 }
 
 void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
 {
     zx_exp *e = m->exp;
     struct nx_sd *sd[2];
+    uint16_t *giga_prev = e->giga_prev;
     int i;
     sd[0] = e->sd[0];
     sd[1] = e->sd[1];
     memcpy(e, in, sizeof *e);
+    e->giga_prev = giga_prev;
     in += sizeof *e;
     for (i = 0; i < 2; i++, in += nx_sd_state_size()) {
         e->sd[i] = sd[i];
         if (sd[i] && has_sd[i])
             nx_sd_state_load(sd[i], in);
     }
+    if (giga_prev)
+        memcpy(giga_prev, in, giga_size(m));
     update_map(m);
 }

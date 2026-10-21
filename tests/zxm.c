@@ -101,7 +101,7 @@ static uint32_t run(zxm *m, int frames, uint32_t h)
         zxm_run_frame(m);
         fb = zxm_framebuffer(m, &pitch);
         for (y = 0; y < info->fb_h; y++)
-            h = fnv(h, fb + (size_t)y * (size_t)pitch, info->fb_w * 2u);
+            h = fnv(h, fb + (size_t)y * (size_t)pitch, (size_t)zxm_fb_width(m) * 2u);
         au = zxm_audio(m, &samples);
         h = fnv(h, au, (size_t)samples * 4);
         for (y = 0; y < samples * 2; y++)

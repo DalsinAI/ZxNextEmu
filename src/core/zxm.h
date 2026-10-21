@@ -150,6 +150,9 @@ void   zxm_run_frame(zxm *m);                       /* exactly one video frame *
 /* The picture: fb_w x fb_h, pitch in pixels (a Next is 640 wide: each
  * classic pixel is two). */
 const void *zxm_framebuffer(const zxm *m, int *pitch);
+/* The picture's width now: fb_w, or 640 once an interface whose modes need
+ * it is attached (the MB03+'s Timex hi-res; each classic pixel is two). */
+int zxm_fb_width(const zxm *m);
 /* This frame's sound: *samples stereo pairs, interleaved L R. */
 const int16_t *zxm_audio(const zxm *m, int *samples);
 

@@ -1,8 +1,8 @@
 /*
  * Expansion-port interfaces (src/zx/expansion.c): the divMMC's paging and
  * automapping, TurboSound, the DACs, the Kempston mouse and the Timex
- * screens, the SAA1099, the SID and the ZXi registers, driven through the
- * machine's own bus.
+ * screens and hi-res, Radastan, GigaScreen, the SAA1099, the SID and the
+ * ZXi registers, driven through the machine's own bus.
  *
  * usage: mb03 romdir
  */
@@ -170,10 +170,10 @@ static void test_divmmc_more(const char *romdir)
     CHECK(cmd8(&m) == 0x01, "the card is still idle after a state without it");
 
     /* a state from one interface does not load into another */
-    if (machine(&d, ZX_128K, romdir, ZX_EXP_DIVMMC, rom))
+    if (machine(&d, ZX_128K, romdir, ZX_EXP_MB03 & ~ZX_EXP_MOUSE, rom))
         return;
     CHECK(zx_state_size(&d) == zx_state_size(&m), "same state size");
-    CHECK(zx_state_load(&d, state, sizeof state) != 0, "an MB03+ state is refused by a divMMC machine");
+    CHECK(zx_state_load(&d, state, sizeof state) != 0, "an MB03+ state is refused by an interface without the mouse");
     zx_free(&m);
     zx_free(&d);
 }
@@ -422,6 +422,122 @@ static void test_zxi(const char *romdir)
     zx_free(&m);
 }
 
+static void test_hires(const char *romdir)
+{
+    static zx m;
+    const uint16_t *row;
+    int x;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_TIMEX, NULL))
+        return;
+    CHECK(m.screen_w == 640 && m.pixels == m.wide, "the Timex modes make the picture 640 wide");
+    park(&m);
+    memset(m.ram[5], 0, 0x4000);
+    memset(m.ram[5] + 0x1800, 0x38, 768);
+    m.ram[5][0x0000] = 0xf0;                       /* column 0 from screen 0 */
+    m.ram[5][0x2000] = 0x0f;                       /* column 1 from screen 1 */
+    out(&m, 0x00ff, 6 | 1 << 3);                   /* hi-res, blue on yellow */
+    zx_run_frame(&m);
+    row = m.pixels + ZX_BORDER_Y * m.pitch + ZX_BORDER_X * 2;
+    for (x = 0; x < 16; x++)
+        CHECK(row[x] == ((x < 4 || x >= 12) ? 0x007 : 0x1f8), "hi-res: 16 pixels from two screens");
+    CHECK(m.pixels[0] == 0x1f8, "hi-res: the border takes the paper colour");
+    out(&m, 0x00ff, 0);
+    zx_run_frame(&m);
+    CHECK(row[0] == 0x000 && row[1] == 0x000 && row[8] == 0x16d, "standard screen: each pixel twice");
+    zx_free(&m);
+    CHECK(m.screen_w == 320 && !m.wide, "the picture is 320 wide again without the interface");
+}
+
+static void ulaplus(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0xbf3b, reg);
+    out(m, 0xff3b, v);
+}
+
+static void uno(zx *m, uint8_t reg, uint8_t v)
+{
+    out(m, 0xfc3b, reg);
+    out(m, 0xfd3b, v);
+}
+
+static void test_radastan(const char *romdir)
+{
+    static zx m;
+    static const char id[] = "eLeMeNt MB";
+    int i, ok = 1;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_RADASTAN, NULL))
+        return;
+    park(&m);
+    for (i = 0; i < 64; i++)
+        ulaplus(&m, (uint8_t)i, (uint8_t)(i * 4));  /* entry i: red i, a colour each */
+    memset(m.ram[5], 0, 0x4000);
+    m.ram[5][0] = 0x12;
+    m.ram[5][64] = 0x34;                           /* line 1 */
+    uno(&m, 0x40, 3);
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(4) && m.screen[ZX_BORDER_Y][ZX_BORDER_X + 1] == ulaplus_colour(4),
+          "Radastan: the left nibble, two pixels wide");
+    CHECK(m.screen[ZX_BORDER_Y + 1][ZX_BORDER_X + 2] == ulaplus_colour(8), "Radastan: the right nibble, two lines high");
+    CHECK(m.screen[ZX_BORDER_Y + 2][ZX_BORDER_X] == ulaplus_colour(12), "Radastan: 64 bytes a line");
+    out(&m, 0x00fe, 2);
+    zx_run_frame(&m);
+    CHECK(m.screen[0][0] == ulaplus_colour(2 * 4), "Radastan: the border from the palette");
+    uno(&m, 0x43, 4);                              /* BOR3 */
+    zx_run_frame(&m);
+    CHECK(m.screen[0][0] == ulaplus_colour(10 * 4), "Radastan: BOR3 picks border colours 8-15");
+    uno(&m, 0x43, 1);                              /* the second palette quarter */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(17 * 4), "Radastan: palette quarter");
+    out(&m, 0xfc3b, 0x41);
+    out(&m, 0xfd3b, 64);
+    out(&m, 0xfd3b, 0);                            /* offset 64: one line down */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(19 * 4), "Radastan: the screen offset scrolls");
+    uno(&m, 0x40, 0);
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] != ulaplus_colour(19 * 4), "Radastan off");
+    ulaplus(&m, 0x40, 3);                          /* or through the ULA+ mode register */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == ulaplus_colour(19 * 4), "Radastan from ULA+ mode 3");
+    out(&m, 0xfc3b, 0xff);
+    for (i = 0; i < 10; i++)
+        ok &= in(&m, 0xfd3b) == (uint8_t)id[i];
+    CHECK(ok && in(&m, 0xfd3b) == 0 && in(&m, 0xfd3b) == 'e', "COREID reads eLeMeNt MB, a zero, then again");
+    zx_free(&m);
+}
+
+static void test_giga(const char *romdir)
+{
+    static zx m;
+    int i;
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_GIGA | ZX_EXP_ZXI, NULL))
+        return;
+    park(&m);
+    memset(m.ram[5], 0, 0x1800);
+    memset(m.ram[7], 0, 0x1800);
+    memset(m.ram[5] + 0x1800, 0x38, 768);          /* white paper */
+    memset(m.ram[7] + 0x1800, 0x00, 768);          /* black */
+    zxi(&m, 0x0b, 1);                              /* mode 0: the two screens mixed */
+    zx_run_frame(&m);
+    CHECK(m.screen[ZX_BORDER_Y][ZX_BORDER_X] == 0x0db, "GigaScreen mode 0 mixes banks 5 and 7");
+    zxi(&m, 0x0b, 2);                              /* mode 1: frames mixed */
+    zx_run_frame(&m);
+    memset(m.ram[5] + 0x1800, 0x00, 768);
+    zx_run_frame(&m);
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x0db, "GigaScreen mode 1 mixes this frame with the last");
+    zxi(&m, 0x0b, 3);                              /* mode 2: only while flipping */
+    memset(m.ram[5] + 0x1800, 0x38, 768);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x16d, "GigaScreen mode 2: a still screen is left alone");
+    for (i = 0; i < 4; i++) {
+        out(&m, 0x7ffd, (uint8_t)(i & 1 ? 0x08 : 0x00));   /* show bank 7, then 5, ... */
+        zx_run_frame(&m);
+    }
+    CHECK(m.pixels[ZX_BORDER_Y * m.pitch + ZX_BORDER_X] == 0x0db, "GigaScreen mode 2 mixes flipped screens");
+    zx_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
@@ -434,6 +550,9 @@ int main(int argc, char **argv)
     test_saa(romdir);
     test_sid(romdir);
     test_zxi(romdir);
+    test_hires(romdir);
+    test_radastan(romdir);
+    test_giga(romdir);
     printf("%s\n", fails ? "mb03: FAILED" : "mb03: all passed");
     return fails != 0;
 }

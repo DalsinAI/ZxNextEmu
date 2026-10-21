@@ -321,6 +321,11 @@ static const void *framebuffer(const zxm *b, int *pitch)
     return m->m.pixels;
 }
 
+static int fb_width(const zxm *b)
+{
+    return CZX(b)->m.screen_w;
+}
+
 static const int16_t *audio(const zxm *b, int *samples)
 {
     const zxm_zx *m = CZX(b);
@@ -556,5 +561,5 @@ const zxm_family zxm_family_zx = {
     machines, MACHINES, init_info, size, create, destroy, reset, run_frame,
     framebuffer, audio, input, type, typing, media_insert, media_eject,
     state_size, state_save, state_load, debugger, attach, slots, inputs, media_active,
-    media_progress
+    media_progress, fb_width
 };
