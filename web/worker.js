@@ -358,12 +358,15 @@ const handlers = {
     stop();
     const slot = cstr('tape');
     const limit = msg.limit || 30000, stall = msg.stall || 1500;
-    let f = 0, last = -2, since = 0, loaded = false;
+    let f = 0, last = -2, since = 0, loaded = false, typed = 0;
     for (; f < limit; f++) {
       x.zxm_run_frame(m);
       const p = x.zxm_media_progress(m, slot);
       if (p !== last) { last = p; since = f; }
-      if (f < (msg.settle || 150)) continue;
+      // Keys still being typed (a disk's boot command, after its delay): nothing has started
+      // loading yet, so the settle time counts from when the typing ends.
+      if (x.zxm_typing(m)) { typed = f; since = f; continue; }
+      if (f - typed < (msg.settle || 150)) continue;
       if (p < 0 || p >= 100) { loaded = true; break; }
       if (f - since > stall) break;   // the tape has stopped part way: it did not load
     }

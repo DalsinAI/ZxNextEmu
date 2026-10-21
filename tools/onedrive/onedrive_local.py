@@ -50,9 +50,12 @@ class OneDrive:
         self.root = root
 
     def renew(self):
-        r = http('https://api-badgerp.svc.ms/v1.0/token', {'Content-Type': 'application/json'},
-                 json.dumps({'appId': '5cbed6ac-a083-4e14-b191-b4ba07653de2'}).encode())
-        self.h = {'Authorization': 'Badger ' + json.load(r)['token'], 'Prefer': 'autoredeem'}
+        try:
+            r = http('https://api-badgerp.svc.ms/v1.0/token', {'Content-Type': 'application/json'},
+                     json.dumps({'appId': '5cbed6ac-a083-4e14-b191-b4ba07653de2'}).encode())
+            self.h = {'Authorization': 'Badger ' + json.load(r)['token'], 'Prefer': 'autoredeem'}
+        except (urllib.error.HTTPError, KeyError, ValueError) as e:
+            raise TokenError(e) from e
         self.sid = 'u!' + base64.urlsafe_b64encode(self.link.encode()).decode().rstrip('=')
         self.born = time.time()
 
@@ -301,6 +304,10 @@ def clean_link(link):
                  'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.')
     return link
 
+class TokenError(Exception):
+    """OneDrive's sign-in token service failed; that says nothing about the share link."""
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit('usage: onedrive_local.py LIBRARY SHARE_LINK [RECORDS.json.gz]')
@@ -311,6 +318,9 @@ def main():
     os.makedirs(lib, exist_ok=True)
     try:
         od = OneDrive(link)
+    except TokenError as e:
+        print(f'OneDrive would not give out a sign-in token ({e}). Run this again later.', file=sys.stderr)
+        sys.exit(4)
     except urllib.error.HTTPError as e:
         if e.code >= 500 or e.code == 429:   # OneDrive itself is having trouble: the link may be fine
             print(f'OneDrive is not answering properly (HTTP {e.code}). Run this again later.', file=sys.stderr)
