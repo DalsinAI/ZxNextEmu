@@ -33,6 +33,9 @@ typedef enum {
     ZXM_SLOT_SNAPSHOT,           /* bytes, loaded once: .sna, .z80 */
     ZXM_SLOT_SD,                 /* blocks */
     ZXM_SLOT_SERIAL,             /* a serial device on a UART */
+    ZXM_SLOT_DISK,               /* a floppy disk drive */
+    ZXM_SLOT_CARTRIDGE,          /* a ROM cartridge */
+    ZXM_SLOT_HARDDISK,           /* a hard disk */
     ZXM_SLOT_COMPANION           /* bytes, kept: files a snapshot goes with
                                     (Spec256 graphics); insert them first,
                                     eject clears them all */
@@ -48,7 +51,11 @@ typedef struct zxm_slot {
 typedef enum {
     ZXM_IN_KEYBOARD = 1,         /* 8x5 Spectrum matrix (+ Next extra keys) */
     ZXM_IN_KEMPSTON,             /* Kempston joystick */
-    ZXM_IN_MOUSE                 /* Kempston mouse */
+    ZXM_IN_MOUSE,                /* Kempston mouse */
+    ZXM_IN_ORIC_KEYBOARD,        /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
+    ZXM_IN_SAM_KEYBOARD,         /* SAM Coupe matrix */
+    ZXM_IN_MSX_KEYBOARD,         /* MSX matrix */
+    ZXM_IN_JOYSTICK              /* a general joystick (ZXM_EV_JOYSTICK) */
 } zxm_input_kind;
 
 typedef struct zxm_input_desc {
@@ -66,9 +73,12 @@ typedef struct zxm_info {
     const char *const *roms;     /* ROM file names in order, NULL-terminated */
     const zxm_slot *slots;       /* media slots, ending with a NULL id */
     const zxm_input_desc *inputs;     /* inputs, ending with a NULL id */
+    const char *cpu;             /* "z80", "6502": how zxm_regs reads */
+    uint32_t rom_optional;       /* bit i: roms[i] may be left out */
 } zxm_info;
 
-/* ROM images in the order zxm_info.roms names them, 16K each. */
+/* ROM images in the order zxm_info.roms names them (16K each on the
+ * Spectrums and Orics). */
 typedef struct zxm_rom_set {
     const uint8_t *rom[4];
     uint32_t len[4];
@@ -78,7 +88,8 @@ typedef enum {
     ZXM_EV_KEY = 1,              /* a = row 0..7, b = bit 0..4, down */
     ZXM_EV_KEMPSTON,             /* a = state: bit 0 right, 1 left, 2 down, 3 up, 4 fire */
     ZXM_EV_MOUSE,                /* dx, dy (down positive), dz wheel; a = buttons 1 L, 2 R, 4 M */
-    ZXM_EV_RELEASE_ALL           /* every key up */
+    ZXM_EV_RELEASE_ALL,          /* every key up */
+    ZXM_EV_JOYSTICK              /* reserved for the MSX joystick */
 } zxm_event_kind;
 
 typedef struct zxm_input_event {
@@ -105,7 +116,9 @@ typedef struct zxm_media {
     struct zx_serial *serial;
 } zxm_media;
 
-/* Debugging: CPU registers, memory as the CPU sees it, frame count. */
+/* Debugging: CPU registers, memory as the CPU sees it, frame count.
+ * A 6502 (zxm_info.cpu "6502") uses af = A << 8 | P, bc = X, de = Y,
+ * sp = 0x100 | S and pc; the other fields are zero. */
 typedef struct zxm_regs {
     uint16_t af, bc, de, hl, af_, bc_, de_, hl_, ix, iy, sp, pc, memptr;
     uint8_t i, r, iff1, iff2, im, halted;
