@@ -1,14 +1,16 @@
 /*
  * zxrun: headless runner for tests and scripting.
  *
- *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
  *
+ * -g runs a Spec256 game: a folder with its .sna and graphics files.
  * -c attaches an SD card (ZX Spectrum Next, -m next): a folder or an image.
  * -p fits the Next's Raspberry Pi, keeping its files in a folder.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 
 #include "../zx/zx.h"
 #include "../zx/tape.h"
@@ -18,6 +20,7 @@
 #include "../next/next.h"
 #include "../devices/esp8266.h"
 #include "../devices/nextpi.h"
+#include "../spec256/spec256.h"
 
 static void save_ppm(const zx *m, const char *path)
 {
@@ -38,6 +41,67 @@ static void save_ppm(const zx *m, const char *path)
     fclose(fp);
 }
 
+/* A Spec256 game folder: every graphics file, then the snapshot, which
+ * picks 48K or 128K. */
+static s256 *load_spec256(zx *m, const char *dir, const char *romdir)
+{
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    char path[1024], sna[1024] = "";
+    uint8_t *data, *rom[3];
+    size_t len, rlen;
+    const uint8_t *roms[4];
+    static const char *const rom_names[3] = { "48.rom", "128-0.rom", "128-1.rom" };
+    s256 *s;
+    int i;
+
+    if (!d) {
+        perror(dir);
+        return NULL;
+    }
+    for (i = 0; i < 3; i++) {
+        snprintf(path, sizeof path, "%s/%s", romdir, rom_names[i]);
+        rom[i] = media_read_file(path, &rlen);
+    }
+    s = s256_new(rom[0], rom[1], rom[2]);
+    for (i = 0; i < 3; i++)
+        free(rom[i]);
+    while ((e = readdir(d)) != NULL) {
+        size_t n = strlen(e->d_name);
+        if (e->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (n > 4 && (!strcmp(e->d_name + n - 4, ".sna") || !strcmp(e->d_name + n - 4, ".SNA"))) {
+            snprintf(sna, sizeof sna, "%s", path);
+            continue;
+        }
+        data = media_read_file(path, &len);
+        if (data && !s256_add_file(s, e->d_name, data, len))
+            printf("spec256: %s\n", e->d_name);
+        free(data);
+    }
+    closedir(d);
+    data = sna[0] ? media_read_file(sna, &len) : NULL;
+    if (!data) {
+        fprintf(stderr, "%s: no .sna snapshot\n", dir);
+        return NULL;
+    }
+    s256_roms(s, s256_snapshot_is_128(len), roms);
+    if (zx_create(m, s256_snapshot_is_128(len) ? ZX_128K : ZX_48K, roms)) {
+        fprintf(stderr, "spec256: ROMs missing in %s\n", romdir);
+        return NULL;
+    }
+    s256_attach(s, m);
+    if (zx_load_sna(m, data, len)) {
+        fprintf(stderr, "%s: bad snapshot\n", sna);
+        return NULL;
+    }
+    free(data);
+    s256_set_name(s, sna);
+    s256_start(s);
+    return s;
+}
+
 static void put32(FILE *fp, uint32_t v) { fputc(v & 255, fp); fputc(v >> 8 & 255, fp); fputc(v >> 16 & 255, fp); fputc(v >> 24 & 255, fp); }
 static void put16(FILE *fp, uint32_t v) { fputc(v & 255, fp); fputc(v >> 8 & 255, fp); }
 
@@ -46,10 +110,11 @@ int main(int argc, char **argv)
     static zx m;
     static zx_typer typer;
     zx_model model = ZX_48K;
-    const char *romdir = "roms", *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL, *pidir = NULL;
+    const char *romdir = "roms", *gfxdir = NULL, *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL, *pidir = NULL;
     long frames = 100, delay = 120, i;
     FILE *wf = NULL;
     zx_net *net = NULL;
+    s256 *spec = NULL;
     uint32_t wav_samples = 0;
     int a, noscroll = 0;
 
@@ -62,6 +127,7 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
         else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
         else if (!strcmp(argv[a], "-p") && a + 1 < argc) pidir = argv[++a];
+        else if (!strcmp(argv[a], "-g") && a + 1 < argc) gfxdir = argv[++a];
         else if (!strcmp(argv[a], "-f") && a + 1 < argc) frames = atol(argv[++a]);
         else if (!strcmp(argv[a], "-s") && a + 1 < argc) shot = argv[++a];
         else if (!strcmp(argv[a], "-w") && a + 1 < argc) wav = argv[++a];
@@ -70,11 +136,16 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-n")) noscroll = 1; /* keep BASIC from asking "scroll?" */
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
             return 2;
         }
     }
-    if (zx_init(&m, model, romdir))
+    if (gfxdir) {
+        spec = load_spec256(&m, gfxdir, romdir);
+        if (!spec)
+            return 1;
+        model = m.model;
+    } else if (zx_init(&m, model, romdir))
         return 1;
     if (model == ZX_NEXT) {
         net = zx_net_posix_new();
@@ -119,6 +190,7 @@ int main(int argc, char **argv)
         save_ppm(&m, shot);
     printf("%s: %ld frames, PC=%04X\n", zx_timings[model].name, frames, m.cpu.pc);
     zx_free(&m);
+    s256_free(spec);
     zx_net_posix_free(net);
     return 0;
 }

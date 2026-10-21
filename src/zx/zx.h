@@ -103,6 +103,7 @@ typedef struct zx {
     int screen_w, screen_h, pitch;
 
     struct zxn *next;      /* ZX Spectrum Next state (ZX_NEXT only) */
+    struct s256 *s256;     /* Spec256 shadow CPUs, or NULL (not owned) */
 } zx;
 
 /* Create a machine from its ROM images: roms[i] is 16K for each name
