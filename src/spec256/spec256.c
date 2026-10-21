@@ -391,8 +391,13 @@ void s256_render(s256 *s)
                 int bit = 7 - x, ci = 0, draw = 1;
                 const uint8_t *src;
                 uint8_t rgb[3];
-                for (p = 0; p < 8; p++)
-                    ci |= ((g[p] >> bit) & 1) << p;
+                /* While tracing, planes 0 and 1 carry address tags, so the
+                   picture comes from the plain Spectrum byte instead. */
+                if (s->trace)
+                    ci = (orig >> bit & 1) ? 0xff : 0;
+                else
+                    for (p = 0; p < 8; p++)
+                        ci |= ((g[p] >> bit) & 1) << p;
                 src = &s->pal[ci * 3];
                 memcpy(rgb, src, 3);
                 if (!has_bkg) {
