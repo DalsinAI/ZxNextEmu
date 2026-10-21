@@ -72,6 +72,15 @@ void s256_attach(s256 *s, struct zx *m);
  * shadow CPUs in step with the real one. */
 void s256_start(s256 *s);
 
+/* Tracing, for the auto-colouring tool: after s256_start, plane 0 of every
+ * mapped byte holds the low byte of its address and plane 1 the high byte
+ * (bitmap bytes get 0), so a value copied, ORed or XORed onto blank screen
+ * carries the address it came from. Each write to the bitmap (4000-57FF)
+ * calls fn with the address, the value written and that source address (0
+ * if none); the bitmap's planes are then cleared again. NULL stops it. */
+typedef void (*s256_trace_fn)(void *user, uint16_t addr, uint8_t value, uint16_t source);
+void s256_trace(s256 *s, s256_trace_fn fn, void *user);
+
 /* Used by the machine (zx.c). */
 void s256_step(s256 *s);
 int s256_interrupt(s256 *s);
