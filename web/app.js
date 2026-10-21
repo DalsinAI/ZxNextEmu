@@ -3,7 +3,7 @@
 // saved states live in IndexedDB.
 
 import { tx, runParts, romsAdded, romAdd } from './library.js';
-import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged } from './libview.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, machineChanged } from './libview.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -53,6 +53,7 @@ worker.onmessage = async e => {
       runnable: id => id !== 'next' && machines.some(mc => mc.id === id && mc.available),
       machineName: id => machines.find(mc => mc.id === id)?.name || id,
       run: runTitle,
+      current: () => machineId,
       onCount: n => { $('lib-readout').textContent = n; },
     }).then(() => showView(prefs.view || 'library'));
     break;
@@ -126,6 +127,7 @@ worker.onmessage = async e => {
 
 function create(id) {
   machineId = id;
+  machineChanged(id);
   prefs.machine = id;
   savePrefs();
   setChip('starting');
