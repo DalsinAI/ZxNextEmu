@@ -2,7 +2,7 @@
 // sound, keyboard and media. The machine runs in worker.js; the library and
 // saved states live in IndexedDB.
 
-import { tx } from './library.js';
+import { tx, runParts } from './library.js';
 import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload } from './libview.js';
 
 const $ = id => document.getElementById(id);
@@ -67,7 +67,7 @@ worker.onmessage = async e => {
     updateSnapshotItem();
     showStatus();
     if (pendingLoad) {
-      send('load', pendingLoad, [pendingLoad.bytes]);
+      send('loadSet', pendingLoad, pendingLoad.parts.map(p => p.bytes));
       pendingLoad = null;
     } else {
       currentTitle = null;
@@ -560,12 +560,11 @@ $('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(show
 
 // Run a library title: switch machine if it needs another, then load it.
 function runTitle(t, run, id) {
-  const file = t.files.find(f => f.path === (run.file || (run.files || [])[0]));
-  if (!file) return;
+  const { parts, missing } = runParts(t, run);
+  if (missing.length || !parts.length) return;
   currentTitle = t;
   updateShotItem();
-  const bytes = file.bytes.slice().buffer;
-  const load = { name: file.path.replace(/^.*\//, ''), bytes, id, autostart: true };
+  const load = { parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id, autostart: true };
   resumeOnReturn = true;
   userPaused = false;
   showView('machine');
@@ -573,7 +572,7 @@ function runTitle(t, run, id) {
     pendingLoad = load;
     create(id);
   } else {
-    send('load', load, [bytes]);
+    send('loadSet', load, load.parts.map(p => p.bytes));
     send('start');
   }
   $('machine-name').textContent = `${t.meta.name} · ${machines.find(mc => mc.id === id)?.name || id}`;

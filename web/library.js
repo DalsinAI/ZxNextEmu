@@ -383,7 +383,8 @@ async function titleFromGroup(key, group) {
       } else if (r.toLowerCase() === 'about.md') about = new TextDecoder().decode(it.bytes);
     }
     const id = await freeId(slug(prefix.replace(/\/$/, '').replace(/^.*\//, '') || meta.name || 'title'));
-    return { id, meta, about, files, screens, added: Date.now() };
+    delete meta.screens;
+    return { id, meta, about, files, screens, added: Date.now(), needsShots: !screens.length };
   }
   // No title.toml: work out what we can.
   const runs = [];
@@ -408,6 +409,29 @@ async function titleFromGroup(key, group) {
   const meta = { format: 1, name, kind: 'game', runs, added: new Date().toISOString().slice(0, 10) };
   const id = await freeId(slug(name));
   return { id, meta, about, files, screens, added: Date.now(), needsShots: !screens.length };
+}
+
+// ---- the shared collection --------------------------------------------------
+
+// collection.json, packed from a folder of titles: {titles: [{id, toml, about,
+// files: [{path, b64}], screens: [{path, b64}]}]}. Titles already in the
+// library are left alone. Returns the ids added.
+export async function importCollection(data) {
+  const have = new Set((await titleAll()).map(t => t.id));
+  const bytes = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const added = [];
+  for (const c of data.titles) {
+    if (have.has(c.id)) continue;
+    const meta = parseToml(c.toml);
+    const screens = c.screens.filter(s => isImage(s.path)).map(s => ({
+      path: s.path, blob: new Blob([bytes(s.b64)], { type: 'image/png' }),
+      caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
+    }));
+    delete meta.screens;
+    await titlePut({ id: c.id, meta, about: c.about || '', files: c.files.map(f => ({ path: f.path, bytes: bytes(f.b64) })), screens, added: Date.now(), needsShots: !screens.length });
+    added.push(c.id);
+  }
+  return added;
 }
 
 // ---- export -------------------------------------------------------------------
@@ -436,6 +460,33 @@ export function matches(t, query) {
   if (!query) return true;
   const h = t._hay ??= haystack(t);
   return query.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(w));
+}
+
+// The files a run loads, in order, and where each goes. A multi-file run
+// (Spec256: graphics files, then the snapshot) sends its snapshot last.
+export function runParts(t, run) {
+  const paths = run.files || (run.file ? [run.file] : []);
+  const missing = paths.filter(p => !t.files.some(f => f.path === p));
+  const parts = paths.filter(p => !missing.includes(p)).map(p => {
+    const name = p.replace(/^.*\//, '');
+    const e = ext(name);
+    const slot = paths.length > 1 && ['sna', 'z80'].includes(e) ? 'snapshot' : run.slot || detect(name, new Uint8Array(64))?.slot;
+    return { name, slot, bytes: t.files.find(f => f.path === p).bytes };
+  });
+  parts.sort((a, b) => (a.slot === 'snapshot') - (b.slot === 'snapshot'));
+  return { parts, missing };
+}
+
+// Put the user's own copies of missing files into a title, matched by name.
+export function attachFiles(t, picked) {
+  const wanted = (t.meta.runs || []).flatMap(r => r.files || (r.file ? [r.file] : []))
+    .filter(p => !t.files.some(f => f.path === p));
+  const added = [];
+  for (const { name, bytes } of picked) {
+    const p = wanted.find(w => w.replace(/^.*\//, '').toLowerCase() === name.toLowerCase());
+    if (p && !added.includes(p)) { t.files.push({ path: p, bytes }); added.push(p); }
+  }
+  return added;
 }
 
 export const titleMachines = t => [...new Set((t.meta.runs || []).flatMap(r => r.machines || []))];

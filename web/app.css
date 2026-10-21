@@ -512,3 +512,5 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 @media (max-width: 1400px) and (min-width: 981px) {
   .bar .readout, .bar-name span { display: none; }
 }
+.det-need { display: grid; justify-items: end; gap: 4px; }
+.det-need small { color: var(--zxc-text-yellow); text-align: right; }

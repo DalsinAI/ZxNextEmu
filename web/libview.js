@@ -3,7 +3,7 @@
 
 import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
-  label, machineLabels, rgbaToPng, pictureScore, toToml,
+  importCollection, label, machineLabels, rgbaToPng, pictureScore, toToml, runParts, attachFiles,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -27,6 +27,10 @@ export async function initLibraryView(o) {
   $('lib-sort').addEventListener('change', render);
   $('lib-add-files').addEventListener('click', () => $('lib-files').click());
   $('lib-add-folder').addEventListener('click', () => $('lib-folder').click());
+  for (const b of document.querySelectorAll('[data-collection]')) b.addEventListener('click', addCollection);
+  fetch('collection.json', { method: 'HEAD' }).then(r => {
+    for (const b of document.querySelectorAll('[data-collection]')) b.hidden = !r.ok;
+  }).catch(() => {});
   for (const id of ['lib-files', 'lib-folder'])
     $(id).addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
   $('lib-detail').addEventListener('click', e => { if (e.target === $('lib-detail')) closeDetail(); });
@@ -67,6 +71,19 @@ export async function addFiles(files) {
   }
 }
 
+async function addCollection() {
+  status('Adding the Cradle collection…');
+  try {
+    const res = await fetch('collection.json');
+    if (!res.ok) throw new Error('it is not on this page');
+    const ids = await importCollection(await res.json());
+    status(ids.length ? `Added ${ids.length} titles from the Cradle collection.` : 'You already have every title in the Cradle collection.');
+    await reload();
+  } catch (err) {
+    status(`Could not add the collection: ${err.message}`);
+  }
+}
+
 // ---- the grid -----------------------------------------------------------------
 
 function facetValues(t) {
@@ -104,7 +121,7 @@ function render() {
     const li = document.createElement('li');
     const cover = t.screens[0];
     const machines = titleMachines(t);
-    const runs = machines.some(m => opts.runnable(m));
+    const runs = (t.meta.runs || []).some(r => (r.machines || []).some(m => opts.runnable(m)) && !runParts(t, r).missing.length);
     li.innerHTML = `<button class="lib-card" data-id="${esc(t.id)}">
       <span class="lib-cover">${cover ? `<img alt="" src="${url(cover.blob)}">` : `<span class="lib-nocover"><i class="zxc-stripe"></i><span>${t.needsShots && runs ? 'Taking screenshots' : t.loadFailed ? 'Did not load in the browser' : 'No screenshot'}</span></span>`}</span>
       <span class="lib-card-text">
@@ -169,11 +186,15 @@ export async function showDetail(id) {
   const runs = (m.runs || []).map((r, i) => {
     const machines = r.machines || [];
     const ok = machines.filter(x => opts.runnable(x));
-    const file = (r.file || (r.files || [])[0] || '').replace(/^files\//, '');
+    const paths = r.files || (r.file ? [r.file] : []);
+    const file = paths.length > 1 ? `${paths.length} files` : (paths[0] || '').replace(/^files\//, '');
+    const { missing } = runParts(t, r);
+    const need = missing.map(p => p.replace(/^.*\//, ''));
     return `<li class="det-run">
       <div><span class="badges">${machines.map(x => `<span class="badge${opts.runnable(x) ? '' : ' off'}">${esc(label(x))}</span>`).join('')}</span>
       <small>${esc(file)}${r.notes ? ` · ${esc(r.notes)}` : ''}</small></div>
-      ${ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
+      ${missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
+        : ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
         <button class="zxc-btn zxc-btn--primary small" data-play="${i}">Run</button></div>`
         : `<small class="det-later">${machines.includes('next') ? 'The Next is not in the browser yet' : 'Not in the browser yet'}</small>`}
     </li>`;
@@ -223,6 +244,20 @@ export async function showDetail(id) {
   };
   d.querySelector('[data-close]').addEventListener('click', closeDetail);
   d.querySelectorAll('[data-shot]').forEach(b => b.addEventListener('click', () => pick(Number(b.dataset.shot))));
+  d.querySelectorAll('[data-need]').forEach(b => b.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.addEventListener('change', async () => {
+      const picked = await Promise.all([...input.files].map(async f => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })));
+      const added = attachFiles(t, picked);
+      if (!added.length) { status(`Those are not the files ${t.meta.name} needs.`); return; }
+      status(`Added ${added.length} file${added.length === 1 ? '' : 's'} to ${t.meta.name}.`);
+      if (!t.screens.length) t.needsShots = true;
+      await save(t);
+    });
+    input.click();
+  }));
   d.querySelectorAll('[data-play]').forEach(b => b.addEventListener('click', () => {
     const i = Number(b.dataset.play);
     closeDetail();
@@ -376,20 +411,26 @@ export async function queueShots() {
 // it does not load on the first machine it lists (a 128K game offered to the
 // 48K), try the next kind of machine, and list the one that worked first.
 async function takeShots(t) {
-  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)));
-  const file = t.files.find(f => f.path === (run.file || (run.files || [])[0]));
+  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !runParts(t, r).missing.length);
+  const fresh0 = () => titleGet(t.id);
+  if (!run) {
+    const f = await fresh0();
+    if (f) { f.needsShots = false; await titlePut(f); }
+    return;
+  }
+  const { parts } = runParts(t, run);
   const tried = [];
   let keep = [], worked = null;
   for (const machine of run.machines.filter(m => opts.runnable(m))) {
     if (tried.length >= 3 || tried.some(m => family(m) === family(machine))) continue;
     tried.push(machine);
-    const r = await shootOn(machine, file, t.id);
+    const r = await shootOn(machine, parts, t.id);
     if (r.loaded && r.keep.length) { keep = r.keep; worked = machine; break; }
   }
   const fresh = await titleGet(t.id);
   if (!fresh) return;
   if (worked && worked !== run.machines[0]) {
-    const fr = fresh.meta.runs.find(r => r.file === run.file);
+    const fr = fresh.meta.runs.find(r => r.file === run.file && String(r.files) === String(run.files));
     if (fr) fr.machines = [worked, ...fr.machines.filter(m => m !== worked)];
   }
   for (const [i, sh] of keep.slice(0, 3).entries())
@@ -407,18 +448,17 @@ async function takeShots(t) {
 // 48K-only machines and 128K machines behave differently enough to retry.
 const family = m => m === 'zx48' ? '48' : ['zx128', 'plus2', 'plus2a', 'plus3'].includes(m) ? '128' : m;
 
-async function shootOn(machine, file, tag) {
+async function shootOn(machine, parts, tag) {
   const s = hidden();
   const shots = [];
   let loaded = false;
   try {
     await s.ready;
     await s.call({ cmd: 'create', id: machine, roms: 'roms.json' }, ['created']);
-    const bytes = file.bytes.slice().buffer;
-    await s.call({ cmd: 'load', name: file.path.replace(/^.*\//, ''), bytes, id: machine, autostart: true }, ['media']);
+    s.call({ cmd: 'loadSet', parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id: machine, autostart: true }, ['media']).catch(() => {});
     loaded = (await s.call({ cmd: 'capture', tag, after: [100, 500, 1500, 3000] }, ['captured'], d => { if (d.type === 'shot') shots.push(d); })).loaded;
   } catch (err) {
-    console.warn(`Screenshots of ${file.path} on ${machine}: ${err.message}`);
+    console.warn(`Screenshots of ${tag} on ${machine}: ${err.message}`);
   }
   const seen = new Set(), keep = [];
   for (const sh of shots) {
