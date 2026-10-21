@@ -10,6 +10,8 @@
  * classic machine, with its 8K esxDOS ROM from ZXM_IFACE_ROM.
  * ZXM_SPEC256=folder loads a Spec256 game (machine spec256): its graphics
  * files into the "gfx" slot, then its .sna.
+ * ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
+ * waits before typing. A machine whose ROMs are missing is skipped (exit 77).
  */
 #define _DEFAULT_SOURCE /* scandir */
 #include "../src/core/zxm.h"
@@ -102,7 +104,7 @@ static uint32_t run(zxm *m, int frames, uint32_t h)
 
 int main(int argc, char **argv)
 {
-    static uint8_t rom[4][0x4000];
+    static uint8_t rom[4][0x80000];
     const zxm_info *info;
     zxm_rom_set roms;
     zxm *m;
@@ -125,14 +127,19 @@ int main(int argc, char **argv)
     for (i = 0; info->roms[i]; i++) {
         char path[1024];
         FILE *fp;
+        size_t n;
         snprintf(path, sizeof path, "%s/%s", argv[1], info->roms[i]);
-        if (!(fp = fopen(path, "rb")) || fread(rom[i], 1, 0x4000, fp) != 0x4000) {
-            fprintf(stderr, "cannot read %s\n", path);
-            return 1;
+        if (!(fp = fopen(path, "rb"))) {
+            if (info->rom_optional >> i & 1)
+                continue;
+            /* The clones' ROMs are not in the repository: skip. */
+            printf("%s: skipped, no %s\n", info->id, path);
+            return 77;
         }
+        n = fread(rom[i], 1, sizeof rom[i], fp);
         fclose(fp);
         roms.rom[i] = rom[i];
-        roms.len[i] = 0x4000;
+        roms.len[i] = (uint32_t)n;
     }
     m = malloc(zxm_size(info));
     if (!m || zxm_create(m, info, &roms)) {
@@ -171,13 +178,28 @@ int main(int argc, char **argv)
         fprintf(stderr, "cannot load Spec256 game %s\n", getenv("ZXM_SPEC256"));
         return 1;
     }
+    if (getenv("ZXM_DISK")) {
+        zxm_media disk;
+        FILE *fp = fopen(getenv("ZXM_DISK"), "rb");
+        static uint8_t buf[1 << 20];
+        memset(&disk, 0, sizeof disk);
+        disk.kind = ZXM_MEDIA_BYTES;
+        disk.name = getenv("ZXM_DISK");
+        disk.data = buf;
+        disk.len = fp ? (uint32_t)fread(buf, 1, sizeof buf, fp) : 0;
+        if (!fp || zxm_media_insert(m, "beta.a", &disk)) {
+            fprintf(stderr, "cannot insert disk %s\n", getenv("ZXM_DISK"));
+            return 1;
+        }
+        fclose(fp);
+    }
     if (argc > 4) {
         /* "\n" in the text is Enter */
         char *t = argv[4], *r = t, *w = t;
         for (; *r; r++)
             *w++ = r[0] == '\\' && r[1] == 'n' ? (r++, '\n') : *r;
         *w = 0;
-        zxm_type(m, t, 0);
+        zxm_type(m, t, getenv("ZXM_DELAY") ? atoi(getenv("ZXM_DELAY")) : 0);
     }
 
     h0 = run(m, half, 2166136261u);

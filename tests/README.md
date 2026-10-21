@@ -8,6 +8,10 @@ Test programs are not kept in git; they are downloaded into `tests-data/`.
 - **SingleStepTests/z80**: `make sst` downloads each opcode's 1000 cases,
   checks registers, WZ, Q, memory and the exact T-state count, and deletes
   the file again. `KEEP=1` keeps the downloads.
+- **SingleStepTests/65x02** (the Oric's 6502): `make sst6502` downloads
+  each opcode's 10000 cases, checks registers, memory and every bus cycle
+  (address, data, read or write), and deletes the file again. `KEEP=1`
+  keeps the downloads.
 - **RAXOFT z80test 1.2a**: unpack the release zip into `tests-data/z80test/`, then
   `build/zxrun -m 48 -n -f 150000 -t 'j""<newline>' -s out.ppm tests-data/z80test/z80test-1.2a/z80full.tap`
   and look at the screenshot: it ends with "Result: all tests passed."
@@ -22,3 +26,12 @@ Test programs are not kept in git; they are downloaded into `tests-data/`.
   cp /tmp/zxuno/SD/ESXMMC.BIN tests-data/esxdos/esxmmc.bin
   cp -r /tmp/zxuno/SD/SYS /tmp/zxuno/SD/BIN tests-data/esxdos/
   ```
+- **SAM Coupé**: `make sam` fetches SAMDOS 2 (`samdos2.sbt`, from SimCoupé's
+  resources) into `tests-data/`, builds a boot disk with `tests/mkmgt.c`,
+  boots it, saves a file from BASIC and reads it back out of the image.
+- **Beta 128 / TR-DOS**: `make beta` (or `make beta CLONE_ROMS=dir`) builds
+  disks with python3, then on the Pentagon, Scorpion and ATM Turbo loads,
+  saves, catalogues and formats through the emulated WD1793 and checks what
+  ended up in the images. Needs the clones' ROMs (`roms/README.md`); a
+  machine without them is skipped. `make state` and `make wasmtest` take
+  `CLONE_ROMS` too.

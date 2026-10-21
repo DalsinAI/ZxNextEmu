@@ -22,6 +22,9 @@ void zx_tape_set_fast(zx_tape *t, int fast);
 
 /* Advance the pulse stream to absolute machine time `now` (T-states). */
 void zx_tape_advance(zx_tape *t, struct zx *m, uint64_t now);
+/* The same for any machine: advance to `now` in 3.5 MHz T-states and
+ * return the EAR level. */
+int zx_tape_ear(zx_tape *t, uint64_t now);
 /* Called at PC 0x0556 in the BASIC ROM. Returns 1 if it loaded a block. */
 int zx_tape_trap(zx_tape *t, struct zx *m);
 /* The program read the EAR port from RAM: a custom loader is running, so

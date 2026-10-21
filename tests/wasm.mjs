@@ -4,7 +4,9 @@
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
 // ZXM_SPEC256=folder loads a Spec256 game, as tests/zxm.c does.
 // ZXM_IFACE / ZXM_IFACE_ROM plug in an interface, as for tests/zxm.c.
-import { readFileSync, readdirSync } from 'node:fs';
+// ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
+// waits before typing.
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 
 const [wasmPath, romDir, id, framesArg, text] = process.argv.slice(2);
 const { instance } = await WebAssembly.instantiate(readFileSync(wasmPath), {});
@@ -30,14 +32,22 @@ const info = x.zxm_lookup(cstr(id));
 if (!info) { console.error(`unknown machine ${id}`); process.exit(2); }
 const fbW = dv().getUint16(info + 16, true), fbH = dv().getUint16(info + 18, true);
 const romNames = dv().getUint32(info + 28, true);
+const romsOptional = dv().getUint32(info + 40, true);
 
 // zxm_rom_set: four pointers, then four lengths.
 const roms = x.malloc(32);
 u8().fill(0, roms, roms + 32);
+const romOptional = dv().getUint32(info + 44, true);
 for (let i = 0; ; i++) {
   const np = dv().getUint32(romNames + 4 * i, true);
   if (!np) break;
-  const data = readFileSync(`${romDir}/${readCstr(np)}`);
+  const path = `${romDir}/${readCstr(np)}`;
+  if (!existsSync(path)) {
+    if (romOptional >> i & 1) continue;
+    console.log(`${id}: skipped, no ${path}`);
+    process.exit(77);
+  }
+  const data = readFileSync(path);
   const p = x.malloc(data.length);
   u8().set(data, p);
   dv().setUint32(roms + 4 * i, p, true);
@@ -54,7 +64,8 @@ function insert(slot, dir, name) {
   const md = x.malloc(24);
   u8().fill(0, md, md + 24);
   dv().setUint32(md, 1, true);               // ZXM_MEDIA_BYTES
-  dv().setUint32(md + 4, cstr(name), true);
+  const np = cstr(name);
+  dv().setUint32(md + 4, np, true);
   dv().setUint32(md + 8, p, true);
   dv().setUint32(md + 12, data.length, true);
   return x.zxm_media_insert(m, cstr(slot), md);
@@ -75,7 +86,21 @@ if (process.env.ZXM_IFACE) {
   dv().setUint32(ir + 16, data.length, true);
   if (x.zxm_attach(m, cstr(process.env.ZXM_IFACE), ir)) { console.error('cannot plug in'); process.exit(1); }
 }
-if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), 0);
+if (process.env.ZXM_DISK) {
+  // zxm_media: kind, name, data, len, blocks, serial
+  const data = readFileSync(process.env.ZXM_DISK);
+  const p = x.malloc(data.length || 1);
+  u8().set(data, p);
+  const media = x.malloc(24);
+  u8().fill(0, media, media + 24);
+  dv().setUint32(media, 1, true);
+  const np = cstr(process.env.ZXM_DISK);
+  dv().setUint32(media + 4, np, true);
+  dv().setUint32(media + 8, p, true);
+  dv().setUint32(media + 12, data.length, true);
+  if (x.zxm_media_insert(m, cstr('beta.a'), media)) { console.error('cannot insert disk'); process.exit(1); }
+}
+if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), Number(process.env.ZXM_DELAY || 0));
 
 const out = x.malloc(4);
 function fnv(h, bytes) {
