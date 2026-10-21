@@ -676,3 +676,12 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .det-rel small { color: var(--zxc-muted); }
 .det-same { margin: 0; padding: 0; list-style: none; }
 .det-same li { padding: 2px 0; }
+
+/* Favourites and each version's own pictures and rating */
+.lib-grid > li { position: relative; }
+.lib-fav { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 1px solid var(--zxc-line); border-radius: 50%; background: rgb(0 0 0 / 0.6); color: var(--zxc-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.lib-fav:hover, .lib-fav:focus-visible { color: var(--zxc-text, #fff); }
+.lib-fav.on { color: #f5c400; border-color: #f5c400; }
+.det-head .lib-fav { position: static; margin-left: auto; margin-right: var(--zxc-space-2); }
+.det-ver h4 small.ver-rating { display: inline; margin-left: 6px; font-weight: 400; color: var(--zxc-muted); }
+.ver-thumbs { margin: 6px 0 2px; }

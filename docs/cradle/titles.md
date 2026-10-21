@@ -113,6 +113,12 @@ the main version; a title with one version leaves `versions` out.
 ]
 ```
 
+Each version can have its own screenshots: put them in `screens/<version id>/`,
+or give the entry in `screens` a `version`. Screenshots straight in `screens/`
+belong to the title as a whole. The Cradle takes screenshots of each version
+that has none of its own. A version's ratings and reviews are the ones in
+`reviews.json` whose `version` names it, and its page shows its own rating.
+
 `language` is an ISO 639-1 code (`en`, `ru`, `pl`, `es`, `cs`...). A
 version that is not in English shows its language's flag in the library,
 beside the title on its card and on its own line on the title's page.
