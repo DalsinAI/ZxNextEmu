@@ -661,10 +661,11 @@ export function versionsOf(t) {
   (m.runs || []).forEach((r, i) => (out.find(v => v.id && v.id === r.version) || out[0]).runs.push({ run: r, i }));
   return out;
 }
-// A title that names no language anywhere is English, the format's default.
+// Each version's language, English (the format's default) where a version
+// names none; a version without its own language takes the title's.
 export const titleLangs = t => {
-  const l = [...new Set([t.meta.language, ...(t.meta.versions || []).map(v => v.language)].filter(Boolean))];
-  return l.length ? l : ['en'];
+  const vs = t.meta.versions?.length ? t.meta.versions : [{}];
+  return [...new Set(vs.map(v => v.language || t.meta.language || 'en'))];
 };
 
 // ---- ratings and reviews (reviews.json) --------------------------------------
