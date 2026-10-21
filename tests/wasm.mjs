@@ -2,7 +2,8 @@
 // prints the same line, so the two builds can be compared byte for byte.
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
-import { readFileSync } from 'node:fs';
+// ZXM_SPEC256=folder loads a Spec256 game, as tests/zxm.c does.
+import { readFileSync, readdirSync } from 'node:fs';
 
 const [wasmPath, romDir, id, framesArg, text] = process.argv.slice(2);
 const { instance } = await WebAssembly.instantiate(readFileSync(wasmPath), {});
@@ -44,6 +45,26 @@ for (let i = 0; ; i++) {
 
 const m = x.malloc(x.zxm_size(info));
 if (x.zxm_create(m, info, roms)) { console.error('cannot create'); process.exit(1); }
+// zxm_media: kind, name, data, len (then two device pointers).
+function insert(slot, dir, name) {
+  const data = readFileSync(`${dir}/${name}`);
+  const p = x.malloc(data.length || 1);
+  u8().set(data, p);
+  const md = x.malloc(24);
+  u8().fill(0, md, md + 24);
+  dv().setUint32(md, 1, true);               // ZXM_MEDIA_BYTES
+  dv().setUint32(md + 4, cstr(name), true);
+  dv().setUint32(md + 8, p, true);
+  dv().setUint32(md + 12, data.length, true);
+  return x.zxm_media_insert(m, cstr(slot), md);
+}
+const s256dir = process.env.ZXM_SPEC256;
+if (s256dir) {
+  const files = readdirSync(s256dir).filter(f => !f.startsWith('.')).sort();
+  const sna = files.find(f => /\.sna$/i.test(f));
+  for (const f of files) if (f !== sna) insert('gfx', s256dir, f);
+  if (!sna || insert('snapshot', s256dir, sna)) { console.error('cannot load Spec256 game'); process.exit(1); }
+}
 if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), 0);
 
 const out = x.malloc(4);
