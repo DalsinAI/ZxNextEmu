@@ -36,6 +36,7 @@
 | Media changer | The instance's media and which one is in each slot. |
 | State | A full snapshot of an instance (`.zxcs`), exact to the T-state. |
 | Patch | A `.zxpatch` archive queued against an instance and applied on its next verified restart. |
+| Recipe | A ready-made setup (machine, software to fetch, media layout, first boot) that makes a new instance. See [recipes.md](recipes.md). |
 | Field report | A `.zip` of everything needed to reproduce a problem with an instance. |
 
 ## Layers
