@@ -514,3 +514,4 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 }
 .det-need { display: grid; justify-items: end; gap: 4px; }
 .det-need small { color: var(--zxc-text-yellow); text-align: right; }
+#machine-pop { width: 360px; max-height: calc(100vh - 120px); overflow: auto; }

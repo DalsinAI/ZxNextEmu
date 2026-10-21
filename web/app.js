@@ -46,11 +46,11 @@ worker.onmessage = async e => {
   case 'ready':
     machines = msg.machines;
     buildMachineMenu();
-    if (!machines.some(mc => mc.id === machineId && mc.id !== 'next')) machineId = 'zx48';
+    if (!machines.some(mc => mc.id === machineId && mc.id !== 'next' && mc.available)) machineId = 'zx48';
     create(machineId);
     initLibraryView({
       machines: () => machines,
-      runnable: id => id !== 'next' && machines.some(mc => mc.id === id),
+      runnable: id => id !== 'next' && machines.some(mc => mc.id === id && mc.available),
       machineName: id => machines.find(mc => mc.id === id)?.name || id,
       run: runTitle,
       onCount: n => { $('lib-readout').textContent = n; },
@@ -146,6 +146,9 @@ function buildMachineMenu() {
     if (mc.id === 'next') {
       b.disabled = true;
       b.querySelector('small').textContent = 'SD card next';
+    } else if (!mc.available) {
+      b.disabled = true;
+      b.querySelector('small').textContent = 'ROM needed';
     } else {
       b.querySelector('small').textContent = mc.id;
     }
@@ -156,12 +159,14 @@ function buildMachineMenu() {
 
 // ---- screen -------------------------------------------------------------
 
-// The picture is 320x256 including the border (a Next frame is 640 wide with
-// half-width pixels and shows at the same size). Without the border it is
-// the 256x192 paper. Scale 0 fits the window, smoothing off, whole pixels.
+// Frames 512 or more wide have half-width pixels (the Next, SAM, MSX, ATM),
+// so they show at half their width in "base" pixels. Only a Spectrum-shaped
+// 320x256 frame has a border that can be hidden.
+const baseW = () => fbW >= 512 ? fbW / 2 : fbW;
 function view() {
-  const border = prefs.border !== false;
-  return border ? { x: 0, y: 0, w: 320, h: 256 } : { x: 32, y: 32, w: 256, h: 192 };
+  const spectrum = baseW() === 320 && fbH === 256;
+  if (spectrum && prefs.border === false) return { x: 32, y: 32, w: 256, h: 192 };
+  return { x: 0, y: 0, w: baseW(), h: fbH };
 }
 
 function fit() {
@@ -170,7 +175,7 @@ function fit() {
   const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 56;
   const best = Math.max(1, Math.min(Math.floor(maxW / v.w), Math.floor(maxH / v.h)));
   const s = prefs.scale ? Math.min(prefs.scale, best) : best;
-  canvas.width = v.w * (fbW / 320);
+  canvas.width = v.w * (fbW / baseW());
   canvas.height = v.h;
   canvas.style.width = `${v.w * s}px`;
   canvas.style.height = `${v.h * s}px`;
@@ -185,7 +190,7 @@ new ResizeObserver(fit).observe($('stage'));
 function draw() {
   if (pending) {
     frameCtx.putImageData(new ImageData(new Uint8ClampedArray(pending.pixels), pending.w, pending.h), 0, 0);
-    const v = view(), k = fbW / 320;
+    const v = view(), k = fbW / baseW();
     ctx.drawImage(frameCanvas, v.x * k, v.y, v.w * k, v.h, 0, 0, canvas.width, canvas.height);
     pending = null;
   }

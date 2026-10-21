@@ -52,7 +52,7 @@ function makeLut() {
   }
 }
 
-async function init(wasmUrl) {
+async function init(wasmUrl, romsUrl = 'roms.json') {
   const { instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), {});
   x = instance.exports;
   x._initialize?.();
@@ -68,19 +68,25 @@ async function init(wasmUrl) {
       if (!np) break;
       roms.push(readCstr(np));
     }
-    machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms });
+    machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms,
+      optional: dv().getUint32(p + 44, true) });
   }
+  // A machine is available when every ROM it must have is in roms.json.
+  try { await loadRoms(romsUrl); } catch { /* none: nothing is available */ }
+  for (const mc of machines) mc.available = !!romCache && mc.roms.every((r, k) => romCache[r] || (mc.optional >> k & 1));
   postMessage({ type: 'ready', machines });
 }
 
 // ROM images come in one JSON file, {"48.rom": "<base64>", ...}.
 let romCache = null;
+async function loadRoms(romsUrl) {
+  if (romCache) return;
+  const res = await fetch(romsUrl);
+  if (!res.ok) throw new Error(`The ROM file ${romsUrl} is missing.`);
+  romCache = await res.json();
+}
 async function romFile(romsUrl, name) {
-  if (!romCache) {
-    const res = await fetch(romsUrl);
-    if (!res.ok) throw new Error(`The ROM file ${romsUrl} is missing.`);
-    romCache = await res.json();
-  }
+  await loadRoms(romsUrl);
   const b64 = romCache[name];
   if (!b64) throw new Error(`The ROM file ${name} is missing.`);
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -220,7 +226,7 @@ function insert(slot, name, bytes) {
 }
 
 const handlers = {
-  async init(msg) { await init(msg.wasm); },
+  async init(msg) { await init(msg.wasm, msg.roms); },
   async create(msg) { await create(msg.id, msg.roms); },
   start, stop,
   step() { if (!running && m) frame(); },
