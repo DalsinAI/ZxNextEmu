@@ -317,7 +317,11 @@ static void reg_write(msx_ide *d, int r, uint8_t v)
     }
     if (r == 6)
         d->sel = (v >> 4) & 1;
-    else if (r == 7)
+    else if (r == 7 && v == 0x90) {             /* execute device diagnostic */
+        signature(&d->dev[0]);
+        signature(&d->dev[1]);
+        d->sel = 0;
+    } else if (r == 7)
         command(&d->dev[d->sel], v);
 }
 

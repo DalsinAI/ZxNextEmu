@@ -35,6 +35,10 @@ zx_blockdev *zx_bd_open(const char *path);
 zx_blockdev *zx_bd_open_image(const char *path);
 /* size_mb 0 picks a size with room to spare for the folder's contents. */
 zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb);
+/* The same as a FAT16 volume of at most 2 GB, for DOSes without FAT32
+ * (Nextor); and an image file, or a folder as FAT16. */
+zx_blockdev *zx_bd_open_folder16(const char *path, uint32_t size_mb);
+zx_blockdev *zx_bd_open16(const char *path);
 
 /* Flush and close (inline: the core uses it without the host-side code). */
 static inline void zx_bd_close(zx_blockdev *bd)

@@ -76,6 +76,7 @@ $(BUILD)/vfattool: tests/vfattool.c $(STORE_SRC) src/storage/blockdev.h | $(BUIL
 # Folder-backed SD cards (needs mtools and dosfstools).
 vfat: $(BUILD)/vfattool
 	tests/vfat.sh $(BUILD)/vfattool
+	tests/vfat.sh $(BUILD)/vfattool 16
 
 $(BUILD)/esp: tests/esp.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/esp.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC)
