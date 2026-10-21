@@ -156,14 +156,14 @@ static void envelope(sid_voice *v)
         v->hold_zero = 1;
 }
 
-/* All three envelopes are at rest at zero and the filter has settled:
- * the output is silence until a register is written. Not while a noise
+/* All three envelopes are held at zero and the filter has settled: the
+ * output is silence until a register is written. Not while a noise
  * register or a sync has to be clocked as well. */
 static int silent(const sid *s)
 {
     int i;
     for (i = 0; i < 3; i++)
-        if (s->v[i].env || s->v[i].state == ATTACK || (s->v[i].ctrl & 0x82))
+        if (s->v[i].env || !s->v[i].hold_zero || s->v[i].state == ATTACK || (s->v[i].ctrl & 0x82))
             return 0;
     return !s->vlp && !s->vbp && !s->vhp;
 }
@@ -172,9 +172,26 @@ void sid_run(sid *s, uint32_t clocks)
 {
     if (silent(s)) {
         int i;
-        for (i = 0; i < 3; i++)
-            if (!(s->v[i].ctrl & 8))
-                s->v[i].acc = (s->v[i].acc + s->v[i].freq * clocks) & 0xffffff;
+        for (i = 0; i < 3; i++) {
+            sid_voice *v = &s->v[i];
+            /* the envelope's rate counter keeps going: what envelope()
+             * would do clock by clock */
+            uint32_t p = v->state == DECAY_SUSTAIN ? rate_period[v->ad & 15] : rate_period[v->sr & 15];
+            uint32_t c = clocks;
+            if (c && v->rate_count + 1u >= p) {
+                c--;             /* at or past the period: back to 0 next clock */
+                v->rate_count = 0;
+            }
+            v->rate_count = (uint16_t)((v->rate_count + c) % p);
+            if (!(v->ctrl & 8)) {
+                /* and the noise register steps each time bit 19 rises */
+                int64_t a = (int64_t)v->acc - 0x80000, d = (int64_t)v->freq * clocks;
+                int64_t steps = ((a + d) >> 20) - (a >> 20);
+                while (steps-- > 0)
+                    v->lfsr = ((v->lfsr << 1) | (((v->lfsr >> 22) ^ (v->lfsr >> 17)) & 1)) & 0x7fffff;
+                v->acc = (uint32_t)((v->acc + d) & 0xffffff);
+            }
+        }
         s->acc_n += clocks;
         return;
     }
