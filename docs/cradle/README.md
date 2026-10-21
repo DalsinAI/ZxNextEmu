@@ -19,6 +19,7 @@ own. ZX Cradle is everything around it.
 | [machines.md](machines.md) | The machine catalogue and the order machines arrive in |
 | [storage.md](storage.md) | Media: a folder per SD card, Microdrive, disk and tape; overlays; the shared library; the Next system card |
 | [manifests.md](manifests.md) | On-disk formats: machine and instance manifests, state files, patches, field reports |
+| [recipes.md](recipes.md) | Recipes: ready-made machine setups that fetch their software and build their media; [SymbOS](recipes/symbos.md) on the Next and MSX2 |
 | [zxc-shell.md](zxc-shell.md) | The `zxc` command line and interactive shell |
 | [mcp.md](mcp.md) | The MCP server: tools and resources for driving instances from an AI agent |
 | [style-guide.md](style-guide.md) | Colour, type, layout and components for every ZX Cradle surface |
