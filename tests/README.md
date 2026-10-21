@@ -11,3 +11,6 @@ Test programs are not kept in git; they are downloaded into `tests-data/`.
 - **RAXOFT z80test 1.2a**: unpack the release zip into `tests-data/z80test/`, then
   `build/zxrun -m 48 -n -f 150000 -t 'j""<newline>' -s out.ppm tests-data/z80test/z80test-1.2a/z80full.tap`
   and look at the screenshot: it ends with "Result: all tests passed."
+- **SAM Coupé**: `make sam` fetches SAMDOS 2 (`samdos2.sbt`, from SimCoupé's
+  resources) into `tests-data/`, builds a boot disk with `tests/mkmgt.c`,
+  boots it, saves a file from BASIC and reads it back out of the image.
