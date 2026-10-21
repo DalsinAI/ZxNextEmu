@@ -470,6 +470,7 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
 #define ST_S256 32
 #define ST_SD_EXP0 8
 #define ST_SD_EXP1 16
+#define ST_EXP_SHIFT 8   /* the interface's feature bits, above the flags */
 
 /* Header, the zx struct, the Next's part or the interface's, the tape
  * position. The structs
@@ -510,6 +511,13 @@ int zx_state_save(const zx *m, void *buf, size_t len)
         h.flags |= ST_TAPE;
     if (m->s256)
         h.flags |= ST_S256;
+    if (m->exp) {
+        h.flags |= m->exp->features << ST_EXP_SHIFT;
+        if (m->exp->sd[0])
+            h.flags |= ST_SD_EXP0;
+        if (m->exp->sd[1])
+            h.flags |= ST_SD_EXP1;
+    }
     memcpy(p, &h, sizeof h);
     p += sizeof h;
     memcpy(p, m, sizeof *m);
@@ -551,6 +559,7 @@ int zx_state_load(zx *m, const void *buf, size_t len)
         || h.model != (uint32_t)m->model || h.zx_size != sizeof(zx)
         || h.nx_size != (m->model == ZX_NEXT ? nx_state_size(m) : 0)
         || h.tape_size != zx_tape_state_size() || h.exp_size != zx_exp_state_size(m)
+        || h.flags >> ST_EXP_SHIFT != (m->exp ? m->exp->features : 0)
         || len < zx_state_size(m) || !(h.flags & ST_S256) != !s256)
         return -1;
     p += sizeof h;
@@ -575,7 +584,9 @@ int zx_state_load(zx *m, const void *buf, size_t len)
         update_paging(m);
     }
     if (m->exp) {
-        zx_exp_state_load(m, p);
+        has_sd[0] = (h.flags & ST_SD_EXP0) != 0;
+        has_sd[1] = (h.flags & ST_SD_EXP1) != 0;
+        zx_exp_state_load(m, p, has_sd);
         p += h.exp_size;
     }
     if (m->tape && (h.flags & ST_TAPE))
