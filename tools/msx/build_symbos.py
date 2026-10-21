@@ -76,14 +76,22 @@ def claim(base):
         tid, n = '%s-%d' % (base, n), n + 1
     used.add(tid)
     tdir = os.path.join(OUT, tid)
+    try:   # the date an earlier build was first added stays
+        ADDED[tid] = json.load(open(os.path.join(tdir, 'title.json')))['added']
+    except (OSError, ValueError, KeyError):
+        pass
     shutil.rmtree(tdir, ignore_errors=True)
     os.makedirs(os.path.join(tdir, 'files'))
     open(os.path.join(tdir, MARK), 'w').close()
     return tid
 
 
+ADDED = {}
+
+
 def write(tid, meta, about):
     tdir = os.path.join(OUT, tid)
+    meta['added'] = ADDED.get(tid, meta.get('added'))
     with open(os.path.join(tdir, 'title.json'), 'w') as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     with open(os.path.join(tdir, 'about.md'), 'w') as f:
@@ -243,8 +251,11 @@ def skipped_here(d):
     return any(d == k or re.fullmatch(re.escape(k) + r'-\d+', d) for k in kept)
 
 
-for d in os.listdir(OUT):
-    if d not in used and not skipped_here(d) and os.path.exists(os.path.join(OUT, d, MARK)):
-        shutil.rmtree(os.path.join(OUT, d))
+for d in sorted(os.listdir(OUT)):
+    if d not in used and os.path.exists(os.path.join(OUT, d, MARK)):
+        if not skipped_here(d):
+            shutil.rmtree(os.path.join(OUT, d))
+        elif d not in index:   # kept from the last build: still in the library, so still listed
+            index.append(d)
 json.dump({'titles': index, 'skipped': skipped}, open(os.path.join(OUT, '..', 'symbos-index.json'), 'w'), indent=1)
 print('symbos written', len(index), 'skipped', len(skipped))
