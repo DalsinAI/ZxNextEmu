@@ -236,6 +236,14 @@ function insert(slot, name, bytes) {
   return r === 0;
 }
 
+// Starting a Beta disk, per machine, checked with a scratch copy of tests/beta.c that
+// types through zxm_type: | is cursor down, ~ extended mode, \x01 a pause of one key.
+const BETA_BOOT = {
+  scorpion: [450, '\n'],                    // menu: 128 TR-DOS
+  atm2: [160, '|\n'],                       // menu: TR-DOS 48
+  pentagon: [110, '|||\n' + '\x01'.repeat(10) + 't~l15616\n' + '\x01'.repeat(26) + 'r\n'],   // 48 BASIC, RANDOMIZE USR 15616, RUN
+};
+
 const handlers = {
   async init(msg) { await init(msg.wasm, msg.roms, msg.extra); },
   // ROMs the user added: {"name.rom": "<base64>"}.
@@ -287,7 +295,7 @@ const handlers = {
         }
         if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
         filled.add(p.slot);
-        if (/^(disk|cart)/.test(p.slot)) boots = true;
+        if (/^(disk|cart|beta)/.test(p.slot)) boots = true;
         postMessage({ type: 'media', slot: p.slot, name: p.name });
       }
     }
@@ -298,8 +306,13 @@ const handlers = {
         x.zxm_type(m, p, 90);
         x.free(p);
       } else if (msg.id === 'sam' && filled.has('disk.1')) {   // SAM BASIC starts a disk with BOOT
-        const p = cstr('\n\nboot\n');   // past the start-up screen, as tests/sam.c does
+        const p = cstr('\n\n' + '\x01'.repeat(5) + 'boot\n');   // past the start-up screen, as tests/sam.c does
         x.zxm_type(m, p, 150);
+        x.free(p);
+      } else if (filled.has('beta.a') && BETA_BOOT[msg.id]) {   // into TR-DOS, which runs "boot"
+        const [delay, keys] = BETA_BOOT[msg.id];
+        const p = cstr(keys);
+        x.zxm_type(m, p, delay);
         x.free(p);
       }
     }
