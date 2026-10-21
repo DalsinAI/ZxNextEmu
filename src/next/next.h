@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 #include "../zx/ay.h"
+#include "../zx/kmouse.h"
 
 struct zx;
 typedef struct nx_sd nx_sd;
@@ -212,9 +213,7 @@ typedef struct zxn {
     uint8_t flash;
     uint8_t keys_ext[2];      /* nr_b0, nr_b1 extended keys (active high) */
 
-    /* Kempston mouse */
-    uint8_t mouse_x, mouse_y, mouse_z, mouse_btn;
-    int mouse_fx, mouse_fy;   /* movement left over from DPI scaling */
+    zx_kmouse mouse;          /* Kempston mouse */
 
     /* audio */
     ay_chip ay[3];

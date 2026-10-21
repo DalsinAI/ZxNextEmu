@@ -3,6 +3,7 @@
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
 // ZXM_SPEC256=folder loads a Spec256 game, as tests/zxm.c does.
+// ZXM_IFACE / ZXM_IFACE_ROM plug in an interface, as for tests/zxm.c.
 import { readFileSync, readdirSync } from 'node:fs';
 
 const [wasmPath, romDir, id, framesArg, text] = process.argv.slice(2);
@@ -64,6 +65,15 @@ if (s256dir) {
   const sna = files.find(f => /\.sna$/i.test(f));
   for (const f of files) if (f !== sna) insert('gfx', s256dir, f);
   if (!sna || insert('snapshot', s256dir, sna)) { console.error('cannot load Spec256 game'); process.exit(1); }
+}
+if (process.env.ZXM_IFACE) {
+  const data = readFileSync(process.env.ZXM_IFACE_ROM);
+  const ir = x.malloc(32), p = x.malloc(data.length);
+  u8().fill(0, ir, ir + 32);
+  u8().set(data, p);
+  dv().setUint32(ir, p, true);
+  dv().setUint32(ir + 16, data.length, true);
+  if (x.zxm_attach(m, cstr(process.env.ZXM_IFACE), ir)) { console.error('cannot plug in'); process.exit(1); }
 }
 if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), 0);
 

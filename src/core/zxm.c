@@ -5,6 +5,7 @@
 #include "../zx/zx.h"
 #include "../zx/keys.h"
 #include "../zx/tape.h"
+#include "../zx/expansion.h"
 #include "../next/next.h"
 #include "../storage/blockdev.h"
 #include "../devices/serial.h"
@@ -12,8 +13,14 @@
 
 #include <string.h>
 
+#define MAX_SLOTS 12
+#define MAX_INPUTS 8
+
 struct zxm {
     const zxm_info *info;
+    const zxm_interface *iface;
+    zxm_slot slots[MAX_SLOTS];        /* the machine's and the interface's */
+    zxm_input_desc inputs[MAX_INPUTS];
     zx m;
     zx_typer typer;
     s256 *s256;                  /* the Spec256 machine's shadow CPUs */
@@ -63,6 +70,37 @@ static const zxm_input_desc inputs_next[] = {
     { NULL, 0 },
 };
 
+static const char *const roms_esxdos[] = { "esxmmc.bin", NULL };
+
+static const zxm_slot slots_divmmc[] = {
+    { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
+    { NULL, NULL, 0, NULL },
+};
+
+static const zxm_slot slots_mb03[] = {
+    { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
+    { "sd1", "Second SD card", ZXM_SLOT_SD, ".img .mmc" },
+    { NULL, NULL, 0, NULL },
+};
+
+static const zxm_input_desc inputs_none[] = {
+    { NULL, 0 },
+};
+
+static const zxm_input_desc inputs_mb03[] = {
+    { "mouse", ZXM_IN_MOUSE },
+    { NULL, 0 },
+};
+
+static const zxm_interface interfaces[] = {
+    { "divmmc", "divMMC", roms_esxdos, slots_divmmc, inputs_none },
+    { "mb03", "MB03+ Ultimate", roms_esxdos, slots_mb03, inputs_mb03 },
+};
+
+static const uint32_t interface_features[] = { ZX_EXP_DIVMMC, ZX_EXP_MB03 };
+
+#define INTERFACES ((int)(sizeof interfaces / sizeof interfaces[0]))
+
 #define CLASSIC(id, name, model, roms) \
     { id, name, 0, 0, ZX_SCREEN_W, ZX_SCREEN_H, ZXM_RGB333, ZX_AUDIO_RATE, roms, slots_classic, inputs_classic }
 
@@ -108,6 +146,62 @@ const zxm_info *zxm_lookup(const char *id)
     return NULL;
 }
 
+const zxm_interface *zxm_interface_at(int i)
+{
+    return i >= 0 && i < INTERFACES ? &interfaces[i] : NULL;
+}
+
+const zxm_interface *zxm_interface_lookup(const char *id)
+{
+    int i;
+    for (i = 0; i < INTERFACES; i++)
+        if (!strcmp(id, interfaces[i].id))
+            return &interfaces[i];
+    return NULL;
+}
+
+/* The instance's lists: the machine's entries, then the interface's. */
+static void build_lists(zxm *m)
+{
+    const zxm_slot *s;
+    const zxm_input_desc *in;
+    int n = 0;
+    for (s = m->info->slots; s->id && n < MAX_SLOTS - 1; s++)
+        m->slots[n++] = *s;
+    for (s = m->iface ? m->iface->slots : NULL; s && s->id && n < MAX_SLOTS - 1; s++)
+        m->slots[n++] = *s;
+    memset(&m->slots[n], 0, sizeof m->slots[n]);
+    n = 0;
+    for (in = m->info->inputs; in->id && n < MAX_INPUTS - 1; in++)
+        m->inputs[n++] = *in;
+    for (in = m->iface ? m->iface->inputs : NULL; in && in->id && n < MAX_INPUTS - 1; in++)
+        m->inputs[n++] = *in;
+    memset(&m->inputs[n], 0, sizeof m->inputs[n]);
+}
+
+int zxm_attach(zxm *m, const char *id, const zxm_rom_set *roms)
+{
+    const zxm_interface *f = zxm_interface_lookup(id);
+    if (!f || m->iface || !roms || !roms->rom[0])
+        return -1;
+    if (zx_exp_attach(&m->m, interface_features[f - interfaces], roms->rom[0], roms->len[0]))
+        return -1;
+    m->iface = f;
+    build_lists(m);
+    zx_reset(&m->m);
+    return 0;
+}
+
+const zxm_slot *zxm_slots(const zxm *m)
+{
+    return m->slots;
+}
+
+const zxm_input_desc *zxm_inputs(const zxm *m)
+{
+    return m->inputs;
+}
+
 size_t zxm_size(const zxm_info *info)
 {
     (void)info;
@@ -127,6 +221,8 @@ int zxm_create(zxm *m, const zxm_info *info, const zxm_rom_set *roms)
     }
     memset(&m->typer, 0, sizeof m->typer);
     m->info = info;
+    m->iface = NULL;
+    build_lists(m);
     m->s256 = NULL;
     if (info - machines == SPEC256) {
         m->s256 = s256_new(r[0], r[1], r[2]);
@@ -189,6 +285,7 @@ void zxm_reset(zxm *m, zxm_reset_kind kind)
             nx_power_on(z);
         } else {
             memset(z->ram, 0, sizeof z->ram);
+            zx_exp_power_on(z);
             zx_reset(z);
             if (m->s256)
                 s256_start(m->s256);
@@ -275,7 +372,7 @@ static int has_ext(const char *name, const char *ext)
 static const zxm_slot *find_slot(const zxm *m, const char *id)
 {
     const zxm_slot *s;
-    for (s = m->info->slots; s->id; s++)
+    for (s = m->slots; s->id; s++)
         if (!strcmp(s->id, id))
             return s;
     return NULL;
@@ -338,6 +435,8 @@ int zxm_media_eject(zxm *m, const char *slot)
         z->tape = NULL;
         return 0;
     case ZXM_SLOT_SD:
+        if (!z->next)
+            return zx_exp_attach_sd(z, slot[2] - '0', NULL);
         nx_sd_close(z->next->sd[slot[2] - '0']);
         z->next->sd[slot[2] - '0'] = NULL;
         return 0;

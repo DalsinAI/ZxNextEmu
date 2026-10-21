@@ -145,6 +145,29 @@ void   zxm_input(zxm *m, const zxm_input_event *ev);
 void   zxm_type(zxm *m, const char *text, int delay_frames);
 int    zxm_typing(const zxm *m);
 
+/* Interfaces for a classic machine's expansion port: "divmmc" (esxDOS and
+ * an SD card), "mb03" (the MB03+ Ultimate: divMMC with two SD cards,
+ * TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens). */
+typedef struct zxm_interface {
+    const char *id;
+    const char *name;
+    const char *const *roms;     /* ROM file names, NULL-terminated (8K each) */
+    const zxm_slot *slots;       /* the slots it adds, ending with a NULL id */
+    const zxm_input_desc *inputs;     /* the inputs it adds, ending with a NULL id */
+} zxm_interface;
+
+/* Interfaces: by id, or the i'th (NULL past the end). */
+const zxm_interface *zxm_interface_lookup(const char *id);
+const zxm_interface *zxm_interface_at(int i);
+/* Plug an interface in after zxm_create and before the first frame, with
+ * its ROMs in the order zxm_interface.roms names them. One per machine; it
+ * stays through resets. 0 on success, -1 for the Next or a bad ROM. */
+int    zxm_attach(zxm *m, const char *id, const zxm_rom_set *roms);
+/* This instance's media slots and inputs: the machine's, then its
+ * interface's. Use these rather than zxm_info's once an interface is in. */
+const zxm_slot *zxm_slots(const zxm *m);
+const zxm_input_desc *zxm_inputs(const zxm *m);
+
 /* 0 on success. A snapshot loads into the running machine and is not kept. */
 int    zxm_media_insert(zxm *m, const char *slot, const zxm_media *media);
 int    zxm_media_eject(zxm *m, const char *slot);
