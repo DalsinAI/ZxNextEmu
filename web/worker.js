@@ -244,6 +244,13 @@ const BETA_BOOT = {
   pentagon: [110, '|||\n' + '\x01'.repeat(10) + 't~l15616\n' + '\x01'.repeat(26) + 'r\n'],   // 48 BASIC, RANDOMIZE USR 15616, RUN
 };
 
+// Tape autostart on the clones whose start-up menu does not open on a tape loader: 128 BASIC, then
+// LOAD "" (checked with each machine's ROMs). Pentagon's menu is the 128's, so Enter works there.
+const TAPE_BOOT = {
+  scorpion: [450, '|\n' + '\x01'.repeat(10) + 'load ""\n'],   // menu: 128 BASIC
+  atm2: [160, '||\n' + '\x01'.repeat(10) + 'load ""\n'],      // menu: 128 BASIC
+};
+
 const handlers = {
   async init(msg) { await init(msg.wasm, msg.roms, msg.extra); },
   // ROMs the user added: {"name.rom": "<base64>"}.
@@ -263,10 +270,10 @@ const handlers = {
       if (!insert('tape', msg.name, bytes)) throw new Error(`${msg.name} is not a tape this machine can read.`);
       if (msg.autostart) {
         x.zxm_reset(m, 1);
-        const is48 = msg.id === 'zx48', sam = msg.id === 'sam';
+        const is48 = msg.id === 'zx48', sam = msg.id === 'sam', clone = TAPE_BOOT[msg.id];
         // 48K: LOAD "" (J then quotes); SAM: past the start-up screen, then LOAD ""; 128K: the menu's Tape Loader
-        const p = cstr(is48 ? 'j""\n' : sam ? '\n\n' + '\x01'.repeat(5) + 'load ""\n' : '\n');
-        x.zxm_type(m, p, is48 ? 120 : sam ? 150 : 90);
+        const p = cstr(is48 ? 'j""\n' : sam ? '\n\n' + '\x01'.repeat(5) + 'load ""\n' : clone ? clone[1] : '\n');
+        x.zxm_type(m, p, is48 ? 120 : sam ? 150 : clone ? clone[0] : 90);
         x.free(p);
       }
       postMessage({ type: 'media', slot: 'tape', name: msg.name });

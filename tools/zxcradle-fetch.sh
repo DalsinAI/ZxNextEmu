@@ -192,7 +192,7 @@ def safe_name(n):
 
 class Library:
     def __init__(self):
-        self.ids, self.names, self.used = {}, {}, set()
+        self.ids, self.names, self.used, self.zxart_names = {}, {}, set(), set()
         for t in os.listdir(TITLES):
             self.used.add(t)
             try:
@@ -202,6 +202,15 @@ class Library:
             for k, v in (j.get('ids') or {}).items():
                 self.ids[(k, str(v))] = t
             self.names.setdefault(norm(j.get('name')), t)
+            self.note_zxart(j)
+
+    def note_zxart(self, j):
+        # Spectrum titles filed from zxart.ee, by name: vtrd.in skips a full version zxart already has.
+        if (j.get('ids') or {}).get('zxart') and all(r.get('platform', 'zx-spectrum') == 'zx-spectrum' for r in j.get('runs') or []):
+            self.zxart_names.add(norm(j.get('name')))
+
+    def has_zxart_name(self, name):
+        return norm(name) in self.zxart_names
 
     def has(self, key, val):
         return (key, str(val)) in self.ids
@@ -252,6 +261,7 @@ class Library:
             for k, v in (t.get('ids') or {}).items():
                 self.ids[(k, str(v))] = sid
             self.names.setdefault(norm(t.get('name')), sid)
+            self.note_zxart(t)
 
 
     def link(self, sid, key, val):
@@ -638,6 +648,8 @@ def zxart(lib, section):
                 # A title whose release details did not arrive waits for the next run instead of being filed short.
                 todo = [p for p in todo if not lost & set(p.get('releasesIds', []))]
                 gone = zx_names(todo + list(rels.values()))
+                if gone:
+                    broken.append(f'{hw} author and publisher names near title {start}')
                 # Likewise a title whose author or publisher names did not arrive.
                 todo = [p for p in todo if not gone & (zx_people(p) | {x for i in p.get('releasesIds', []) if i in rels
                                                                          for x in zx_people(rels[i])})]
@@ -811,7 +823,7 @@ def vtrd(lib):
     say(f'vtrd.in: {len(rows)} titles')
     # A full version whose name zxart.ee already filed is skipped before LIMIT, so trial runs keep moving on.
     todo = [r for r in rows if not lib.has('vtrd', r[1])
-            and not (r[0] == 'full_ver' and lib.has_name(re.sub(r'\s*\(.*\)$', '', r[2]) or r[2]))]
+            and not (r[0] == 'full_ver' and lib.has_zxart_name(re.sub(r'\s*\(.*\)$', '', r[2]) or r[2]))]
 
     def one(row):
         t, href, name, auth, grp, rel = row
@@ -1097,6 +1109,8 @@ def onedrive(lib):
         os.replace(lf, lf + '.failed')
         say(f'  OneDrive importer stopped (code {rc}). The saved link may be wrong, so it has been set aside;\n'
             f'  run the "onedrive" section again and paste the share link (it starts https://1drv.ms/) when asked.')
+        lib.__init__()
+        raise RuntimeError(f'the OneDrive importer stopped with code {rc}')
     lib.__init__()
 
 
@@ -1412,10 +1426,9 @@ def reviews(lib):
             continue
         todo.append((t, ids))
     say(f'Ratings and reviews: {len(todo)} titles to check')
-    if LIMIT:
-        todo = todo[:LIMIT]
     prods, lost = {}, set()
-    zids = [str(i['zxart']) for _, i in todo if i.get('zxart')]
+    # A trial run fetches each title's zxart rating as it goes (below) rather than all of them up front.
+    zids = [] if LIMIT else [str(i['zxart']) for _, i in todo if i.get('zxart')]
     for k in range(0, len(zids), 50):
         try:
             j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:0/limit:50/filter:zxProdId={",".join(zids[k:k + 50])};')
@@ -1431,6 +1444,10 @@ def reviews(lib):
         t, ids = item
         ratings, revs = [], []
         if ids.get('zxart'):
+            if LIMIT and str(ids['zxart']) not in prods:   # an error here leaves the title for the next run
+                j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:0/limit:1/filter:zxProdId={ids["zxart"]};')
+                for p in j['responseData'].get('zxProd') or []:
+                    prods[str(p['id'])] = p
             a, b = zxart_reviews(ids['zxart'], prods.get(str(ids['zxart'])))
             ratings += a
             revs += b
@@ -1450,7 +1467,7 @@ def reviews(lib):
         os.replace(rf + '.part', rf)
         n = sum(1 for r in revs if r.get('translated'))
         return f'{t}: {len(ratings)} ratings, {len(revs)} reviews' + (f' ({n} translated)' if n else '')
-    batch(todo, one, 'reviews')
+    batch_or_trial(todo, one, 'reviews')
     if lost:  # the others were refreshed; this marks the section as stopped so a rerun fills the gap
         raise RuntimeError(f'zxart.ee ratings for {len(lost)} titles could not be fetched')
 
