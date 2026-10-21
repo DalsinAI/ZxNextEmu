@@ -3,7 +3,7 @@
 A ZX Spectrum Next (TBBlue) emulator that is timed to the T-state, with the
 classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3, the Russian
 clones Pentagon 128, Scorpion ZS-256 and ATM Turbo 2+ with their Beta 128
-disk drives, and the 6502-based Oric-1 and Oric Atmos.
+disk drives.
 
 Written in portable C99 and built with GCC 16.2.0-open3
 ([DalsinAI/openamigagcc](https://github.com/DalsinAI/openamigagcc)) for
@@ -131,7 +131,7 @@ next.
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
 up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-`scorpion`, `atm2`, `spec256`, `oric1`, `atmos`, `sam`, `msx1`, `msx1eu`, `msx2`,
+`scorpion`, `atm2`, `spec256`, `sam`, `msx1`, `msx1eu`, `msx2`,
 `msx2eu`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
@@ -144,15 +144,6 @@ wasi-libc's headers and malloc (about 150 KB, and it imports nothing).
 and a state save and load part way, and checks the two give exactly the same
 pictures and sound.
 
-### Oric-1 and Oric Atmos
-
-The Orics need their BASIC ROM, which is not in this repository because
-its redistribution rights are unclear: `basic10.rom` (Oric-1, BASIC 1.0,
-CRC32 `f18710b4`) and `basic11b.rom` (Atmos, BASIC 1.1, CRC32 `c3a92bef`),
-16K each. Tapes are `.tap` files. With those two ROMs, CLOAD reads a tape
-almost at once by handing bytes to the ROM's own routines; any other
-loader gets the real 2400/1200 Hz signal on the VIA's CB1.
-
 ### MSX1 and MSX2
 
 `msx1` and `msx2` are 60 Hz machines, `msx1eu` and `msx2eu` their 50 Hz
@@ -164,6 +155,7 @@ slot 3 expanded with the sub ROM, 64K of RAM (MSX1) or a 1 MB memory mapper
 including ASCII8, ASCII16, Konami and Konami SCC mappers, guessed or named
 in the file name as `[ascii8]` and so on), `disk0`, `disk1` (`.dsk`, with a
 16K WD2793 disk ROM as `disk.rom`) and `ide0`, `ide1` (hard disk images,
+or host folders shown as FAT16 volumes, since Nextor does not read FAT32;
 with a Sunrise IDE ROM such as Nextor as `disk.rom`).
 
 The VDP is a TMS9918 (TMS9929 at 50 Hz) on MSX1 and a V9938 with 128K of
@@ -185,12 +177,6 @@ video fetches, the floating bus, beeper and AY output are all computed at the
 exact T-state they happen, so multicolour effects, border stripes and
 timing-sensitive loaders behave as on the hardware.
 
-The 6502 core works the same way: every clock cycle is one bus access,
-dummy reads included, and the Oric's bus steps the VIA, the AY, the tape
-and the video ULA once per cycle. The ULA draws one 6-pixel cell each
-cycle, reading memory before the CPU's access, so serial attributes and
-mid-frame changes land where they do on the hardware.
-
 ## Status
 
 | Part | State |
@@ -201,14 +187,12 @@ mid-frame changes land where they do on the hardware.
 | Tape | TAP and TZX (all common blocks), instant ROM load + real-time pulses |
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
-| 6502 core | done: every opcode, documented and not, cycle by cycle on the bus; NMOS decimal mode; interrupt polling on the last cycle but one |
-| Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Checked with a test ROM; the real BASIC ROMs still to be tried. Microdisc not yet |
 | SAM Coupé | boots ROM 3.0 to BASIC and SAMDOS from disk. 512K paging, ASIC screen modes 1 to 4 with the CLUT, memory and ASIC port contention, line and frame interrupts, light pen and attribute ports, SAA1099, beeper, keyboard, two VL1772 drives in real time (MGT, SAD, DSK, EDSK), tape. Still to come: mouse, external memory, mode-change artefacts |
 | Beta 128 (TR-DOS) | WD1793 on raw tracks, timed to the byte (seeks, rotation, DRQ per byte); .trd images written back, .scl read; Pentagon, Scorpion, ATM |
 | Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |
 | ATM Turbo 2+ | 1024K, xxF7 windows, xx77 modes: EGA 320x200x16, hi-res multicolour, 80-column text, 7 MHz turbo, palette. The text font is the ROM's character set, not the real chargen |
 | Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
-| SD card | a host folder seen as a live FAT32 card, or an image file |
+| SD card | a host folder seen as a live FAT32 card (FAT16 for MSX hard disks), or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
@@ -226,8 +210,6 @@ mid-frame changes land where they do on the hardware.
 | --- | --- |
 | ZEXDOC, ZEXALL | all pass (`make test`) |
 | SingleStepTests/z80, every opcode: registers, memory, exact T-states | all pass (`make sst`) |
-| SingleStepTests/65x02 (6502), every opcode: registers, memory, every bus cycle | all pass (`make sst6502`) |
-| Oric test ROM (`tests/oric/testrom.s`): VIA T1 period, ULA attributes and HIRES, keyboard, AY, a tape read back through CB1 | all pass (`make oric`, needs xa65) |
 | Folder-backed SD card: fsck.fat, then write back changes made with mtools | all pass (`make vfat`) |
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |

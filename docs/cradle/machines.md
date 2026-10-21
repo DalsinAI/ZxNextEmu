@@ -55,15 +55,6 @@ interface's slots and inputs to the instance):
 | `kc85` | Robotron KC 85/2 to 85/4 | |
 | `cpm` | Generic CP/M 2.2 machine | no real hardware: a terminal, disks and a clock, for running CP/M software and tests |
 
-## Beyond the Z80
-
-The core has a cycle-exact 6502 too (`src/m6502`), so machines built
-around it can join.
-
-| Id | Machine | Notes |
-| --- | --- | --- |
-| `oric1`, `atmos` | Tangerine Oric-1, Oric Atmos | in the core: ULA, 6522 VIA, AY through the VIA, `.tap`; Microdisc to come. ROMs supplied by the user |
-
 Machines where the Z80 sits beside a different main CPU (the Sega Mega
 Drive's sound Z80 next to its 68000, a Z80 SoftCard in an Apple II) are out of scope until the host can run more than one core per
 instance.

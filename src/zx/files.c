@@ -9,16 +9,20 @@
 #include "../next/next.h"
 #include "../storage/blockdev.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
-static int load_rom(uint8_t *dst, const char *dir, const char *name)
+/* 1 when an optional ROM is not there, -1 on an error. */
+static int load_rom(uint8_t *dst, const char *dir, const char *name, int optional)
 {
     char path[1024];
     FILE *fp;
     size_t n;
     snprintf(path, sizeof path, "%s/%s", dir, name);
     fp = fopen(path, "rb");
+    if (!fp && optional && errno == ENOENT)
+        return 1;
     if (!fp) {
         fprintf(stderr, "zx: cannot open ROM %s\n", path);
         return -1;
@@ -41,9 +45,11 @@ int zx_init(zx *m, zx_model model, const char *roms_dir)
     for (i = 0; i < 4; i++) {
         if ((name = zx_rom_file(model, i)) == NULL)
             continue;
-        if (load_rom(rom[i], roms_dir, name))
-            return -1;
-        roms[i] = rom[i];
+        switch (load_rom(rom[i], roms_dir, name, zx_rom_optional(model, i))) {
+        case 0: roms[i] = rom[i]; break;
+        case 1: break;             /* e.g. the Pentagon without TR-DOS */
+        default: return -1;
+        }
     }
     return zx_create(m, model, roms);
 }

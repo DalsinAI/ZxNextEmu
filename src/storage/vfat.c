@@ -18,6 +18,11 @@
  * touched. The disk has an MBR with one FAT32 partition at sector 2048,
  * like a card formatted by a PC, which is what the Next boot ROM and
  * NextZXOS expect.
+ *
+ * For systems that do not read FAT32 (Nextor on the MSX) the volume can
+ * be FAT16 instead, up to 2 GB. The layout is the same except that the
+ * root directory is the fixed area after the FATs rather than a cluster
+ * chain; a cluster number of 0 stands for it, as it does in ".." entries.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "blockdev.h"
@@ -80,6 +85,10 @@ typedef struct vfat {
     uint32_t fp_node;           /* its vnode + 1 */
     uint32_t next_clus;         /* layout cursor */
     int pending, idle, full;
+    int fat16;
+    uint32_t root_sectors;      /* FAT16: the fixed root directory */
+    uint8_t *rootdir;
+    const char *label;          /* 11 characters */
 } vfat;
 
 /* ---- little helpers ------------------------------------------------- */
@@ -540,9 +549,16 @@ static uint32_t build_dir(vfat *v, const char *rel, uint32_t parent, int depth)
     for (i = 0; i < n; i++)
         if (ln[i].nlfn >= 0)
             slots += 1 + ln[i].nlfn;
-    ncl = (uint32_t)(((uint64_t)slots * 32 + v->csize - 1) / v->csize);
-    first = alloc_run(v, (uint64_t)ncl * v->csize);
-    dir = first ? calloc(ncl, v->csize) : NULL;
+    if (v->fat16 && !*rel) {
+        ncl = first = 0;
+        dir = (uint64_t)slots * 32 <= (uint64_t)v->root_sectors * ZX_BLOCK ? v->rootdir : NULL;
+        if (!dir)
+            v->full = 1;
+    } else {
+        ncl = (uint32_t)(((uint64_t)slots * 32 + v->csize - 1) / v->csize);
+        first = alloc_run(v, (uint64_t)ncl * v->csize);
+        dir = first ? calloc(ncl, v->csize) : NULL;
+    }
     if (!dir) {
         free(ln);
         free_hents(e, n);
@@ -560,7 +576,7 @@ static uint32_t build_dir(vfat *v, const char *rel, uint32_t parent, int depth)
         put_entry(p + 32, dotdot, 0x10, 0, parent, 0, time(NULL));
         p += 64;
     } else {
-        put_entry(p, (const uint8_t *)"NEXT       ", 0x08, 0, 0, 0, time(NULL));
+        put_entry(p, (const uint8_t *)v->label, 0x08, 0, 0, 0, time(NULL));
         p += 32;
     }
     for (i = 0; i < n; i++) {
@@ -615,7 +631,8 @@ static uint32_t build_dir(vfat *v, const char *rel, uint32_t parent, int depth)
             memcpy(b, dir + (size_t)c * v->csize, v->csize);
         v->buf[first + c] = b;
     }
-    free(dir);
+    if (dir != v->rootdir)
+        free(dir);
     free(ln);
     free_hents(e, n);
     free(abs);
@@ -634,7 +651,7 @@ static void make_boot(vfat *v)
     v->mbr[446 + 1] = 0xFE;
     v->mbr[446 + 2] = 0xFF;
     v->mbr[446 + 3] = 0xFF;
-    v->mbr[446 + 4] = 0x0C;                     /* FAT32 with LBA */
+    v->mbr[446 + 4] = v->fat16 ? 0x06 : 0x0C;   /* FAT16 over 32 MB, FAT32 with LBA */
     v->mbr[446 + 5] = 0xFE;
     v->mbr[446 + 6] = 0xFF;
     v->mbr[446 + 7] = 0xFF;
@@ -655,6 +672,19 @@ static void make_boot(vfat *v)
     put16(b + 26, 255);
     put32(b + 28, PART_LBA);
     put32(b + 32, (uint32_t)v->part_sectors);
+    if (v->fat16) {
+        b[1] = 0x3C;
+        put16(b + 17, v->root_sectors * (ZX_BLOCK / 32));
+        put16(b + 22, v->fatsz);
+        b[36] = 0x80;
+        b[38] = 0x29;
+        put32(b + 39, 0x5A584E58);
+        memcpy(b + 43, v->label, 11);
+        memcpy(b + 54, "FAT16   ", 8);
+        b[510] = 0x55;
+        b[511] = 0xAA;
+        return;
+    }
     put32(b + 36, v->fatsz);
     put32(b + 44, 2);                           /* root directory cluster */
     put16(b + 48, 1);                           /* FSInfo sector */
@@ -662,7 +692,7 @@ static void make_boot(vfat *v)
     b[64] = 0x80;
     b[66] = 0x29;
     put32(b + 67, 0x5A584E58);
-    memcpy(b + 71, "NEXT       ", 11);
+    memcpy(b + 71, v->label, 11);
     memcpy(b + 82, "FAT32   ", 8);
     b[510] = 0x55;
     b[511] = 0xAA;
@@ -707,10 +737,16 @@ static int vf_read(zx_blockdev *bd, uint64_t lba, uint8_t *buf)
     r = lba - PART_LBA;
     if (r < RESERVED) {
         memcpy(buf, v->rsv + r * ZX_BLOCK, ZX_BLOCK);
-    } else if (r < v->data_start) {
+    } else if (r < RESERVED + 2ull * v->fatsz && v->fat16) {
+        uint32_t f = (uint32_t)((r - RESERVED) % v->fatsz) * (ZX_BLOCK / 2), i;
+        for (i = 0; i < ZX_BLOCK / 2; i++)
+            put16(buf + i * 2, f + i < v->nclus + 2 ? v->fat[f + i] & 0xFFFF : 0);
+    } else if (r < RESERVED + 2ull * v->fatsz) {
         uint32_t f = (uint32_t)((r - RESERVED) % v->fatsz) * (ZX_BLOCK / 4), i;
         for (i = 0; i < ZX_BLOCK / 4; i++)
             put32(buf + i * 4, f + i < v->nclus + 2 ? v->fat[f + i] : 0);
+    } else if (r < v->data_start) {
+        memcpy(buf, v->rootdir + (r - RESERVED - 2ull * v->fatsz) * ZX_BLOCK, ZX_BLOCK);
     } else {
         uint64_t d = r - v->data_start;
         cluster_read(v, (uint32_t)(d / v->spc) + 2, (uint32_t)(d % v->spc) * ZX_BLOCK, buf, ZX_BLOCK);
@@ -734,11 +770,20 @@ static int vf_write(zx_blockdev *bd, uint64_t lba, const uint8_t *buf)
     r = lba - PART_LBA;
     if (r < RESERVED) {
         memcpy(v->rsv + r * ZX_BLOCK, buf, ZX_BLOCK);
-    } else if (r < v->data_start) {
+    } else if (r < RESERVED + 2ull * v->fatsz && v->fat16) {
+        uint32_t f = (uint32_t)((r - RESERVED) % v->fatsz) * (ZX_BLOCK / 2), i;
+        for (i = 0; i < ZX_BLOCK / 2; i++)
+            if (f + i < v->nclus + 2) {
+                uint32_t n = get16(buf + i * 2);
+                v->fat[f + i] = n >= 0xFFF7 ? n | 0x0FFF0000 : n;
+            }
+    } else if (r < RESERVED + 2ull * v->fatsz) {
         uint32_t f = (uint32_t)((r - RESERVED) % v->fatsz) * (ZX_BLOCK / 4), i;
         for (i = 0; i < ZX_BLOCK / 4; i++)
             if (f + i < v->nclus + 2)
                 v->fat[f + i] = get32(buf + i * 4) & FAT_MASK;
+    } else if (r < v->data_start) {
+        memcpy(v->rootdir + (r - RESERVED - 2ull * v->fatsz) * ZX_BLOCK, buf, ZX_BLOCK);
     } else {
         uint64_t d = r - v->data_start;
         uint32_t c = (uint32_t)(d / v->spc) + 2;
@@ -797,13 +842,18 @@ static void parse_dir(vfat *v, uint32_t first, const char *rel, int depth, glist
     int lfn_parts = 0, lfn_seen = 0;
     uint8_t lfn_sum = 0;
     uint32_t c = first, steps = 0, start = g->n, i;
+    int root = v->fat16 && !first;
 
     if (!cl)
         return;
-    while (c && steps++ <= v->nclus) {
-        for (i = 0; i < v->csize; i += 32) {
+    while ((c || root) && steps++ <= v->nclus) {
+        uint32_t span = root ? v->root_sectors * ZX_BLOCK : v->csize;
+        for (i = 0; i < span; i += 32) {
             uint8_t *e;
-            cluster_read(v, c, i, cl, 32);
+            if (root)
+                memcpy(cl, v->rootdir + i, 32);
+            else
+                cluster_read(v, c, i, cl, 32);
             e = cl;
             if (e[0] == 0)
                 goto done;
@@ -878,6 +928,8 @@ static void parse_dir(vfat *v, uint32_t first, const char *rel, int depth, glist
                 }
             }
         }
+        if (root)
+            break;
         c = fat_next(v, c);
     }
 done:
@@ -957,7 +1009,7 @@ static int vf_flush(zx_blockdev *bd)
     if (!v->pending)
         return 0;
     host_close(v);
-    parse_dir(v, 2, "", 0, &g);
+    parse_dir(v, v->fat16 ? 0 : 2, "", 0, &g);
 
     order = malloc((v->nnode + 1) * sizeof *order);
     tmp = calloc(g.n + 1, sizeof *tmp);
@@ -1158,15 +1210,30 @@ static void vf_close(zx_blockdev *bd)
     free(v->own);
     free(v->idx);
     free(v->fat);
+    free(v->rootdir);
     free(v->root);
     free(v);
 }
 
-zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb)
+/* Root directory entries a FAT16 volume needs for the folder's top level,
+ * with long names (counted generously), at least the usual 512. */
+static uint32_t root_entries(const char *path)
+{
+    int n, i;
+    hent *e = list_host(path, &n);
+    uint64_t need = 2;
+    for (i = 0; i < n; i++)
+        need += 1 + (strlen(e[i].name) + 12) / 13;
+    free_hents(e, n);
+    need = (need + 15) & ~15ull;
+    return need < 512 ? 512 : need > 0xFFF0 ? 0xFFF0 : (uint32_t)need;
+}
+
+static zx_blockdev *open_folder(const char *path, uint32_t size_mb, int fat16)
 {
     vfat *v;
     struct stat st;
-    uint64_t bytes = 0, count = 0, sectors, total;
+    uint64_t bytes = 0, count = 0, sectors, total, max;
     size_t len;
 
     if (stat(path, &st) || !S_ISDIR(st.st_mode))
@@ -1179,29 +1246,43 @@ zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb)
     while (len > 1 && v->root[len - 1] == '/')
         v->root[--len] = 0;
 
-    /* size: what was asked, else at least 2 GB with room to grow */
+    v->fat16 = fat16;
+    v->label = fat16 ? "ZXCRADLE   " : "NEXT       ";
+
+    /* size: what was asked, else at least 2 GB (FAT16: 1 GB) with room to
+       grow. FAT16 stops short of 2 GB: 65524 clusters of 32K at most. */
     measure(path, 0, &bytes, &count);
     if (size_mb)
         total = (uint64_t)size_mb << 20;
     else {
-        total = (uint64_t)2 << 30;
-        if (bytes * 2 + ((uint64_t)1 << 30) > total)
-            total = bytes * 2 + ((uint64_t)1 << 30);
+        total = (uint64_t)(fat16 ? 1 : 2) << 30;
+        if (bytes * 2 + ((uint64_t)(fat16 ? 256 : 1024) << 20) > total)
+            total = bytes * 2 + ((uint64_t)(fat16 ? 256 : 1024) << 20);
     }
-    if (total > (uint64_t)32 << 30)
-        total = (uint64_t)32 << 30;
-    for (v->spc = 8; v->spc < 64 && total / ((uint64_t)v->spc * ZX_BLOCK) > (1u << 20); v->spc *= 2)
-        ;
+    max = fat16 ? (uint64_t)2047 << 20 : (uint64_t)32 << 30;
+    if (total > max)
+        total = max;
+    if (total < (uint64_t)(fat16 ? 34 : 64) << 20)
+        total = (uint64_t)(fat16 ? 34 : 64) << 20;
+    if (fat16)
+        for (v->spc = 1; v->spc < 64 && total / ((uint64_t)v->spc * ZX_BLOCK) > 65000; v->spc *= 2)
+            ;
+    else
+        for (v->spc = 8; v->spc < 64 && total / ((uint64_t)v->spc * ZX_BLOCK) > (1u << 20); v->spc *= 2)
+            ;
     v->csize = v->spc * ZX_BLOCK;
+    v->root_sectors = fat16 ? root_entries(path) * 32 / ZX_BLOCK : 0;
     sectors = total / ZX_BLOCK - PART_LBA;
-    v->nclus = (uint32_t)((sectors - RESERVED) / v->spc);
+    v->nclus = (uint32_t)((sectors - RESERVED - v->root_sectors) / v->spc);
+    if (fat16 && v->nclus > 65524)
+        v->nclus = 65524;
     for (;;) {
-        v->fatsz = (uint32_t)(((uint64_t)v->nclus + 2) * 4 + ZX_BLOCK - 1) / ZX_BLOCK;
-        if (RESERVED + 2ull * v->fatsz + (uint64_t)v->nclus * v->spc <= sectors)
+        v->fatsz = (uint32_t)(((uint64_t)v->nclus + 2) * (fat16 ? 2 : 4) + ZX_BLOCK - 1) / ZX_BLOCK;
+        if (RESERVED + 2ull * v->fatsz + v->root_sectors + (uint64_t)v->nclus * v->spc <= sectors)
             break;
         v->nclus--;
     }
-    v->data_start = RESERVED + 2 * v->fatsz;
+    v->data_start = RESERVED + 2 * v->fatsz + v->root_sectors;
     v->part_sectors = v->data_start + (uint64_t)v->nclus * v->spc;
     v->bd.blocks = PART_LBA + v->part_sectors;
 
@@ -1210,14 +1291,15 @@ zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb)
     v->dirty = calloc(v->nclus + 2, 1);
     v->own = calloc(v->nclus + 2, sizeof *v->own);
     v->idx = calloc(v->nclus + 2, sizeof *v->idx);
-    if (!v->root || !v->fat || !v->buf || !v->dirty || !v->own || !v->idx) {
+    v->rootdir = fat16 ? calloc(v->root_sectors, ZX_BLOCK) : NULL;
+    if (!v->root || !v->fat || !v->buf || !v->dirty || !v->own || !v->idx || (fat16 && !v->rootdir)) {
         vf_close(&v->bd);
         return NULL;
     }
     v->fat[0] = 0x0FFFFFF8;
     v->fat[1] = END_CHAIN;
     v->next_clus = 2;
-    if (build_dir(v, "", 0, 0) != 2 || v->full) {
+    if (build_dir(v, "", 0, 0) != (fat16 ? 0u : 2u) || v->full) {
         fprintf(stderr, "vfat: %s does not fit in a %lu MB volume\n", path,
                 (unsigned long)(total >> 20));
         vf_close(&v->bd);
@@ -1231,4 +1313,14 @@ zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb)
     v->bd.flush = vf_flush;
     v->bd.close = vf_close;
     return &v->bd;
+}
+
+zx_blockdev *zx_bd_open_folder(const char *path, uint32_t size_mb)
+{
+    return open_folder(path, size_mb, 0);
+}
+
+zx_blockdev *zx_bd_open_folder16(const char *path, uint32_t size_mb)
+{
+    return open_folder(path, size_mb, 1);
 }
