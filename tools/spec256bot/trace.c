@@ -2,11 +2,12 @@
  * s256trace: run a 48K game with the Spec256 tracer and report which bytes
  * of memory are drawn to the screen, in what colours and at what width.
  *
- *   s256trace [-r romdir] [-f frames] [-k seed] [-s every] [-g dir] game.sna out-dir
+ *   s256trace [-r romdir] [-f frames] [-k seed] [-s every] [-g dir] game.sna|game.z80 out-dir
  *
  * The game runs for `frames` frames (default 6000, two minutes) with keys
  * and the Kempston joystick pressed at random. out-dir gets:
  *
+ *   start.sna    the game as a 48K .sna, from a .z80 (Spec256 needs .sna)
  *   mem.bin      the 64K memory map at the start (ROM and RAM)
  *   trace.json   one entry per drawn byte (see below)
  *   shotNNNN.ppm a screenshot every `every` frames (default 1000; 0 = none)
@@ -20,7 +21,7 @@
  * follows the value through registers, the stack and buffers). Each entry:
  *
  *   {"a": address, "n": times drawn, "ink": [16 counts], "paper": [16],
- *    "left": count, "up": count, "stride": {"d": count}}
+ *    "left": count, "up": count, "stride": {"d": count}, "across": {"d": count}}
  *
  * ink and paper count the attribute of the cell at the end of the frame it
  * was drawn in (colour + 8 for bright). stride counts, for each distance d
@@ -28,7 +29,9 @@
  * above or below: d is the sprite's width in bytes. left counts how often
  * the byte before it was drawn just to its left (0 for a row's first byte),
  * up how many of the stride counts were for a row above (sprites stored
- * bottom row first).
+ * bottom row first). across counts, for each distance d, how often the byte
+ * d further on was drawn just to the right: 1 for sprites stored row by
+ * row, the height for sprites stored a column at a time.
  */
 #define _DEFAULT_SOURCE
 #include "../../src/zx/zx.h"
@@ -36,11 +39,13 @@
 #include "../../src/frontend/media.h"
 
 #include <dirent.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAX_STRIDE 16
+#define MAX_ACROSS 64
 #define RING 64
 #define FRAME_MAX 65536
 
@@ -48,6 +53,7 @@ typedef struct {
     uint32_t n, exact, left, up;
     uint32_t ink[16], paper[16];
     uint32_t stride[MAX_STRIDE + 1];
+    uint32_t across[MAX_ACROSS + 1];
 } src_info;
 
 typedef struct {
@@ -83,12 +89,17 @@ static void on_write(void *user, uint16_t addr, uint8_t v, uint16_t src)
             break;
         }
     }
-    /* Not the first byte of a row: the byte before it was drawn to its left. */
-    for (i = 0; i < RING && x > 0; i++)
-        if (t->ring[i].addr == addr - 1 && t->ring[i].src == src - 1) {
-            t->info[src].left++;
+    /* Drawn just right of a byte d before it: d is 1 within a row (so this
+     * is not a row's first byte), the height for column-stored sprites. */
+    for (i = 0; i < RING && x > 0; i++) {
+        int d = src - t->ring[i].src;
+        if (t->ring[i].addr == addr - 1 && d > 0 && d <= MAX_ACROSS) {
+            t->info[t->ring[i].src].across[d]++;
+            if (d == 1)
+                t->info[src].left++;
             break;
         }
+    }
     t->ring[t->ring_pos].addr = addr;
     t->ring[t->ring_pos].src = src;
     t->ring_pos = (t->ring_pos + 1) % RING;
@@ -135,12 +146,71 @@ static void save_ppm(const zx *m, const char *path)
     fclose(fp);
 }
 
-/* Keys a game is likely to use: Q A O P M Z X, space, enter, 0-9. */
+/* Keys a game is likely to use: Q A O P M Z X, space, enter, 0-9. One press
+ * in four is any key instead (Y or N to a question, a game's own keys). */
 static const unsigned char keys[][2] = {
     {2, 0}, {1, 0}, {5, 1}, {5, 0}, {7, 2}, {0, 1}, {0, 2}, {7, 0}, {6, 0},
     {4, 0}, {3, 0}, {3, 1}, {3, 2}, {3, 3}, {3, 4}, {4, 4}, {4, 3}, {4, 2}, {4, 1},
 };
 #define NKEYS (sizeof keys / sizeof keys[0])
+
+static unsigned pick_key(void)
+{
+    if (rand() % 4)
+        return (unsigned)rand() % NKEYS;
+    return NKEYS + (unsigned)rand() % 40;       /* row * 5 + bit */
+}
+
+static void press(zx *m, unsigned k, int down)
+{
+    if (k < NKEYS)
+        zx_key(m, keys[k][0], keys[k][1], down);
+    else
+        zx_key(m, (int)(k - NKEYS) / 5, (int)(k - NKEYS) % 5, down);
+}
+
+/* The machine as a 48K .sna (PC pushed on the stack, as the format has it). */
+static int save_sna(zx *m, const char *path)
+{
+    z80 *c = &m->cpu;
+    uint8_t h[27];
+    uint16_t sp = (uint16_t)(c->sp - 2);
+    int i;
+    FILE *fp;
+    if (sp < 0x4000)
+        return -1;
+    h[0] = c->i;
+    h[1] = c->l_; h[2] = c->h_; h[3] = c->e_; h[4] = c->d_;
+    h[5] = c->c_; h[6] = c->b_; h[7] = c->f_; h[8] = c->a_;
+    h[9] = c->l; h[10] = c->h; h[11] = c->e; h[12] = c->d;
+    h[13] = c->c; h[14] = c->b;
+    h[15] = (uint8_t)c->iy; h[16] = (uint8_t)(c->iy >> 8);
+    h[17] = (uint8_t)c->ix; h[18] = (uint8_t)(c->ix >> 8);
+    h[19] = (uint8_t)(c->iff2 << 2);
+    h[20] = c->r;
+    h[21] = c->f; h[22] = c->a;
+    h[23] = (uint8_t)sp; h[24] = (uint8_t)(sp >> 8);
+    h[25] = c->im;
+    h[26] = m->border;
+    if (!(fp = fopen(path, "wb")))
+        return -1;
+    fwrite(h, 1, sizeof h, fp);
+    for (i = 0x4000; i < 0x10000; i++) {
+        uint8_t v = zx_peek(m, (uint16_t)i);
+        if (i == sp)
+            v = (uint8_t)c->pc;
+        else if (i == sp + 1)
+            v = (uint8_t)(c->pc >> 8);
+        fputc(v, fp);
+    }
+    return fclose(fp);
+}
+
+static int is_z80(const char *name)
+{
+    size_t n = strlen(name);
+    return n > 4 && (!strcmp(name + n - 4, ".z80") || !strcmp(name + n - 4, ".Z80"));
+}
 
 int main(int argc, char **argv)
 {
@@ -168,9 +238,10 @@ int main(int argc, char **argv)
         else out = argv[a];
     }
     if (!snap || !out) {
-        fprintf(stderr, "usage: %s [-r romdir] [-f frames] [-k seed] [-s every] [-g dir] game.sna out-dir\n", argv[0]);
+        fprintf(stderr, "usage: %s [-r romdir] [-f frames] [-k seed] [-s every] [-g dir] game.sna|game.z80 out-dir\n", argv[0]);
         return 2;
     }
+    mkdir(out, 0777);              /* may be there already */
     for (i = 0; i < 3; i++) {
         snprintf(path, sizeof path, "%s/%s", romdir, rom_names[i]);
         rom[i] = media_read_file(path, &len);
@@ -180,7 +251,23 @@ int main(int argc, char **argv)
         fprintf(stderr, "cannot read %s or the ROMs in %s\n", snap, romdir);
         return 1;
     }
-    if (s256_snapshot_is_128(len)) {
+    if (is_z80(snap)) {
+        /* Spec256 loads only .sna: play the game from a 48K .sna made from it. */
+        static zx z;
+        roms[0] = rom[0];
+        roms[1] = roms[2] = roms[3] = NULL;
+        snprintf(path, sizeof path, "%s/start.sna", out);
+        if (zx_create(&z, ZX_48K, roms) || zx_load_z80(&z, data, len) || z.model != ZX_48K
+            || save_sna(&z, path)) {
+            fprintf(stderr, "%s: not a 48K snapshot, or its stack is in ROM\n", snap);
+            return 1;
+        }
+        zx_free(&z);
+        free(data);
+        data = media_read_file(path, &len);
+        snap = path;
+    }
+    if (!data || s256_snapshot_is_128(len)) {
         fprintf(stderr, "%s: only 48K snapshots for now\n", snap);
         return 1;
     }
@@ -233,11 +320,11 @@ int main(int argc, char **argv)
             /* let go of the old keys, press up to three new ones */
             for (i = 0; i < 3; i++)
                 if (held[i])
-                    zx_key(&m, keys[held[i] - 1][0], keys[held[i] - 1][1], 0);
+                    press(&m, held[i] - 1, 0);
             for (i = 0; i < 3; i++) {
-                held[i] = rand() % 3 ? 0 : 1 + (unsigned)rand() % NKEYS;
+                held[i] = rand() % 3 ? 0 : 1 + pick_key();
                 if (held[i])
-                    zx_key(&m, keys[held[i] - 1][0], keys[held[i] - 1][1], 1);
+                    press(&m, held[i] - 1, 1);
             }
             m.kempston = (uint8_t)(rand() & 0x1f);
         }
@@ -273,6 +360,12 @@ int main(int argc, char **argv)
         for (k = 1; k <= MAX_STRIDE; k++)
             if (si->stride[k]) {
                 fprintf(fp, "%s\"%d\":%u", firstd ? "" : ",", k, si->stride[k]);
+                firstd = 0;
+            }
+        fprintf(fp, "},\"across\":{");
+        for (k = 1, firstd = 1; k <= MAX_ACROSS; k++)
+            if (si->across[k]) {
+                fprintf(fp, "%s\"%d\":%u", firstd ? "" : ",", k, si->across[k]);
                 firstd = 0;
             }
         fprintf(fp, "}}");

@@ -2,7 +2,7 @@
 // sound, keyboard and media. The machine runs in worker.js; the library and
 // saved states live in IndexedDB.
 
-import { tx, runParts, insideSymbos, romsAdded, romAdd, offersOf } from './library.js';
+import { tx, runParts, fillParts, insideSymbos, romsAdded, romAdd, offersOf } from './library.js';
 import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor } from './libview.js';
 import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, recipeFor, RECIPES } from './cradle.js';
 
@@ -751,6 +751,7 @@ $('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(show
 async function runTitle(t, run, id) {
   const { parts, missing } = runParts(t, run);
   if (missing.length || !parts.length || insideSymbos(run)) return;
+  try { await fillParts(parts); } catch (err) { console.warn(err.message); return; }
   currentTitle = t;
   updateShotItem();
   const load = { parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id, autostart: true };
