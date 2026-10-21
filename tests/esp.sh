@@ -2,7 +2,7 @@
 # The ESP8266 module against a local TCP echo server (needs python3).
 set -e
 TOOL=${1:-build/esp}
-PORT=${PORT:-47361}
+PORT=${PORT:-7190}   # ZX Cradle ports are 7000-7999 (docs/cradle)
 python3 -c "
 import socket, sys
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
