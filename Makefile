@@ -22,7 +22,7 @@ ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_sam.c src/core/zxm_msx.
 ZX_SRC   = src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/beta.c src/zx/expansion.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/sam/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/msx/*.h src/core/*.h)
 
-.PHONY: all desktop test sst sam vfat esp nextpi ulaplus mb03 esxdos state beta wasm wasmtest web serve clean
+.PHONY: host all desktop test sst sam vfat esp nextpi ulaplus mb03 esxdos state beta wasm wasmtest web serve clean
 
 all: $(BUILD)/zxrun $(BUILD)/zxmrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm $(BUILD)/mb03
 
@@ -190,6 +190,11 @@ web: $(BUILD)/zxcore.wasm $(WEB_FILES)
 serve: web
 	@echo "ZX Cradle: http://localhost:7081/"
 	cd $(BUILD)/web && python3 -m http.server 7081
+
+# The Node host: the page on http://127.0.0.1:7080/ with the software library
+# read in place from ~/.zxcradle/library (or ZXCRADLE_LIBRARY).
+host: web
+	node host/host.mjs --web $(BUILD)/web
 
 $(BUILD)/beta: tests/beta.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/beta.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
