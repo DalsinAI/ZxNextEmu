@@ -1,5 +1,9 @@
-// ZX Cradle runtime page: one machine, its screen, sound, keyboard and media.
-// The machine itself runs in worker.js; kept media live in IndexedDB.
+// ZX Cradle page: the software library, and one machine with its screen,
+// sound, keyboard and media. The machine runs in worker.js; the library and
+// saved states live in IndexedDB.
+
+import { tx } from './library.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload } from './libview.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -17,6 +21,11 @@ let pending = null;            // latest frame not yet drawn
 let audio = null, gain = null; // sound, once the user has interacted
 let lastSnapshot = null;       // library id of the last saved snapshot
 let soundState = 'Starts when you click the screen';
+let shown = 'machine';      // which view is on screen: 'library' or 'machine'
+let resumeOnReturn = false;
+let userPaused = false;        // paused with the pause button, so stay paused
+let pendingLoad = null;        // a library title to load once the machine exists
+let currentTitle = null;       // the library title running now
 
 function loadPrefs() {
   try { return JSON.parse(localStorage.getItem('zxc-prefs')) || {}; } catch { return {}; }
@@ -39,6 +48,13 @@ worker.onmessage = async e => {
     buildMachineMenu();
     if (!machines.some(mc => mc.id === machineId && mc.id !== 'next')) machineId = 'zx48';
     create(machineId);
+    initLibraryView({
+      machines: () => machines,
+      runnable: id => id !== 'next' && machines.some(mc => mc.id === id),
+      machineName: id => machines.find(mc => mc.id === id)?.name || id,
+      run: runTitle,
+      onCount: n => { $('lib-readout').textContent = n; },
+    }).then(() => showView(prefs.view || 'library'));
     break;
   case 'created':
     fbW = msg.fbW;
@@ -50,7 +66,21 @@ worker.onmessage = async e => {
     lastSnapshot = null;
     updateSnapshotItem();
     showStatus();
-    send('start');
+    if (pendingLoad) {
+      send('load', pendingLoad, [pendingLoad.bytes]);
+      pendingLoad = null;
+    } else {
+      currentTitle = null;
+      updateShotItem();
+    }
+    if (shown === 'machine') send('start');
+    else resumeOnReturn = true;
+    break;
+  case 'shot':
+    if (currentTitle) {
+      await addShot(currentTitle.id, msg.pixels, msg.w, msg.h);
+      $('take-shot-note').textContent = `Added to ${currentTitle.meta.name}`;
+    }
     break;
   case 'frame':
     pending = msg;
@@ -244,7 +274,7 @@ for (const d of ['media-drawer', 'status-drawer']) $(d).addEventListener('click'
 
 // ---- controls -------------------------------------------------------------
 
-$('run').addEventListener('click', e => { e.stopPropagation(); startAudio(); send(running ? 'stop' : 'start'); });
+$('run').addEventListener('click', e => { e.stopPropagation(); startAudio(); userPaused = running; send(running ? 'stop' : 'start'); });
 $('reset').addEventListener('click', () => { closeMenus(); send('reset', { power: false }); canvas.focus(); });
 $('power').addEventListener('click', () => { closeMenus(); send('reset', { power: true }); canvas.focus(); });
 $('save').addEventListener('click', () => {
@@ -421,35 +451,10 @@ applyVolume();
 
 // ---- kept media (IndexedDB) -----------------------------------------------
 
-let dbp = null;
-function db() {
-  dbp ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open('zx-cradle', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('media', { keyPath: 'id', autoIncrement: true });
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-  });
-  return dbp;
-}
-function tx(mode, fn) {
-  return db().then(d => new Promise((resolve, reject) => {
-    const t = d.transaction('media', mode);
-    const req = fn(t.objectStore('media'));
-    t.oncomplete = () => resolve(req?.result);
-    t.onerror = () => reject(t.error);
-  }));
-}
-const libAdd = item => tx('readwrite', s => s.add({ ...item, size: item.bytes.byteLength, added: Date.now() }));
-const libGet = id => tx('readonly', s => s.get(id));
-const libDelete = id => tx('readwrite', s => s.delete(id));
-const libAll = () => tx('readonly', s => s.getAll());
-
-function kindOf(name) {
-  const n = name.toLowerCase();
-  if (n.endsWith('.tap') || n.endsWith('.tzx')) return 'tape';
-  if (n.endsWith('.sna') || n.endsWith('.z80')) return 'snapshot';
-  return null;
-}
+const libAdd = item => tx('media', 'readwrite', st => st.add({ ...item, size: item.bytes.byteLength, added: Date.now() }));
+const libGet = id => tx('media', 'readonly', st => st.get(id));
+const libDelete = id => tx('media', 'readwrite', st => st.delete(id));
+const libAll = () => tx('media', 'readonly', st => st.getAll());
 
 const icons = {
   tape: '<rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/>',
@@ -472,7 +477,7 @@ async function renderLibrary() {
   items.sort((a, b) => b.added - a.added);
   const mc = machines.find(m => m.id === machineId);
   for (const it of items) {
-    if (it.kind === 'state' && it.machine !== machineId) continue;
+    if (it.kind !== 'state' || it.machine !== machineId) continue;
     const li = document.createElement('li');
     li.innerHTML = `<svg viewBox="0 0 16 16">${icons[it.kind]}</svg><div class="lib-name"><b></b><small></small></div><div class="lib-actions"><button class="zxc-btn small use"></button><button class="zxc-btn small remove">Remove</button></div>`;
     li.querySelector('b').textContent = it.name;
@@ -491,7 +496,7 @@ async function renderLibrary() {
   if (!list.children.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = `Nothing kept yet. Add a tape or a snapshot, or save the ${mc ? mc.name : 'machine'} from the Power menu.`;
+    li.textContent = `No saved states yet. Save the ${mc ? mc.name : 'machine'} from the Power menu.`;
     list.append(li);
   }
 }
@@ -509,21 +514,11 @@ async function useItem(it) {
   if (!running) send('start');
 }
 
-// Keep each file, then load the last one.
+// Dropped files go into the library.
 async function addFiles(files) {
   hideError();
-  let last = null;
-  for (const f of files) {
-    const kind = kindOf(f.name);
-    if (!kind) { showError(`${f.name}: ZX Cradle keeps .tap, .tzx, .sna and .z80 files.`); continue; }
-    const bytes = await f.arrayBuffer();
-    let id = null;
-    try { id = await libAdd({ name: f.name, kind, bytes }); } catch {}
-    last = id != null ? await libGet(id) : { name: f.name, kind, bytes };
-  }
-  renderLibrary();
-  if (last) await useItem(last);
-  canvas.focus();
+  showView('library');
+  await libraryAdd(files);
 }
 
 function setSlot(name) {
@@ -534,8 +529,61 @@ function setSlot(name) {
   $('eject-tape').disabled = !name;
 }
 $('eject-tape').addEventListener('click', () => send('eject', { slot: 'tape' }));
-$('add-media').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
+$('add-media').addEventListener('click', () => { toggleDrawer('media-drawer', false); showView('library'); });
+
+// ---- library and machine views ----------------------------------------------
+
+function showView(v) {
+  if (v === shown) return;
+  shown = v;
+  prefs.view = v;
+  savePrefs();
+  closeMenus();
+  const lib = v === 'library';
+  $('libview').hidden = !lib;
+  $('stage').hidden = lib;
+  $('lib-btn').setAttribute('aria-pressed', String(lib));
+  if (lib) {
+    toggleDrawer('media-drawer', false);
+    // The machine may still be starting, so stop it whatever it says now.
+    resumeOnReturn = !userPaused;
+    send('stop');
+    $('lib-q').focus();
+  } else {
+    if (resumeOnReturn) send('start');
+    resumeOnReturn = false;
+    fit();
+    canvas.focus();
+  }
+}
+$('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(shown === 'library' ? 'machine' : 'library'); });
+
+// Run a library title: switch machine if it needs another, then load it.
+function runTitle(t, run, id) {
+  const file = t.files.find(f => f.path === (run.file || (run.files || [])[0]));
+  if (!file) return;
+  currentTitle = t;
+  updateShotItem();
+  const bytes = file.bytes.slice().buffer;
+  const load = { name: file.path.replace(/^.*\//, ''), bytes, id, autostart: true };
+  resumeOnReturn = true;
+  userPaused = false;
+  showView('machine');
+  if (id !== machineId) {
+    pendingLoad = load;
+    create(id);
+  } else {
+    send('load', load, [bytes]);
+    send('start');
+  }
+  $('machine-name').textContent = `${t.meta.name} · ${machines.find(mc => mc.id === id)?.name || id}`;
+}
+
+function updateShotItem() {
+  $('take-shot').disabled = !currentTitle;
+  $('take-shot-note').textContent = currentTitle ? `Adds to ${currentTitle.meta.name}` : 'Run a library title first';
+}
+$('take-shot').addEventListener('click', () => send('shot', { tag: 'user' }));
 
 let dragDepth = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('drop').hidden = false; });

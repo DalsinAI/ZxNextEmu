@@ -120,10 +120,8 @@ async function create(id, romsUrl) {
   postMessage({ type: 'created', id, fbW, fbH, frameMs });
 }
 
-function frame() {
-  x.zxm_run_frame(m);
-  framesRun++;
-  // picture
+// The current picture as RGBA.
+function pixels() {
   const fb = x.zxm_framebuffer(m, scratch);
   const pitch = dv().getInt32(scratch, true);
   const px = new Uint16Array(x.memory.buffer, fb, pitch * fbH);
@@ -132,6 +130,13 @@ function frame() {
     const s = y * pitch, o = y * fbW;
     for (let i = 0; i < fbW; i++) out[o + i] = lut[px[s + i] & 511];
   }
+  return out;
+}
+
+function frame() {
+  x.zxm_run_frame(m);
+  framesRun++;
+  const out = pixels();
   postMessage({ type: 'frame', w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
   // sound
   if (audioPort) {
@@ -260,6 +265,39 @@ const handlers = {
     x.free(p);
     if (r) throw new Error(`${msg.name} was saved from a different machine or version, so it cannot be restored here.`);
     postMessage({ type: 'restored', name: msg.name });
+  },
+  // The picture as it is now, for a screenshot.
+  shot(msg) {
+    const out = pixels();
+    postMessage({ type: 'shot', tag: msg.tag, w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
+  },
+  // Run unpaced, without sound or frames, until whatever was loaded has
+  // finished loading (every tape block read; a snapshot or an empty slot
+  // counts as loaded once `settle` frames have run) or has got stuck part
+  // way through the tape for `stall` frames, then take pictures
+  // `after` frames later. The library's hidden machine uses this for
+  // screenshots.
+  capture(msg) {
+    stop();
+    const slot = cstr('tape');
+    const limit = msg.limit || 30000, stall = msg.stall || 1500;
+    let f = 0, last = -2, since = 0, loaded = false;
+    for (; f < limit; f++) {
+      x.zxm_run_frame(m);
+      const p = x.zxm_media_progress(m, slot);
+      if (p !== last) { last = p; since = f; }
+      if (f < (msg.settle || 150)) continue;
+      if (p < 0 || p >= 100) { loaded = true; break; }
+      if (f - since > stall) break;   // the tape has stopped part way: it did not load
+    }
+    x.free(slot);
+    let done = 0;
+    for (const n of msg.after) {
+      for (; done < n; done++) x.zxm_run_frame(m);
+      const out = pixels();
+      postMessage({ type: 'shot', tag: msg.tag, loaded, w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
+    }
+    postMessage({ type: 'captured', tag: msg.tag, loaded });
   },
   audio(msg) { audioPort = msg.port; audioQueued = 0; audioPort.onmessage = e => { audioQueued = e.data; }; },
 };

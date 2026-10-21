@@ -17,6 +17,8 @@ void zx_tape_free(zx_tape *t);
 void zx_tape_play(zx_tape *t, uint64_t now);
 void zx_tape_stop(zx_tape *t);
 int zx_tape_playing(const zx_tape *t);
+/* How far through the tape: 0 to 100, 100 once every block has been read. */
+int zx_tape_progress(const zx_tape *t);
 /* Allow the instant-load trap (default on). */
 void zx_tape_set_fast(zx_tape *t, int fast);
 

@@ -227,6 +227,7 @@ void zx_tape_free(zx_tape *t)
 
 void zx_tape_set_fast(zx_tape *t, int fast) { t->fast = fast; }
 int zx_tape_playing(const zx_tape *t) { return t->playing; }
+int zx_tape_progress(const zx_tape *t) { return t->n ? t->cur * 100 / t->n : 100; }
 void zx_tape_stop(zx_tape *t) { t->playing = 0; }
 
 void zx_tape_play(zx_tape *t, uint64_t now)
