@@ -99,6 +99,8 @@ static const zxm_slot slots_divmmc[] = {
 static const zxm_slot slots_mb03[] = {
     { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
     { "sd1", "Second SD card", ZXM_SLOT_SD, ".img .mmc" },
+    { "cf0", "CF card (IDE master)", ZXM_SLOT_HARDDISK, ".img .hdf .hdd" },
+    { "cf1", "CF card (IDE slave)", ZXM_SLOT_HARDDISK, ".img .hdf .hdd" },
     { NULL, NULL, 0, NULL },
 };
 
@@ -411,6 +413,10 @@ static int media_insert(zxm *b, const zxm_slot *s, const zxm_media *media)
         if (media->kind != ZXM_MEDIA_BLOCKS)
             return -1;
         return zx_attach_sd_dev(z, slot[2] - '0', media->blocks);
+    case ZXM_SLOT_HARDDISK:
+        if (media->kind != ZXM_MEDIA_BLOCKS || !media->blocks)
+            return -1;
+        return zx_exp_attach_ide(z, slot[2] - '0', media->blocks);
     case ZXM_SLOT_SERIAL:
         if (media->kind != ZXM_MEDIA_SERIAL || !z->next)
             return -1;
@@ -447,6 +453,8 @@ static int media_eject(zxm *b, const zxm_slot *s)
         nx_sd_close(z->next->sd[slot[2] - '0']);
         z->next->sd[slot[2] - '0'] = NULL;
         return 0;
+    case ZXM_SLOT_HARDDISK:
+        return zx_exp_attach_ide(z, slot[2] - '0', NULL);
     case ZXM_SLOT_SERIAL:
         nx_attach_serial(z, slot[4] - '0', NULL);
         return 0;

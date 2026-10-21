@@ -9,24 +9,14 @@
 
 #include <stdint.h>
 
-struct zx_blockdev;
+#include "../devices/ata.h"
 
-typedef struct ata_dev {
-    uint8_t error, count, sector, cyl_lo, cyl_hi, head, status, feature;
-    uint8_t buf[512];
-    uint16_t pos;              /* byte position in buf while DRQ */
-    uint8_t dir;               /* 0 none, 1 to the host, 2 from the host */
-    uint32_t lba;              /* next sector to transfer */
-    uint16_t left;             /* sectors left in the command */
-    struct zx_blockdev *bd;
-} ata_dev;
+struct zx_blockdev;
 
 typedef struct msx_ide {
     uint8_t control;           /* 4104: bit 0 IDE on, bits 7..3 ROM page (reversed) */
-    uint8_t sel;               /* selected device */
-    uint8_t srst;              /* soft reset held */
     uint8_t latch;             /* data register high byte */
-    ata_dev dev[2];
+    ata_bus bus;
 } msx_ide;
 
 void ide_init(msx_ide *d);

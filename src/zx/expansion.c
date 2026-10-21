@@ -75,6 +75,7 @@ void zx_exp_free(zx *m)
         return;
     nx_sd_close(e->sd[0]);
     nx_sd_close(e->sd[1]);
+    ata_free(&e->ide);
     free_wide(m, e);
     free(e->giga_prev);
     free(e->gs);
@@ -146,6 +147,8 @@ void zx_exp_reset(zx *m)
     e->uno_sel = e->uno_hi = e->uno_id = 0;
     e->radas_offset = 0;
     e->giga_flips = 0;
+    ata_reset(&e->ide);
+    e->ide_latch = e->ide_odd = 0;
     update_map(m);
 }
 
@@ -154,8 +157,19 @@ void zx_exp_frame_end(zx *m)
     zx_exp *e = m->exp;
     nx_sd_tick(e->sd[0]);
     nx_sd_tick(e->sd[1]);
+    ata_tick(&e->ide);
+    e->rtc_t += m->tm->frame_t;
     if (giga_mode(e) >= 2 && e->giga_prev)
         giga_frame(m);
+}
+
+int zx_exp_attach_ide(zx *m, int unit, zx_blockdev *bd)
+{
+    zx_exp *e = m->exp;
+    if (!e || !(e->features & ZX_EXP_IDE) || unit < 0 || unit > 1)
+        return -1;
+    ata_attach(&e->ide, unit, bd);
+    return 0;
 }
 
 int zx_exp_attach_sd(zx *m, int slot, zx_blockdev *bd)
@@ -255,6 +269,100 @@ static void spi_select(zx_exp *e, uint8_t v)
         nx_sd_deselect(e->sd[1]);
 }
 
+/* ---- MBIDE ---------------------------------------------------------------- */
+
+/* The IDE register a port's low byte reaches in the m_zxi_002 mode, or -1. */
+static int ide_reg(const zx_exp *e, uint8_t lsb)
+{
+    int mode = e->features & ZX_EXP_ZXI ? e->zxi[0][0x02] & 3 : 3, r = (lsb >> 2) & 7;
+    int dron = (lsb & 0xe3) == 0xc3, pvl = (lsb & 0xe3) == 0xa3;
+    if (!(e->features & ZX_EXP_IDE))
+        return -1;
+    switch (mode) {
+    case 1: return dron ? r : -1;
+    case 2: return pvl ? r : -1;
+    case 3: return (dron && !(r & 1)) || (pvl && (r & 1)) ? r : -1;
+    default: return -1;
+    }
+}
+
+static uint8_t ide_read(zx_exp *e, int r)
+{
+    uint16_t w;
+    if (r) {
+        e->ide_odd = 0;
+        return ata_reg_read(&e->ide, r);
+    }
+    if (e->ide_odd) {
+        e->ide_odd = 0;
+        return e->ide_latch;
+    }
+    w = ata_data_read(&e->ide);
+    e->ide_latch = (uint8_t)(w >> 8);
+    e->ide_odd = 1;
+    return (uint8_t)w;
+}
+
+static void ide_write(zx_exp *e, int r, uint8_t v)
+{
+    if (r) {
+        e->ide_odd = 0;
+        ata_reg_write(&e->ide, r, v);
+    } else if (e->ide_odd) {
+        e->ide_odd = 0;
+        ata_data_write(&e->ide, (uint16_t)(e->ide_latch | v << 8));
+    } else {
+        e->ide_latch = v;
+        e->ide_odd = 1;
+    }
+}
+
+/* ---- RTC72421 ------------------------------------------------------------- */
+
+#define RTC_EPOCH 20454          /* 2026-01-01, in days since 1970-01-01 */
+
+static int rtc_on(const zx_exp *e, uint16_t port)
+{
+    return (e->features & ZX_EXP_RTC) && (port & 0xf0ff) == 0x0003
+        && (!(e->features & ZX_EXP_ZXI) || (e->zxi[0][0x03] & 1));
+}
+
+static uint8_t rtc_read(const zx *m, int reg)
+{
+    const zx_exp *e = m->exp;
+    int64_t secs = (int64_t)((e->rtc_t + m->t) / m->tm->cpu_hz) + (int64_t)RTC_EPOCH * 86400
+                 + (int8_t)e->zxi[0][0x40] * 3600;
+    int64_t days = secs / 86400, era, z = days + 719468;
+    int s = (int)(secs % 86400), doe, yoe, doy, mp, d, mo, y;
+    /* civil date from days (Howard Hinnant's algorithm) */
+    era = z / 146097;
+    doe = (int)(z - era * 146097);
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    mo = mp < 10 ? mp + 3 : mp - 9;
+    y = (int)(yoe + era * 400) + (mo <= 2);
+    switch (reg) {
+    case 0x0: return (uint8_t)(s % 60 % 10);
+    case 0x1: return (uint8_t)(s % 60 / 10);
+    case 0x2: return (uint8_t)(s / 60 % 60 % 10);
+    case 0x3: return (uint8_t)(s / 60 % 60 / 10);
+    case 0x4: return (uint8_t)(s / 3600 % 10);
+    case 0x5: return (uint8_t)(s / 3600 / 10);
+    case 0x6: return (uint8_t)(d % 10);
+    case 0x7: return (uint8_t)(d / 10);
+    case 0x8: return (uint8_t)(mo % 10);
+    case 0x9: return (uint8_t)(mo / 10);
+    case 0xa: return (uint8_t)(y % 10);
+    case 0xb: return (uint8_t)(y / 10 % 10);
+    case 0xc: return (uint8_t)((days + 4) % 7);   /* 0 Sunday; 1970-01-01 was a Thursday */
+    case 0xd: return 4;
+    case 0xe: return e->rtc_ce;
+    default:  return 4;                           /* register F: 24-hour clock */
+    }
+}
+
 /* 713B-773B: rows 0-7 of the m_zxi registers */
 static int zxi_row(uint16_t port)
 {
@@ -311,7 +419,16 @@ int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
 {
     zx_exp *e = m->exp;
     uint8_t lsb = (uint8_t)port;
+    int r = ide_reg(e, lsb);
 
+    if (r >= 0) {
+        *v = ide_read(e, r);
+        return 1;
+    }
+    if (rtc_on(e, port)) {
+        *v = rtc_read(m, (port >> 8) & 15);
+        return 1;
+    }
     if ((e->features & ZX_EXP_DIVMMC) && lsb == 0xeb) {
         *v = e->spi_miso;
         e->spi_miso = spi_xfer(e, 0xff);
@@ -355,7 +472,17 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
 {
     zx_exp *e = m->exp;
     uint8_t lsb = (uint8_t)port;
+    int r = ide_reg(e, lsb);
 
+    if (r >= 0) {
+        ide_write(e, r, v);
+        return;
+    }
+    if (rtc_on(e, port)) {
+        if (((port >> 8) & 15) == 0xe)
+            e->rtc_ce = v & 15;
+        return;
+    }
     if (e->features & ZX_EXP_DIVMMC) {
         switch (lsb) {
         case 0xe3:
@@ -681,14 +808,19 @@ void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
 {
     zx_exp *e = m->exp;
     struct nx_sd *sd[2];
+    struct zx_blockdev *cf[2];
     uint16_t *giga_prev = e->giga_prev;
     gs *g = e->gs;
     int i;
     sd[0] = e->sd[0];
     sd[1] = e->sd[1];
+    cf[0] = e->ide.dev[0].bd;
+    cf[1] = e->ide.dev[1].bd;
     memcpy(e, in, sizeof *e);
     e->giga_prev = giga_prev;
     e->gs = g;
+    e->ide.dev[0].bd = cf[0];
+    e->ide.dev[1].bd = cf[1];
     in += sizeof *e;
     for (i = 0; i < 2; i++, in += nx_sd_state_size()) {
         e->sd[i] = sd[i];

@@ -2,7 +2,8 @@
  * Expansion-port interfaces (src/zx/expansion.c): the divMMC's paging and
  * automapping, TurboSound, the DACs, the Kempston mouse and the Timex
  * screens and hi-res, Radastan, GigaScreen, the SAA1099, the SID and the
- * ZXi registers, driven through the machine's own bus.
+ * ZXi registers, General Sound, the MBIDE and the RTC, driven through the
+ * machine's own bus.
  *
  * usage: mb03 romdir
  */
@@ -621,6 +622,111 @@ static void test_gs(const char *romdir)
     zx_free(&m);
 }
 
+/* A CF card in memory: sector n holds n in every byte. */
+#define CF_BLOCKS 64
+static uint8_t cf_data[CF_BLOCKS][512];
+static int cf_read(zx_blockdev *bd, uint64_t lba, uint8_t *buf) { (void)bd; memcpy(buf, cf_data[lba], 512); return 0; }
+static int cf_write(zx_blockdev *bd, uint64_t lba, const uint8_t *buf) { (void)bd; memcpy(cf_data[lba], buf, 512); return 0; }
+static void cf_close(zx_blockdev *bd) { free(bd); }
+
+static zx_blockdev *cf_new(void)
+{
+    zx_blockdev *bd = calloc(1, sizeof *bd);
+    int i;
+    for (i = 0; i < CF_BLOCKS; i++)
+        memset(cf_data[i], i, 512);
+    bd->blocks = CF_BLOCKS;
+    bd->read = cf_read;
+    bd->write = cf_write;
+    bd->close = cf_close;
+    return bd;
+}
+
+static void test_ide(const char *romdir)
+{
+    static zx m;
+    int i, ok;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    CHECK(zx_exp_attach_ide(&m, 0, cf_new()) == 0, "a CF card fits");
+    CHECK(m.exp->zxi[0][0x02] == 0, "the IDE starts off");
+    CHECK(in(&m, 0x00bf) != 0x50, "with it off, BF is not the IDE");
+
+    /* PVL: read LBA 5 */
+    zxi(&m, 0x02, 2);
+    CHECK(in(&m, 0x00bf) == 0x50, "PVL: the status on BF says ready");
+    out(&m, 0x00bb, 0xe0);      /* LBA, master */
+    out(&m, 0x00ab, 1);
+    out(&m, 0x00af, 5);
+    out(&m, 0x00b3, 0);
+    out(&m, 0x00b7, 0);
+    out(&m, 0x00bf, 0x20);
+    CHECK(in(&m, 0x00bf) & 0x08, "READ SECTORS has data waiting");
+    for (i = 0, ok = 1; i < 512; i++)
+        ok &= in(&m, 0x00a3) == 5;
+    CHECK(ok, "the sector reads back a byte at a time");
+    CHECK(!(in(&m, 0x00bf) & 0x08), "and the command is done");
+
+    /* PVL: write LBA 7, low byte then high byte of each word */
+    out(&m, 0x00ab, 1);
+    out(&m, 0x00af, 7);
+    out(&m, 0x00bf, 0x30);
+    for (i = 0; i < 512; i++)
+        out(&m, 0x00a3, (uint8_t)i);
+    for (i = 0, ok = 1; i < 512; i++)
+        ok &= cf_data[7][i] == (uint8_t)i;
+    CHECK(ok, "WRITE SECTORS lands on the card in order");
+
+    /* DRON: the same registers on C3-DF */
+    zxi(&m, 0x02, 1);
+    CHECK(in(&m, 0x00df) == 0x50, "DRON: the status on DF");
+    out(&m, 0x00df, 0xec);
+    CHECK(in(&m, 0x00df) & 0x08, "DRON: IDENTIFY on DF");
+    for (i = 0; i < 512; i++)
+        in(&m, 0x00c3);
+    CHECK(in(&m, 0x00df) == 0x50, "DRON: 512 bytes of IDENTIFY");
+
+    /* HOOD: the even registers on DRON's ports, the odd on PVL's */
+    zxi(&m, 0x02, 3);
+    out(&m, 0x00cf, 9);         /* sector (3) is odd: not on DRON */
+    out(&m, 0x00af, 3);         /* but on PVL */
+    out(&m, 0x00cb, 1);         /* count (2) on DRON */
+    out(&m, 0x00db, 0xe0);
+    out(&m, 0x00d3, 0);
+    out(&m, 0x00b7, 0);
+    out(&m, 0x00bf, 0x20);
+    CHECK(in(&m, 0x00c3) == 3, "HOOD: sector on AF, count on CB, data on C3");
+    zx_free(&m);
+}
+
+static void test_rtc(const char *romdir)
+{
+    static zx m;
+    static const uint8_t start[13] = { 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 6, 2, 4 };
+    static const uint8_t west[13] = { 1, 0, 0, 0, 6, 1, 1, 3, 2, 1, 5, 2, 3 };
+    int i, ok;
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    park(&m);
+    for (i = 0, ok = 1; i < 13; i++)
+        ok &= in(&m, (uint16_t)(i << 8 | 0x03)) == start[i];
+    CHECK(ok, "the RTC starts at Thursday 2026-01-01 00:00:00");
+    CHECK(in(&m, 0x0f03) == 4, "in 24-hour mode");
+    for (i = 0; i < 60; i++)
+        zx_run_frame(&m);
+    CHECK(in(&m, 0x0003) == 1, "a second later");
+    zxi(&m, 0x40, 0xf8);        /* GMT-8 */
+    for (i = 0, ok = 1; i < 13; i++)
+        ok &= in(&m, (uint16_t)(i << 8 | 0x03)) == west[i];
+    CHECK(ok, "GMT-8: Wednesday 2025-12-31 16:00:01");
+    zxi(&m, 0x03, 0);
+    {
+        uint8_t v;
+        CHECK(!zx_exp_io_read(&m, 0x0003, &v), "m_zxi_003 switches it off");
+    }
+    zx_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
@@ -638,6 +744,8 @@ int main(int argc, char **argv)
     test_radastan(romdir);
     test_giga(romdir);
     test_gs(romdir);
+    test_ide(romdir);
+    test_rtc(romdir);
     printf("%s\n", fails ? "mb03: FAILED" : "mb03: all passed");
     return fails != 0;
 }
