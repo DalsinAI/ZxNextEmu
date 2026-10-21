@@ -1,6 +1,7 @@
 #include "zx.h"
 #include "tape.h"
 #include "../next/next.h"
+#include "../spec256/spec256.h"
 
 #include <string.h>
 
@@ -399,6 +400,7 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
 #define ST_SD0  1
 #define ST_SD1  2
 #define ST_TAPE 4
+#define ST_S256 8
 
 /* Header, the zx struct, the Next's part, the tape position. The structs
  * are stored as they are in memory, so a state belongs to one build of the
@@ -412,7 +414,8 @@ size_t zx_state_size(const zx *m)
 {
     return sizeof(state_hdr) + sizeof(zx)
         + (m->model == ZX_NEXT ? nx_state_size(m) : 0)
-        + zx_tape_state_size();
+        + zx_tape_state_size()
+        + (m->s256 ? s256_state_size(m->s256) : 0);
 }
 
 int zx_state_save(const zx *m, void *buf, size_t len)
@@ -434,6 +437,8 @@ int zx_state_save(const zx *m, void *buf, size_t len)
         h.flags |= ST_SD1;
     if (m->tape)
         h.flags |= ST_TAPE;
+    if (m->s256)
+        h.flags |= ST_S256;
     memcpy(p, &h, sizeof h);
     p += sizeof h;
     memcpy(p, m, sizeof *m);
@@ -446,6 +451,9 @@ int zx_state_save(const zx *m, void *buf, size_t len)
         zx_tape_state_save(m->tape, p);
     else
         memset(p, 0, h.tape_size);
+    p += h.tape_size;
+    if (m->s256)
+        s256_state_save(m->s256, p);
     return 0;
 }
 
@@ -458,6 +466,7 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     const uint16_t *pixels = m->pixels;
     struct zxn *next = m->next;
     struct zx_tape *tape = m->tape;
+    struct s256 *s256 = m->s256;
     int has_sd[2];
     if (len < sizeof h)
         return -1;
@@ -465,7 +474,8 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     if (h.magic != STATE_MAGIC || h.version != STATE_VERSION
         || h.model != (uint32_t)m->model || h.zx_size != sizeof(zx)
         || h.nx_size != (m->model == ZX_NEXT ? nx_state_size(m) : 0)
-        || h.tape_size != zx_tape_state_size() || len < zx_state_size(m))
+        || h.tape_size != zx_tape_state_size() || len < zx_state_size(m)
+        || !(h.flags & ST_S256) != !s256)
         return -1;
     p += sizeof h;
     /* The live machine's pointers: the timing table, the bus callbacks,
@@ -477,6 +487,7 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     m->pixels = pixels;
     m->next = next;
     m->tape = tape;
+    m->s256 = s256;
     if (m->model == ZX_NEXT) {
         has_sd[0] = (h.flags & ST_SD0) != 0;
         has_sd[1] = (h.flags & ST_SD1) != 0;
@@ -487,6 +498,9 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     }
     if (m->tape && (h.flags & ST_TAPE))
         zx_tape_state_load(m->tape, p);
+    p += h.tape_size;
+    if (s256)
+        s256_state_load(s256, p);
     return 0;
 }
 
@@ -624,16 +638,24 @@ void zx_run_frame(zx *m)
 
     while (m->t < frame_t) {
         if (m->t < m->tm->int_len && z80_int_enabled(&m->cpu)) {
-            z80_interrupt(&m->cpu, &m->bus);
+            if (m->s256)
+                s256_interrupt(m->s256);
+            else
+                z80_interrupt(&m->cpu, &m->bus);
             continue;
         }
         if (m->tape && m->cpu.pc == 0x0556 && m->rd[0] == m->rom[m->model == ZX_48K ? 0 : (is_plus3(m) ? 3 : 1)])
             if (zx_tape_trap(m->tape, m))
                 continue;
-        z80_step(&m->cpu, &m->bus);
+        if (m->s256)
+            s256_step(m->s256);
+        else
+            z80_step(&m->cpu, &m->bus);
     }
 
     video_update(m, 0xffffffffu >> 1);
+    if (m->s256)
+        s256_render(m->s256);
     audio_update(m, frame_t);
     if (m->tape && zx_tape_playing(m->tape))
         zx_tape_advance(m->tape, m, (m->frames + 1) * frame_t);
