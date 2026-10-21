@@ -52,7 +52,7 @@ typedef enum {
     ZXM_IN_KEYBOARD = 1,         /* 8x5 Spectrum matrix (+ Next extra keys) */
     ZXM_IN_KEMPSTON,             /* Kempston joystick */
     ZXM_IN_MOUSE,                /* Kempston mouse */
-    ZXM_IN_ORIC_KEYBOARD,        /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
+    ZXM_IN_RESERVED_4,           /* unused, keeps the numbers below stable */
     ZXM_IN_SAM_KEYBOARD,         /* SAM Coupe matrix */
     ZXM_IN_MSX_KEYBOARD,         /* MSX matrix */
     ZXM_IN_JOYSTICK              /* a general joystick (ZXM_EV_JOYSTICK) */
@@ -73,12 +73,12 @@ typedef struct zxm_info {
     const char *const *roms;     /* ROM file names in order, NULL-terminated */
     const zxm_slot *slots;       /* media slots, ending with a NULL id */
     const zxm_input_desc *inputs;     /* inputs, ending with a NULL id */
-    const char *cpu;             /* "z80", "6502": how zxm_regs reads */
+    const char *cpu;             /* "z80": how zxm_regs reads */
     uint32_t rom_optional;       /* bit i: roms[i] may be left out */
 } zxm_info;
 
 /* ROM images in the order zxm_info.roms names them (16K each on the
- * Spectrums and Orics). */
+ * Spectrums). */
 typedef struct zxm_rom_set {
     const uint8_t *rom[4];
     uint32_t len[4];
@@ -116,9 +116,7 @@ typedef struct zxm_media {
     struct zx_serial *serial;
 } zxm_media;
 
-/* Debugging: CPU registers, memory as the CPU sees it, frame count.
- * A 6502 (zxm_info.cpu "6502") uses af = A << 8 | P, bc = X, de = Y,
- * sp = 0x100 | S and pc; the other fields are zero. */
+/* Debugging: CPU registers, memory as the CPU sees it, frame count. */
 typedef struct zxm_regs {
     uint16_t af, bc, de, hl, af_, bc_, de_, hl_, ix, iy, sp, pc, memptr;
     uint8_t i, r, iff1, iff2, im, halted;
@@ -150,6 +148,9 @@ void   zxm_run_frame(zxm *m);                       /* exactly one video frame *
 /* The picture: fb_w x fb_h, pitch in pixels (a Next is 640 wide: each
  * classic pixel is two). */
 const void *zxm_framebuffer(const zxm *m, int *pitch);
+/* The picture's width now: fb_w, or 640 once an interface whose modes need
+ * it is attached (the MB03+'s Timex hi-res; each classic pixel is two). */
+int zxm_fb_width(const zxm *m);
 /* This frame's sound: *samples stereo pairs, interleaved L R. */
 const int16_t *zxm_audio(const zxm *m, int *samples);
 
@@ -160,13 +161,18 @@ int    zxm_typing(const zxm *m);
 
 /* Interfaces for a classic machine's expansion port: "divmmc" (esxDOS and
  * an SD card), "mb03" (the MB03+ Ultimate: divMMC with two SD cards,
- * TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens). */
+ * TurboSound, DACs, SAA1099, SID, Kempston mouse, Timex screens, the
+ * ZXi settings registers, MBIDE with two CF cards, the RTC and, given its
+ * ROM, General Sound). */
 typedef struct zxm_interface {
     const char *id;
     const char *name;
-    const char *const *roms;     /* ROM file names, NULL-terminated (8K each) */
+    const char *const *roms;     /* ROM file names, NULL-terminated: the 8K
+                                  * esxDOS ROM, then for the MB03+ the 32K
+                                  * General Sound ROM */
     const zxm_slot *slots;       /* the slots it adds, ending with a NULL id */
     const zxm_input_desc *inputs;     /* the inputs it adds, ending with a NULL id */
+    uint32_t rom_optional;       /* bit n: roms[n] may be left out */
 } zxm_interface;
 
 /* Interfaces: by id, or the i'th (NULL past the end). */
@@ -186,6 +192,9 @@ int    zxm_media_insert(zxm *m, const char *slot, const zxm_media *media);
 int    zxm_media_eject(zxm *m, const char *slot);
 /* 1 while the slot's medium is working (a tape playing), for an LED. */
 int    zxm_media_active(const zxm *m, const char *slot);
+/* How far through its medium the slot is, 0 to 100 (a tape: 100 once every
+ * block has been read), or -1 if the slot is empty. */
+int    zxm_media_progress(const zxm *m, const char *slot);
 
 /* Complete state: CPU, memory, devices, the typing queue, the tape's play
  * position. Media stay attached and are not part of it. A state loads into

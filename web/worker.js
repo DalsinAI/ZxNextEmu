@@ -52,7 +52,7 @@ function makeLut() {
   }
 }
 
-async function init(wasmUrl) {
+async function init(wasmUrl, romsUrl = 'roms.json', extra = {}) {
   const { instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), {});
   x = instance.exports;
   x._initialize?.();
@@ -68,19 +68,36 @@ async function init(wasmUrl) {
       if (!np) break;
       roms.push(readCstr(np));
     }
-    machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms });
+    machines.push({ id: readCstr(dv().getUint32(p, true)), name: readCstr(dv().getUint32(p + 4, true)), roms,
+      optional: dv().getUint32(p + 44, true) });
   }
-  postMessage({ type: 'ready', machines });
+  allMachines = machines;
+  // A machine is available when every ROM it must have is in roms.json or
+  // was added by the user.
+  try { await loadRoms(romsUrl); } catch { romCache = {}; }
+  Object.assign(romCache, extra);
+  postMessage({ type: 'ready', machines: availability() });
+}
+
+let allMachines = [];
+function availability() {
+  for (const mc of allMachines) {
+    mc.missing = mc.roms.filter((r, k) => !romCache[r] && !(mc.optional >> k & 1));
+    mc.available = !mc.missing.length;
+  }
+  return allMachines;
 }
 
 // ROM images come in one JSON file, {"48.rom": "<base64>", ...}.
 let romCache = null;
+async function loadRoms(romsUrl) {
+  if (romCache) return;
+  const res = await fetch(romsUrl);
+  if (!res.ok) throw new Error(`The ROM file ${romsUrl} is missing.`);
+  romCache = await res.json();
+}
 async function romFile(romsUrl, name) {
-  if (!romCache) {
-    const res = await fetch(romsUrl);
-    if (!res.ok) throw new Error(`The ROM file ${romsUrl} is missing.`);
-    romCache = await res.json();
-  }
+  await loadRoms(romsUrl);
   const b64 = romCache[name];
   if (!b64) throw new Error(`The ROM file ${name} is missing.`);
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -120,10 +137,8 @@ async function create(id, romsUrl) {
   postMessage({ type: 'created', id, fbW, fbH, frameMs });
 }
 
-function frame() {
-  x.zxm_run_frame(m);
-  framesRun++;
-  // picture
+// The current picture as RGBA.
+function pixels() {
   const fb = x.zxm_framebuffer(m, scratch);
   const pitch = dv().getInt32(scratch, true);
   const px = new Uint16Array(x.memory.buffer, fb, pitch * fbH);
@@ -132,6 +147,13 @@ function frame() {
     const s = y * pitch, o = y * fbW;
     for (let i = 0; i < fbW; i++) out[o + i] = lut[px[s + i] & 511];
   }
+  return out;
+}
+
+function frame() {
+  x.zxm_run_frame(m);
+  framesRun++;
+  const out = pixels();
   postMessage({ type: 'frame', w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
   // sound
   if (audioPort) {
@@ -215,7 +237,9 @@ function insert(slot, name, bytes) {
 }
 
 const handlers = {
-  async init(msg) { await init(msg.wasm); },
+  async init(msg) { await init(msg.wasm, msg.roms, msg.extra); },
+  // ROMs the user added: {"name.rom": "<base64>"}.
+  addRoms(msg) { Object.assign(romCache ??= {}, msg.roms); postMessage({ type: 'machines', machines: availability() }); },
   async create(msg) { await create(msg.id, msg.roms); },
   start, stop,
   step() { if (!running && m) frame(); },
@@ -244,6 +268,34 @@ const handlers = {
       throw new Error(`${msg.name}: ZX Cradle loads .tap, .tzx, .sna and .z80 files.`);
     }
   },
+  // Several files for one run: each into its slot, a tape or snapshot last
+  // through load() so it starts as usual.
+  // A disk or cartridge on its own boots the machine from it; of several
+  // disks for one drive, the first goes in.
+  loadSet(msg) {
+    const filled = new Set();
+    let boots = false, starts = false;
+    for (const p of msg.parts) {
+      if (p.slot === 'tape' || p.slot === 'snapshot') {
+        handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
+        starts = true;
+      } else if (!filled.has(p.slot)) {
+        if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
+        filled.add(p.slot);
+        if (/^(disk|cart)/.test(p.slot)) boots = true;
+        postMessage({ type: 'media', slot: p.slot, name: p.name });
+      }
+    }
+    if (boots && !starts && msg.autostart) {
+      x.zxm_reset(m, 1);
+      if (msg.id === 'plus3' || msg.id === 'plus2a') {   // the menu's Loader
+        const p = cstr('\n');
+        x.zxm_type(m, p, 90);
+        x.free(p);
+      }
+    }
+    postMessage({ type: 'loadedSet' });
+  },
   eject(msg) { x.zxm_media_eject(m, cstr(msg.slot)); postMessage({ type: 'media', slot: msg.slot, name: null }); },
   save(msg) {
     const len = x.zxm_state_size(m);
@@ -260,6 +312,39 @@ const handlers = {
     x.free(p);
     if (r) throw new Error(`${msg.name} was saved from a different machine or version, so it cannot be restored here.`);
     postMessage({ type: 'restored', name: msg.name });
+  },
+  // The picture as it is now, for a screenshot.
+  shot(msg) {
+    const out = pixels();
+    postMessage({ type: 'shot', tag: msg.tag, w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
+  },
+  // Run unpaced, without sound or frames, until whatever was loaded has
+  // finished loading (every tape block read; a snapshot or an empty slot
+  // counts as loaded once `settle` frames have run) or has got stuck part
+  // way through the tape for `stall` frames, then take pictures
+  // `after` frames later. The library's hidden machine uses this for
+  // screenshots.
+  capture(msg) {
+    stop();
+    const slot = cstr('tape');
+    const limit = msg.limit || 30000, stall = msg.stall || 1500;
+    let f = 0, last = -2, since = 0, loaded = false;
+    for (; f < limit; f++) {
+      x.zxm_run_frame(m);
+      const p = x.zxm_media_progress(m, slot);
+      if (p !== last) { last = p; since = f; }
+      if (f < (msg.settle || 150)) continue;
+      if (p < 0 || p >= 100) { loaded = true; break; }
+      if (f - since > stall) break;   // the tape has stopped part way: it did not load
+    }
+    x.free(slot);
+    let done = 0;
+    for (const n of msg.after) {
+      for (; done < n; done++) x.zxm_run_frame(m);
+      const out = pixels();
+      postMessage({ type: 'shot', tag: msg.tag, loaded, w: fbW, h: fbH, pixels: out.buffer }, [out.buffer]);
+    }
+    postMessage({ type: 'captured', tag: msg.tag, loaded });
   },
   audio(msg) { audioPort = msg.port; audioQueued = 0; audioPort.onmessage = e => { audioQueued = e.data; }; },
 };
