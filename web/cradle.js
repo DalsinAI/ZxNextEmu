@@ -83,7 +83,6 @@ export const RECIPES = [
     summary: 'MGT\'s 1989 machine: four screen modes, SAA sound and a disk drive.' },
   { id: 'msx1', title: 'MSX', machine: 'msx1', offers: [], summary: 'A standard MSX1 for cartridges and tapes.' },
   { id: 'msx2', title: 'MSX2', machine: 'msx2', offers: ['ram:128'], summary: 'MSX2 with the V9938 video chip.' },
-  { id: 'oric-atmos', title: 'Oric Atmos', machine: 'atmos', offers: [], summary: 'Tangerine\'s 6502 machine with BASIC 1.1.' },
   { id: 'symbos-msx2', title: 'SymbOS desktop on MSX2', machine: 'msx2', offers: ['ram:128', 'mouse'], later: 'Fetching SymbOS is the next step; see recipes/symbos.md.',
     summary: 'Prodatron\'s multitasking desktop OS.' },
   { id: 'symbos-next', title: 'SymbOS desktop on the Next', machine: 'next', offers: ['ram:1024', 'divmmc', 'mouse'], later: 'Needs the Next\'s SD card in the browser first.',
