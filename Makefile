@@ -17,19 +17,24 @@ NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/vide
 comma := ,
 ORIC_SRC = src/m6502/m6502.c src/devices/via6522.c src/oric/oric.c src/oric/tape.c
 ORIC_ROMS = $(BUILD)/oric-roms/basic10.rom $(BUILD)/oric-roms/basic11b.rom   # built from tests/oric/testrom.s
-ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c $(ORIC_SRC)
+SAM_SRC  = src/sam/sam.c src/devices/saa1099.c src/devices/floppy.c src/devices/wd177x.c
+ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c src/core/zxm_sam.c $(ORIC_SRC) $(SAM_SRC)
 ZX_SRC   = src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/expansion.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
-ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/core/*.h)
+ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/sam/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/core/*.h)
 
-.PHONY: all desktop test sst sst6502 oric vfat esp nextpi ulaplus mb03 esxdos state wasm wasmtest web serve clean
+.PHONY: all desktop test sst sst6502 oric sam vfat esp nextpi ulaplus mb03 esxdos state wasm wasmtest web serve clean
 
-all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/sst6502 $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm $(BUILD)/mb03
+all: $(BUILD)/zxrun $(BUILD)/zxmrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/sst6502 $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm $(BUILD)/mb03
 
 $(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zex.c $(CORE_SRC)
 
 $(BUILD)/zxrun: src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC)
+
+# Any machine through zxm (zxmrun -l lists them).
+$(BUILD)/zxmrun: src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
 
 # Desktop front end (needs SDL2 development files).
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
@@ -81,6 +86,16 @@ esp: $(BUILD)/esp
 nextpi: $(BUILD)/zxrun
 	tests/nextpi.sh $(BUILD)/zxrun
 
+$(BUILD)/sam: tests/sam.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/sam.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
+
+$(BUILD)/mkmgt: tests/mkmgt.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/mkmgt.c
+
+# SAM Coupé: BOOT, SAVE and read back, SAA1099 pitch (fetches SAMDOS 2).
+sam: $(BUILD)/sam $(BUILD)/mkmgt
+	tests/sam.sh $(BUILD)
+
 $(BUILD)/zxm: tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)
 
@@ -95,7 +110,7 @@ ESXDOS_ROM ?= tests-data/esxdos/esxmmc.bin
 
 # The Orics run the test ROM (their own ROMs are not in the repository).
 state: $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam; do \
 	    $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done
 	@if [ -f $(ESXDOS_ROM) ]; then for mc in zx48 zx128 plus3 pentagon; do \
 	    ZXM_IFACE=mb03 ZXM_IFACE_ROM=$(ESXDOS_ROM) $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done; \
@@ -150,7 +165,7 @@ $(BUILD)/zxcore.wasm: $(WASM_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 
 # The WebAssembly core must give exactly the native core's pictures and sound.
 wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 oric1 atmos; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam oric1 atmos; do \
 	    case $$mc in oric1|atmos) rd=$(BUILD)/oric-roms;; *) rd=roms;; esac; \
 	    a=$$($(BUILD)/zxm $$rd $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm $$rd $$mc 300 'print 2+2\n') || exit 1; \

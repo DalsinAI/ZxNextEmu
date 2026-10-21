@@ -377,7 +377,7 @@ static uint32_t next_pulse(zx_tape *t)
     }
 }
 
-void zx_tape_advance(zx_tape *t, struct zx *m, uint64_t now)
+int zx_tape_ear(zx_tape *t, uint64_t now)
 {
     if (t->next_edge == 0)
         t->next_edge = now;
@@ -386,8 +386,13 @@ void zx_tape_advance(zx_tape *t, struct zx *m, uint64_t now)
         if (!len)
             break;
         t->next_edge += len;
-        m->ear_in = t->level;
     }
+    return t->level;
+}
+
+void zx_tape_advance(zx_tape *t, struct zx *m, uint64_t now)
+{
+    m->ear_in = (uint8_t)zx_tape_ear(t, now);
 }
 
 /* ---- ROM trap ------------------------------------------------------------ */
