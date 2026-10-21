@@ -1096,8 +1096,8 @@ void zx_run_frame(zx *m)
                 s256_interrupt(m->s256);
             else
                 z80_interrupt(&m->cpu, &m->bus);
-        } else if (m->tape && m->cpu.pc == 0x0556 && !m->div_map && m->rd[0] == m->rom[tape_rom(m)]
-                   && zx_tape_trap(m->tape, m)) {
+        } else if (m->tape && (m->cpu.pc == 0x0556 || m->cpu.pc == 0x0562) && !m->div_map
+                   && m->rd[0] == m->rom[tape_rom(m)] && zx_tape_trap(m->tape, m, m->cpu.pc == 0x0562)) {
             continue;
         } else if (m->s256) {
             s256_step(m->s256);

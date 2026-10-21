@@ -227,6 +227,7 @@ void zx_tape_free(zx_tape *t)
 
 void zx_tape_set_fast(zx_tape *t, int fast) { t->fast = fast; }
 int zx_tape_playing(const zx_tape *t) { return t->playing; }
+int zx_tape_progress(const zx_tape *t) { return t->n ? t->cur * 100 / t->n : 100; }
 void zx_tape_stop(zx_tape *t) { t->playing = 0; }
 
 void zx_tape_play(zx_tape *t, uint64_t now)
@@ -397,13 +398,13 @@ void zx_tape_advance(zx_tape *t, struct zx *m, uint64_t now)
 
 /* ---- ROM trap ------------------------------------------------------------ */
 
-int zx_tape_trap(zx_tape *t, struct zx *m)
+int zx_tape_trap(zx_tape *t, struct zx *m, int mid)
 {
     tblock *b;
     z80 *c = &m->cpu;
     uint32_t want, avail, n, i;
-    uint8_t parity;
-    int ok;
+    uint8_t parity, flag;
+    int ok, load;
 
     if (!t->fast || t->playing)
         return 0;
@@ -421,10 +422,14 @@ int zx_tape_trap(zx_tape *t, struct zx *m)
     t->phase = P_IDLE;
     t->trap_used = 1;
 
+    /* Entered at 0x0562, the caller has already swapped the flag byte and
+     * LOAD/VERIFY carry into AF'. */
+    flag = mid ? c->a_ : c->a;
+    load = (mid ? c->f_ : c->f) & Z80_FC;
     want = (uint32_t)(c->d << 8 | c->e);
     avail = b->len - 1;          /* flag byte excluded; includes checksum */
-    ok = b->data[0] == c->a;
-    if (ok && (c->f & Z80_FC)) { /* LOAD (carry clear means VERIFY) */
+    ok = b->data[0] == flag;
+    if (ok && load) {            /* LOAD (carry clear means VERIFY) */
         n = want < avail ? want : avail;
         for (i = 0; i < n; i++)
             zx_poke(m, (uint16_t)(c->ix + i), b->data[1 + i]);
