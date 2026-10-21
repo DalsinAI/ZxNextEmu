@@ -9,6 +9,7 @@
 #include "../next/next.h"
 #include "../storage/blockdev.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -20,7 +21,7 @@ static int load_rom(uint8_t *dst, const char *dir, const char *name, int optiona
     size_t n;
     snprintf(path, sizeof path, "%s/%s", dir, name);
     fp = fopen(path, "rb");
-    if (!fp && optional)
+    if (!fp && optional && errno == ENOENT)
         return 1;
     if (!fp) {
         fprintf(stderr, "zx: cannot open ROM %s\n", path);
