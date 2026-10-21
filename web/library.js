@@ -501,7 +501,7 @@ async function titleFromGroup(key, group) {
       else if (r.startsWith('screens/') && isImage(r)) {
         const png = await imageToPng(r, it.bytes);
         const cap = (meta.screens || []).find(s => s.file === r)?.caption || '';
-        if (png) screens.push({ path: r.replace(/\.[^.]+$/, '.png'), blob: png, caption: cap });
+        if (png) screens.push({ path: r.replace(/\.[^.]+$/, '.png'), blob: png, caption: cap, version: screenVersion(meta, r) });
       } else if (r.toLowerCase() === 'about.md') about = new TextDecoder().decode(it.bytes);
       else if (r.toLowerCase() === 'reviews.json') {
         try { reviews = normalizeReviews(JSON.parse(new TextDecoder().decode(it.bytes))); } catch { /* a bad reviews.json is left out */ }
@@ -550,7 +550,7 @@ export async function importCollection(data) {
     const meta = c.json ? normalize(typeof c.json === 'string' ? JSON.parse(c.json) : c.json) : normalize(parseToml(c.toml));
     const screens = c.screens.filter(s => isImage(s.path)).map(s => ({
       path: s.path, blob: new Blob([bytes(s.b64)], { type: 'image/png' }),
-      caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
+      caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '', version: screenVersion(meta, s.path),
     }));
     delete meta.screens;
     const reviews = normalizeReviews(typeof c.reviews === 'string' ? JSON.parse(c.reviews) : c.reviews);
@@ -580,6 +580,7 @@ export async function hostTitles() {
     try { meta = c.json ? normalize(c.json) : normalize(parseToml(c.toml)); } catch { continue; }
     const screens = c.screens.filter(s => /\.(png|jpe?g|gif|webp)$/i.test(s.path)).map(s => ({
       path: s.path, url: at(c.id, s.path), caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
+      version: screenVersion(meta, s.path),
     }));
     delete meta.screens;
     out.push({ id: c.id, meta, about: c.about || '', reviews: normalizeReviews(c.reviews),
@@ -592,7 +593,8 @@ export async function hostTitles() {
 
 export async function exportTitle(t) {
   const enc = new TextEncoder();
-  const meta = { ...t.meta, screens: t.screens.map(s => ({ file: s.path, ...(s.caption ? { caption: s.caption } : {}) })) };
+  const meta = { ...t.meta, ...(t.favourite ? { favourite: true } : {}),
+    screens: t.screens.map(s => ({ file: s.path, ...(s.caption ? { caption: s.caption } : {}), ...(s.version ? { version: s.version } : {}) })) };
   if (!meta.screens.length) delete meta.screens;
   const entries = [{ path: `${t.id}/title.json`, bytes: enc.encode(toJson(meta, t.id)) }];
   if (t.about) entries.push({ path: `${t.id}/about.md`, bytes: enc.encode(t.about) });
@@ -742,15 +744,28 @@ export function normalizeReviews(r) {
 
 // One rating out of 10: the sites' scores weighted by their votes, or the
 // reviews' own scores when no site rates it. null when nothing scores it.
-export function ratingOf(t) {
+// With a version id, only the ratings and reviews of that version.
+export function ratingOf(t, version) {
   const r = t.reviews;
   if (!r) return null;
+  const mine = x => version === undefined || (x.version || null) === (version || null);
+  const ratings = r.ratings.filter(mine), reviews = r.reviews.filter(mine);
   let sum = 0, w = 0;
   const add = (x, votes) => { sum += x.score / x.scale * 10 * votes; w += votes; };
-  for (const x of r.ratings) add(x, Math.max(1, x.votes || 1));
-  if (!w) for (const x of r.reviews) if (x.score != null && x.scale) add(x, 1);
-  return w ? { score: Math.round(sum / w * 10) / 10, votes: r.ratings.reduce((a, x) => a + (x.votes || 0), 0), reviews: r.reviews.length } : null;
+  for (const x of ratings) add(x, Math.max(1, x.votes || 1));
+  if (!w) for (const x of reviews) if (x.score != null && x.scale) add(x, 1);
+  return w ? { score: Math.round(sum / w * 10) / 10, votes: ratings.reduce((a, x) => a + (x.votes || 0), 0), reviews: reviews.length } : null;
 }
+
+// Which version a screenshot shows: title.json's screens[].version, or a
+// screens/<version id>/ folder. '' is the title as a whole.
+export function screenVersion(meta, path) {
+  const said = (meta.screens || []).find(x => x.file === path)?.version;
+  if (said) return said;
+  const dir = path.split('/')[1];
+  return path.split('/').length > 2 && (meta.versions || []).some(v => v.id === dir) ? dir : '';
+}
+export const versionScreens = (t, version) => t.screens.filter(s => (s.version || '') === (version || ''));
 
 // ---- companies, series and the same game elsewhere ---------------------------
 
