@@ -15,6 +15,8 @@
 #          msx       MSX1/MSX2 games and demos (file-hunter.com)
 #          symbos    SymbOS and its apps for Next and MSX2 (symbos.de)
 #          spec256   256-colour Spectrum games (GitHub Spec256-Games)
+#          demos     demoscene productions from pouet.net (ZX Spectrum, ZX Enhanced,
+#                    SAM Coupe, MSX, MSX2) that zxart.ee doesn't already have
 #          reviews   ratings and reviews for every title in the library, translated
 #                    to English, into reviews.json next to each title.json
 #          onedrive  your own OneDrive Spectrum folder (asks for the share link once,
@@ -72,7 +74,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 LIB = sys.argv[1]
 TITLES = os.path.join(LIB, 'titles')
-SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256', 'reviews']
+SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256', 'demos', 'reviews']
 LIMIT = int(os.environ.get('LIMIT') or 0)
 WORKERS = int(os.environ.get('WORKERS') or 4)
 MAX_REL = int(os.environ.get('MAX_RELEASES') or 0)
@@ -491,9 +493,10 @@ def zx_title(lib, p, rels, hw):
     desc = html.unescape(p.get('description') or '').strip()
     cat = html.unescape(p.get('categoriesString') or '')
     ids = {'zxart': p['id']}
-    zxdb = (p.get('importIds') or {}).get('zxdb')
-    if zxdb and str(zxdb).isdigit():
-        ids['zxdb'] = int(zxdb)
+    imp = p.get('importIds') or {}
+    for k, key in (('zxdb', 'zxdb'), ('pouet', 'pouet'), ('dzoo', 'demozoo'), ('3a', 'zxaaa')):
+        if str(imp.get(k) or '').isdigit() and int(imp[k]):
+            ids[key] = int(imp[k])
     pubs = [NAMES[str(i)] for i in p.get('publishersIds', []) if str(i) in NAMES]
     t = {'format': 2, 'name': name, 'kind': kind_of(cat), 'year': p.get('year') or None,
          'authors': list(dict.fromkeys(NAMES[str(a['authorId'])] for a in p.get('authorsInfo', []) if str(a.get('authorId')) in NAMES)),
@@ -502,6 +505,8 @@ def zx_title(lib, p, rels, hw):
          'license': LIC.get(p.get('legalStatus'), 'unknown'), 'source': url,
          'sources': [url] + ([f'https://spectrumcomputing.co.uk/entry/{ids["zxdb"]}'] if 'zxdb' in ids else []),
          'ids': ids, 'runs': runs, 'compat': {}, 'versions': versions,
+         'party': {'zxart_party': int(p['partyId']), 'place': int(p['partyPlace']) if str(p.get('partyPlace') or '').isdigit() else None,
+                   'compo': p.get('compo')} if p.get('partyId') else None,
          'screens': get_screens(tdir, p.get('imagesUrls') or [])}
     t = {k: v for k, v in t.items() if v not in (None, [], '')} | {'runs': runs}
     lib.finish(sid, t, f'# {name}\n\n{desc}\n\nFrom {url}' if desc else None)
@@ -940,8 +945,117 @@ def onedrive(lib):
         env['ZXC_LIMIT'] = str(LIMIT)
     rc = subprocess.run([sys.executable, '-u', '-I', os.path.join(tool, 'onedrive_local.py'), LIB, link], env=env).returncode
     if rc:
-        say(f'  OneDrive importer stopped with code {rc}; run again to carry on.')
+        os.replace(lf, lf + '.failed')
+        say(f'  OneDrive importer stopped (code {rc}). The saved link may be wrong, so it has been set aside;\n'
+            f'  run the "onedrive" section again and paste the share link (it starts https://1drv.ms/) when asked.')
     lib.__init__()
+
+
+# ---------------------------------------------------------------- demos (pouet.net)
+# Demoscene productions with their party placings. zxart.ee already carries most
+# ZX demos (with pouet ids), so this adds what it lacks plus SAM and MSX demos.
+
+POUET_PLATFORMS = {
+    'ZX Spectrum': ('zx-spectrum', FAM128), 'ZX Enhanced': ('zx-spectrum', BETA + ['next']),
+    'SAM Coupé': ('sam-coupe', ['sam']), 'MSX': ('msx', ['msx1', 'msx1eu', 'msx2', 'msx2eu']), 'MSX 2': ('msx', ['msx2', 'msx2eu']),
+}
+POUET_KIND = {'demo': 'demo', 'intro': 'demo', '4k': 'demo', '1k': 'demo', '256b': 'demo', '128b': 'demo', '64b': 'demo',
+              '32b': 'demo', 'dentro': 'demo', 'demotool': 'utility', 'musicdisk': 'music', 'procedural graphics': 'demo',
+              'slideshow': 'demo', 'artpack': 'demo', 'diskmag': 'application', 'game': 'game', 'cracktro': 'demo',
+              'invitation': 'demo', 'report': 'demo', 'wild': 'demo', 'votedisk': 'demo', 'fastdemo': 'demo', 'bbstro': 'demo'}
+POUET_CACHE = {}
+
+
+def pouet_prod(pid):
+    """The pouet prod with its comments (one API call), cached for the reviews pass."""
+    if pid not in POUET_CACHE:
+        POUET_CACHE[pid] = json.loads(fetch(f'https://api.pouet.net/v1/prod/comments/?id={pid}'))['prod']
+    return POUET_CACHE[pid]
+
+
+def pouet_reviews(pid):
+    p = pouet_prod(pid)
+    url = f'https://www.pouet.net/prod.php?which={pid}'
+    up, pig, down = (int(p.get(k) or 0) for k in ('voteup', 'votepig', 'votedown'))
+    ratings = [{'site': 'pouet', 'url': url, 'score': round((float(p.get('voteavg') or 0) + 1) * 5, 2), 'scale': 10,
+                'votes': up + pig + down, 'version': None}] if up + pig + down else []
+    reviews = []
+    for c in p.get('comments') or []:
+        text = html.unescape(c.get('comment') or '').strip()
+        if not text:
+            continue
+        rt = str(c.get('rating'))
+        reviews.append({'site': 'pouet', 'url': url, 'author': (c.get('user') or {}).get('nickname'),
+                        'date': (c.get('addedDate') or '')[:10] or None,
+                        'score': {'1': 10.0, '0': 5.0, '-1': 0.0}.get(rt), 'scale': 10 if rt in ('1', '0', '-1') else None,
+                        'version': None, 'title': None} | english(text))
+    return ratings, reviews
+
+
+def demos(lib):
+    for plat, (platform, mach) in POUET_PLATFORMS.items():
+        ids, page = [], 1
+        while True:
+            try:
+                pg = fetch('https://www.pouet.net/prodlist.php?' + urllib.parse.urlencode({'platform[]': plat, 'page': page})).decode('utf-8', 'replace')
+            except Exception as e:
+                say(f'  pouet.net {plat} page {page}: {e}')
+                break
+            new = [i for i in dict.fromkeys(re.findall(r'prod\.php\?which=(\d+)', pg)) if i not in ids]
+            if not new:
+                break
+            ids += new
+            page += 1
+            if LIMIT and len(ids) >= LIMIT * 4:
+                break
+        todo = [i for i in ids if not lib.has('pouet', i)]
+        say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
+        if LIMIT:
+            todo = todo[:LIMIT]
+
+        def one(pid, platform=platform, mach=mach, plat=plat):
+            p = pouet_prod(pid)
+            name = html.unescape(p.get('name') or '').strip() or pid
+            dl = (p.get('download') or '').strip()
+            if not dl:
+                return None
+            if 'files.scene.org/view/' in dl:
+                dl = dl.replace('files.scene.org/view/', 'files.scene.org/get/')
+            elif not re.search(r'\.(zip|rar|7z|lzh|lha|tap|tzx|trd|scl|sna|z80|dsk|mgt|rom|nex)(\?|$)', dl, re.I):
+                return None
+            groups = [html.unescape(g.get('name') or '') for g in p.get('groups') or [] if g.get('name')]
+            sid = lib.claim(name, '-' + slug(plat), 'pouet', pid)
+            tdir = os.path.join(TITLES, sid)
+            files = get_files(tdir, dl, urllib.parse.unquote(dl.rsplit('/', 1)[-1].split('?')[0]), 'ru' if platform == 'zx-spectrum' else None)
+            if not files:
+                return None
+            if platform == 'msx':
+                keep = [f for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.dsk', '.cas', '.mx1', '.mx2')]
+                slot = lambda f: {'.rom': 'cart1', '.mx1': 'cart1', '.mx2': 'cart1', '.cas': 'tape'}.get(os.path.splitext(f)[1].lower(), 'disk0')
+                runs = [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': slot(f),
+                         'needs': {'disk0': ['msx-disk'], 'tape': ['msx-tape']}.get(slot(f), [])} for f in keep]
+            else:
+                runs = group_runs([run_table(f, mach, platform) for f in files])
+            if not runs:
+                runs = [{'platform': platform, 'machines': mach, 'files': files, 'slot': 'sd0', 'needs': [],
+                         'notes': 'No runnable file recognised; see files/.'}]
+            pl = (p.get('placings') or [{}])[0] if p.get('placings') else {}
+            party = {'name': html.unescape(((pl.get('party') or {}).get('name')) or ''), 'year': int(pl['year']) if str(pl.get('year') or '').isdigit() else None,
+                     'compo': pl.get('compo_name'), 'place': int(pl['ranking']) if str(pl.get('ranking') or '').isdigit() and int(pl['ranking']) < 97 else None} if pl else None
+            yr = (p.get('releaseDate') or '')[:4]
+            url = f'https://www.pouet.net/prod.php?which={pid}'
+            types = p.get('types') or [p.get('type')]
+            ids = {'pouet': int(pid)}
+            if str(p.get('demozoo') or '0') not in ('0', ''):
+                ids['demozoo'] = int(p['demozoo'])
+            tt = {'name': name, 'kind': POUET_KIND.get((types[0] or '').lower(), 'demo'), 'year': int(yr) if yr.isdigit() else None,
+                  'authors': groups, 'publisher': groups[0] if groups else None, 'genres': [t for t in types if t],
+                  'tags': ['demoscene', plat.lower()], 'license': 'freeware', 'source': url, 'sources': [url, dl],
+                  'ids': ids, 'party': party, 'runs': runs,
+                  'screens': get_screens(tdir, [p['screenshot']] if p.get('screenshot') else [], None, 1)}
+            lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [], '')} | {'runs': runs})
+            return f'{name} ({len(files)} files)'
+        batch(todo, one, f'pouet {plat}')
 
 
 # ---------------------------------------------------------------- ratings and reviews
@@ -1073,7 +1187,7 @@ def zxart_reviews(zid, prod):
     while stack:
         c = stack.pop(0)
         stack += c.get('children') or []
-        orig = (c.get('originalContent') or plain(c.get('content'))).strip()
+        orig = html.unescape(c.get('originalContent') or plain(c.get('content'))).strip()
         if not orig:
             continue
         d = re.match(r'(\d\d)\.(\d\d)\.(\d{4})', c.get('date') or '')
@@ -1081,7 +1195,7 @@ def zxart_reviews(zid, prod):
                 'date': f'{d.group(3)}-{d.group(2)}-{d.group(1)}' if d else None, 'score': None, 'scale': None,
                 'version': None, 'title': None}
         if c.get('translated'):
-            reviews.append(base | {'language': None, 'text': c['translated'].strip(), 'original': orig, 'translated': True})
+            reviews.append(base | {'language': None, 'text': plain(c['translated']), 'original': orig, 'translated': True})
         else:
             reviews.append(base | english(orig))
     return ratings, reviews
@@ -1096,7 +1210,7 @@ def reviews(lib):
         except Exception:
             continue
         ids = j.get('ids') or {}
-        if not (ids.get('zxart') or ids.get('zxdb')):
+        if not (ids.get('zxart') or ids.get('zxdb') or ids.get('pouet')):
             continue
         rf = os.path.join(d, 'reviews.json')
         if os.path.exists(rf) and time.time() - os.path.getmtime(rf) < REVIEWS_DAYS * 86400:
@@ -1126,6 +1240,10 @@ def reviews(lib):
             a, b = sc_reviews(ids['zxdb'])
             ratings += a
             revs += b
+        if ids.get('pouet'):
+            a, b = pouet_reviews(ids['pouet'])
+            ratings += a
+            revs += b
         out = {'format': 1, 'title': t, 'updated': TODAY, 'ratings': ratings, 'reviews': revs}
         rf = os.path.join(TITLES, t, 'reviews.json')
         with open(rf + '.part', 'w', encoding='utf-8') as f:
@@ -1151,7 +1269,7 @@ def main():
                     worldofsam(lib)
                 if s == 'mb03':
                     mb03_site(lib)
-            elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'reviews'):
+            elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'demos', 'reviews'):
                 globals()[s](lib)
             else:
                 say(f'  unknown section {s}')
