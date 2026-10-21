@@ -19,9 +19,9 @@ ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
-.PHONY: all desktop test sst vfat esp nextpi state wasm wasmtest clean
+.PHONY: all desktop test sst sst6502 vfat esp nextpi state wasm wasmtest clean
 
-all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
+all: $(BUILD)/zxrun $(BUILD)/zex $(BUILD)/sst $(BUILD)/sst6502 $(BUILD)/vfattool $(BUILD)/esp $(BUILD)/zxm
 
 $(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/zex.c $(CORE_SRC)
@@ -48,11 +48,18 @@ test: $(BUILD)/zex
 clean:
 	rm -rf $(BUILD)
 
-$(BUILD)/sst: tests/sst.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
+$(BUILD)/sst: tests/sst.c tests/json.h $(CORE_SRC) src/z80/z80.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/sst.c $(CORE_SRC)
 
 sst: $(BUILD)/sst
 	tests/run-sst.sh
+
+$(BUILD)/sst6502: tests/sst6502.c tests/json.h src/m6502/m6502.c src/m6502/m6502.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/sst6502.c src/m6502/m6502.c
+
+# SingleStepTests/65x02: every 6502 opcode, every bus cycle.
+sst6502: $(BUILD)/sst6502
+	tests/run-sst6502.sh
 
 $(BUILD)/vfattool: tests/vfattool.c $(STORE_SRC) src/storage/blockdev.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/vfattool.c $(STORE_SRC)
