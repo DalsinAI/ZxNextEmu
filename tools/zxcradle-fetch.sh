@@ -1013,7 +1013,7 @@ def spec256(lib):
             # A 128K snapshot (longer than the 49179-byte 48K one) will not load on a 48K machine.
             runs += [run_table(f, (['zx48'] if os.path.getsize(os.path.join(tdir, f)) <= 49179 else []) +
                                ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'], notes='The original game in Spectrum colours.')
-                     for f in game if f.lower().endswith('.sna')]
+                     for f in snaps if f.lower().endswith('.sna')]
             name = re.sub(r'\s+', ' ', g).strip()
             lib.finish(sid, {'name': name, 'kind': 'game', 'tags': ['spec256', '256 colours'], 'license': 'unknown',
                              'source': u.replace('codeload.github.com', 'github.com').rsplit('/zip/', 1)[0],
