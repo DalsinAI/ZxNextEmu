@@ -942,7 +942,7 @@ def msx(lib):
     for line in listing.splitlines():
         p = line.strip().replace('\\', '/')
         d = next((k for k in FH_DIRS if p.startswith(k + '/')), None)
-        if not d or '[b]' in p or '/WAV' in p.upper() or 'MSX2+' in p or 'Turbo' in p:
+        if not d or '[b]' in p or '/WAV' in p.upper() or 'MSX2+' in p or re.search(r'turbo[ -]?r\b', p, re.I) and not re.search(r'\b(no|not for|without|non)[ -]+turbo[ -]?r', p, re.I):
             continue
         fn = p.rsplit('/', 1)[-1]
         demo = d == 'Demos'
@@ -976,7 +976,8 @@ def msx(lib):
             # Only cartridges get runs, one per ROM (a slot takes one file): floppy and hard disk slots
             # take block media the player cannot make yet.
             if slot == 'cart1':
-                runs += [{'platform': 'msx', 'machines': FH_MACH[gen], 'files': [f], 'slot': slot, 'needs': [],
+                # .mx2 is an MSX2 cartridge, whichever folder it came from
+                runs += [{'platform': 'msx', 'machines': FH_MACH['msx2' if f.lower().endswith('.mx2') else gen], 'files': [f], 'slot': slot, 'needs': [],
                           'notes': d.split('/')[-1]} for f in keep if f.lower().endswith(('.rom', '.mx1', '.mx2'))]
         if not n:
             return None
@@ -1318,11 +1319,20 @@ def translate(text):
         return text, None
     out, lang = [], None
     chunks, cur = [], ''
+    # one paragraph longer than a request takes is cut at spaces, or hard cut when it has none
+    pieces = []
     for para in text.split('\n'):
-        if len(cur) + len(para) > 4000 and cur:
+        while len(para) > 4000:
+            k = para.rfind(' ', 0, 4000)
+            k = k if k > 0 else 4000
+            pieces.append(para[:k])
+            para = para[k:]
+        pieces.append(para + '\n')
+    for piece in pieces:
+        if len(cur) + len(piece) > 4000 and cur:
             chunks.append(cur)
             cur = ''
-        cur += para + '\n'
+        cur += piece
     chunks.append(cur)
     try:
         for c in chunks:
