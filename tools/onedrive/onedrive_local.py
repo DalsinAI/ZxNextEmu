@@ -330,8 +330,8 @@ def main():
     recs = json.load(gzip.open(recp, 'rt', encoding='utf-8')) if os.path.exists(recp) else []
     logp = os.path.join(dest, '_onedrive', 'filed.json')
     done = json.load(open(logp)) if os.path.exists(logp) else {}
-    if limit:   # a trial takes the next records not yet filed, so each run moves on
-        recs = [r for r in recs if done.get(str(r['zxdb'] or r['groups'][0])) not in ('new', 'merged')][:limit]
+    if limit:   # a trial takes the next records not tried yet, so each run moves on; a full run retries missing ones
+        recs = [r for r in recs if str(r['zxdb'] or r['groups'][0]) not in done][:limit]
         want = {x['src'] for r in recs for x in r['runs']}
         items = [i for i in items if i['path'] in want]
     total = sum(i['size'] for i in items)
