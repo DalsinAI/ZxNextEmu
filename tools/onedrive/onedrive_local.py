@@ -328,8 +328,10 @@ def main():
         sys.exit(4)
     want = None
     recs = json.load(gzip.open(recp, 'rt', encoding='utf-8')) if os.path.exists(recp) else []
-    if limit:
-        recs = recs[:limit]
+    logp = os.path.join(dest, '_onedrive', 'filed.json')
+    done = json.load(open(logp)) if os.path.exists(logp) else {}
+    if limit:   # a trial takes the next records not yet filed, so each run moves on
+        recs = [r for r in recs if done.get(str(r['zxdb'] or r['groups'][0])) not in ('new', 'merged')][:limit]
         want = {x['src'] for r in recs for x in r['runs']}
         items = [i for i in items if i['path'] in want]
     total = sum(i['size'] for i in items)
@@ -347,8 +349,6 @@ def main():
     if not recs:
         say('No records file found, so the files are downloaded but not filed into the library.')
         sys.exit(3 if failed else 0)
-    logp = os.path.join(dest, '_onedrive', 'filed.json')
-    done = json.load(open(logp)) if os.path.exists(logp) else {}
     index_library(lib)
     say(f'Filing {len(recs)} titles into {lib}...')
     for n, r in enumerate(recs, 1):

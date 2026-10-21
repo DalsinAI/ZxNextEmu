@@ -284,7 +284,7 @@ def unpack(path, dest, charset=None):
                 if subprocess.run(['unar', '-q', '-f', '-D', '-o', dest, path], capture_output=True).returncode == 0:
                     return True
             if low.endswith(('.lzh', '.lha')) and shutil.which('lha'):
-                if subprocess.run(['lha', 'xqf', path], cwd=dest, capture_output=True).returncode == 0:
+                if subprocess.run(['lha', 'xqf', os.path.abspath(path)], cwd=dest, capture_output=True).returncode == 0:
                     return True
             shutil.rmtree(dest, ignore_errors=True)
     except Exception as e:
@@ -378,6 +378,8 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
             m = list(BETA)
     if ext in ('.dsk', '.mgt', '.sad') and platform != 'sam-coupe':
         return None
+    if slot == 'snapshot':   # the SAM has no snapshot slot (src/core/zxm_sam.c: disks and tape only)
+        m = [x for x in m if x != 'sam']
     # The Next has no snapshot slot, and a tape needs NextZXOS from an SD card the player cannot mount
     # from bytes yet; zxart's 16K Spectrum is no machine here (a 48K runs those).
     m = [x for x in m if x not in ('next', 'zx16')]
@@ -426,6 +428,25 @@ def batch(items, fn, label, total=None):
                 print(f'[{label} {done[0]}/{total}] {msg}', flush=True)
     with ThreadPoolExecutor(WORKERS) as ex:
         list(ex.map(one, items))
+
+
+def batch_or_trial(items, fn, label, left=None):
+    """batch() for a full run. With LIMIT, one title at a time until `left` (default LIMIT) are filed:
+    a title that fails stays unfinished and does not use up the trial, so later runs move past it."""
+    if not LIMIT:
+        return batch(items, fn, label)
+    left = LIMIT if left is None else left
+    for it in items:
+        if left <= 0:
+            break
+        try:
+            msg = fn(it)
+        except Exception as e:
+            msg = None
+            log(label, 'failed', e)
+        if msg:
+            left -= 1
+            say(f'[{label}] {msg}')
 
 
 # ---------------------------------------------------------------- zxart.ee
@@ -668,6 +689,7 @@ def mb03_site(lib, made=0):
         raise RuntimeError(f'MB03+ site: {e}')
     ids = {html.unescape(n): i for i, n in re.findall(r'/file/d/([^/"]+).*?flip-entry-title">([^<]+)', page, re.S)}
     say(f'MB03+ site: {len(MB03_RECS)} titles')
+    absent = [fn for _, _, _, fn, _ in MB03_RECS if fn not in ids and not lib.has('mb03site', fn)]
     for name, kind, year, fn, summary in MB03_RECS:
         if lib.has('mb03site', fn) or fn not in ids:
             continue
@@ -683,6 +705,8 @@ def mb03_site(lib, made=0):
                          'license': 'freeware', 'source': MB03_SITE, 'sources': [MB03_SITE], 'ids': {'mb03site': fn}, 'runs': runs})
         made += 1   # counted once filed, so a download that fails does not use up a trial run
         say(f'[mb03 site] {name} ({len(files)} files)')
+    if absent:  # the files listed were done; the page has changed or lost some, so mark the section stopped
+        raise RuntimeError(f'MB03+ site: {", ".join(absent)} not found in the Drive folder')
 
 
 # ---------------------------------------------------------------- World of SAM
@@ -788,8 +812,6 @@ def vtrd(lib):
     # A full version whose name zxart.ee already filed is skipped before LIMIT, so trial runs keep moving on.
     todo = [r for r in rows if not lib.has('vtrd', r[1])
             and not (r[0] == 'full_ver' and lib.has_name(re.sub(r'\s*\(.*\)$', '', r[2]) or r[2]))]
-    if LIMIT:
-        todo = todo[:LIMIT]
 
     def one(row):
         t, href, name, auth, grp, rel = row
@@ -822,7 +844,7 @@ def vtrd(lib):
               'runs': runs, 'screens': get_screens(tdir, shots, None, 1)}
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': runs})
         return f'{name} ({len(files)} files)'
-    batch(todo, one, 'vtrd')
+    batch_or_trial(todo, one, 'vtrd')
     if lost:  # the other lists were done; this marks the section as stopped so a rerun fills the gap
         raise RuntimeError(f'vtrd.in list {", ".join(lost)} could not be fetched')
 
@@ -864,8 +886,6 @@ def msx(lib):
         g['files'].append((d, p, gen))
     say(f'file-hunter.com MSX: {len(groups)} titles')
     todo = [(k, g) for k, g in groups.items() if not lib.has('filehunter', k)]
-    if LIMIT:
-        todo = todo[:LIMIT]
     order = list(FH_DIRS)
 
     def one(kg):
@@ -894,7 +914,7 @@ def msx(lib):
               'source': 'https://www.file-hunter.com/', 'sources': [src], 'ids': {'filehunter': key}, 'runs': runs}
         lib.finish(sid, tt)
         return f'{g["name"]} ({n} files)'
-    batch(todo, one, 'msx')
+    batch_or_trial(todo, one, 'msx')
 
 
 # ---------------------------------------------------------------- SymbOS (symbos.de)
@@ -934,8 +954,6 @@ def symbos(lib):
                              'source': SY, 'sources': [SY], 'ids': {'symbos': 'os'}, 'runs': runs})
             say('[symbos] SymbOS 4.0')
     todo = [a for a in apps if not lib.has('symbos', a[0]) and (a[7] == '0' or set(a[7]) & {'2', '7'})]
-    if LIMIT:
-        todo = todo[:max(0, LIMIT - made)]
 
     def one(a):
         aid, name, ver, date, plats = a[0], a[1], a[2], a[3], a[7]
@@ -957,7 +975,7 @@ def symbos(lib):
                    f'# {name} {ver}\n\n{html.unescape(re.sub("<[^>]+>", " ", a[16] or ""))}\n\n'
                    f'A SymbOS app for {" and ".join(on)}: copy files/ onto the drive of a set-up that boots SymbOS.')
         return f'{name} ({len(files)} files)'
-    batch(todo, one, 'symbos')
+    batch_or_trial(todo, one, 'symbos', max(0, LIMIT - made))
 
 
 # ---------------------------------------------------------------- Spec256
@@ -1433,6 +1451,8 @@ def reviews(lib):
         n = sum(1 for r in revs if r.get('translated'))
         return f'{t}: {len(ratings)} ratings, {len(revs)} reviews' + (f' ({n} translated)' if n else '')
     batch(todo, one, 'reviews')
+    if lost:  # the others were refreshed; this marks the section as stopped so a rerun fills the gap
+        raise RuntimeError(f'zxart.ee ratings for {len(lost)} titles could not be fetched')
 
 
 # ---------------------------------------------------------------- main

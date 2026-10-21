@@ -263,9 +263,10 @@ const handlers = {
       if (!insert('tape', msg.name, bytes)) throw new Error(`${msg.name} is not a tape this machine can read.`);
       if (msg.autostart) {
         x.zxm_reset(m, 1);
-        const is48 = msg.id === 'zx48';
-        const p = cstr(is48 ? 'j""\n' : '\n');
-        x.zxm_type(m, p, is48 ? 120 : 90);
+        const is48 = msg.id === 'zx48', sam = msg.id === 'sam';
+        // 48K: LOAD "" (J then quotes); SAM: past the start-up screen, then LOAD ""; 128K: the menu's Tape Loader
+        const p = cstr(is48 ? 'j""\n' : sam ? '\n\n' + '\x01'.repeat(5) + 'load ""\n' : '\n');
+        x.zxm_type(m, p, is48 ? 120 : sam ? 150 : 90);
         x.free(p);
       }
       postMessage({ type: 'media', slot: 'tape', name: msg.name });
