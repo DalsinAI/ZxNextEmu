@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import zlib
@@ -71,10 +70,14 @@ def cmd_trace(a):
     for f in ("sprites.json", "plan.json", "snapshot.sha256"):
         if os.path.exists(os.path.join(a.work, f)):
             os.remove(os.path.join(a.work, f))
+    # Hashed before and after: a file swapped mid-trace would not match what s256trace loaded.
+    stamp = sha256_of(a.snapshot) + "\n" + roms_sha256(a.roms) + "\n"
     subprocess.check_call([exe, "-r", a.roms, "-f", str(a.frames), "-k", str(a.seed),
                            "-s", str(a.frames // 3), a.snapshot, a.work])
+    if sha256_of(a.snapshot) + "\n" + roms_sha256(a.roms) + "\n" != stamp:
+        sys.exit(f"{a.snapshot} or the ROMs in {a.roms} changed during the trace; run trace again.")
     with open(os.path.join(a.work, "snapshot.sha256"), "w") as f:
-        f.write(sha256_of(a.snapshot) + "\n" + roms_sha256(a.roms) + "\n")
+        f.write(stamp)
 
 
 ROM_NAMES = ("48.rom", "128-0.rom", "128-1.rom")  # what s256trace loads (trace.c)
@@ -418,7 +421,8 @@ def cmd_emit(a):
     # The graphics planes are built from the traced memory, so they must go with that same snapshot.
     stamp = os.path.join(a.work, "snapshot.sha256")
     lines = open(stamp).read().split() if os.path.exists(stamp) else []
-    if not lines or lines[0] != sha256_of(a.snapshot):
+    snap = open(a.snapshot, "rb").read()   # kept in memory: the copy below is these checked bytes
+    if not lines or lines[0] != hashlib.sha256(snap).hexdigest():
         sys.exit(f"{a.snapshot} is not the snapshot traced into {a.work}; run trace on it again first.")
     # The ROM is in the traced memory too, and goes into a .GFB, so the replay ROMs must be the traced ones.
     if len(lines) < 2 or lines[1] != roms_sha256(a.roms):
@@ -441,11 +445,10 @@ def cmd_emit(a):
     # zxrun -g loads every Spectrum or Spec256 file in the folder, so clear out an earlier package first.
     for f in os.listdir(a.out):
         old = os.path.join(a.out, f)
-        if re.search(r"\.(sna|z80|gf[x0-9ab]|b\d\d|cfg|pal)$", f, re.I) and not os.path.samefile(old, a.snapshot):
-            os.remove(old)
-    dst = os.path.join(a.out, name + ".SNA")
-    if not (os.path.exists(dst) and os.path.samefile(dst, a.snapshot)):
-        shutil.copyfile(a.snapshot, dst)
+        if re.search(r"\.(sna|z80|gf[x0-9ab]|b\d\d|cfg|pal)$", f, re.I):
+            os.remove(old)   # the source snapshot too, if it is here: only NAME.SNA may be left
+    with open(os.path.join(a.out, name + ".SNA"), "wb") as f:
+        f.write(snap)
 
     def page(base):
         buf = bytearray(0x4000 * 8)

@@ -261,6 +261,41 @@ static void begin(s256 *s)
     s->recording = 1;
 }
 
+/* A fixed shuffle of 0-255 for the tag check in planes 4 and 5. */
+static uint8_t tag_mix[256];
+static int tag_mix_made;
+
+static void make_tag_mix(void)
+{
+    uint32_t x = 0x2545f491u;
+    int i;
+    tag_mix_made = 1;
+    for (i = 0; i < 256; i++)
+        tag_mix[i] = (uint8_t)i;
+    for (i = 255; i > 0; i--) {
+        int j;
+        uint8_t t;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        j = (int)(x % (uint32_t)(i + 1));
+        t = tag_mix[i];
+        tag_mix[i] = tag_mix[j];
+        tag_mix[j] = t;
+    }
+}
+
+/* Is this byte's tag still the one its source got? */
+static int tag_ok(const uint8_t *pl)
+{
+    /* Planes 2 and 3 carry the complement: a constant (every plane alike) or
+       an ALU mix of two tags breaks that. CPL, rotates and XOR with a
+       constant keep it, but almost never keep planes 4 and 5, the shuffled
+       tag, since the shuffle does not commute with them. */
+    return pl[2] == (uint8_t)~pl[0] && pl[3] == (uint8_t)~pl[1] &&
+           pl[4] == tag_mix[pl[0]] && pl[5] == tag_mix[pl[1]];
+}
+
 /* Report this instruction's writes to the bitmap and blank their tags. */
 static void traced(s256 *s)
 {
@@ -273,12 +308,8 @@ static void traced(s256 *s)
         uint8_t v;
         pl += (a & 0x3fff) * 8;
         v = zx_peek(s->m, a);
-        /* Planes 2 and 3 carry the tag's complement. A byte moved from its
-           source keeps that pairing; a constant (every plane alike) or an ALU
-           mix of two tags almost never does, so those are no tag. */
-        s->trace(s->trace_user, a, v, pl[2] == (uint8_t)~pl[0] && pl[3] == (uint8_t)~pl[1]
-                 ? (uint16_t)(pl[0] | pl[1] << 8) : 0);
-        pl[0] = pl[1] = pl[2] = pl[3] = 0;
+        s->trace(s->trace_user, a, v, tag_ok(pl) ? (uint16_t)(pl[0] | pl[1] << 8) : 0);
+        memset(pl, 0, 6);
     }
 }
 
@@ -397,7 +428,7 @@ void s256_render(s256 *s)
                 int bit = 7 - x, ci = 0, draw = 1;
                 const uint8_t *src;
                 uint8_t rgb[3];
-                /* While tracing, planes 0 to 3 carry address tags, so the
+                /* While tracing, planes 0 to 5 carry address tags, so the
                    picture comes from the plain Spectrum byte instead. */
                 if (s->trace)
                     ci = (orig >> bit & 1) ? 0xff : 0;
@@ -773,11 +804,16 @@ void s256_trace(s256 *s, s256_trace_fn fn, void *user)
             if (pl)
                 expand(pl, s->m->rd[slot]);
         }
+        /* and no tags left in the shadow registers either */
+        for (i = 0; i < CORES; i++)
+            s->core[i] = s->m->cpu;
     }
     s->trace = fn;
     s->trace_user = user;
     if (!fn)
         return;
+    if (!tag_mix_made)
+        make_tag_mix();
     for (slot = 0; slot < 4; slot++) {
         uint8_t *pl = planes_of(s, s->m->rd[slot]);
         if (!pl)
@@ -789,6 +825,8 @@ void s256_trace(s256 *s, s256_trace_fn fn, void *user)
             pl[i * 8 + 1] = blank ? 0 : (uint8_t)(a >> 8);
             pl[i * 8 + 2] = blank ? 0 : (uint8_t)~a;
             pl[i * 8 + 3] = blank ? 0 : (uint8_t)(~a >> 8);
+            pl[i * 8 + 4] = blank ? 0 : tag_mix[a & 0xff];
+            pl[i * 8 + 5] = blank ? 0 : tag_mix[a >> 8];
         }
     }
 }
