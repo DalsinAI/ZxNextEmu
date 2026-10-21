@@ -162,7 +162,7 @@ WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/spec256/spec256.c src/spec256/palette.c sr
            src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c \
            src/devices/saa1099.c src/devices/sid.c
 WASM_EXPORTS = zxm_lookup zxm_machine zxm_size zxm_create zxm_destroy zxm_info_of zxm_reset \
-           zxm_run_frame zxm_framebuffer zxm_audio zxm_input zxm_type zxm_typing \
+           zxm_run_frame zxm_framebuffer zxm_fb_width zxm_audio zxm_input zxm_type zxm_typing \
            zxm_media_insert zxm_media_eject zxm_media_active zxm_media_progress zxm_interface_lookup zxm_interface_at zxm_attach zxm_slots zxm_inputs \
            zxm_state_size zxm_state_save zxm_state_load \
            zxm_debugger malloc free

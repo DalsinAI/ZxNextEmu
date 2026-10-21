@@ -31,7 +31,7 @@ function readCstr(p) {
 
 const info = x.zxm_lookup(cstr(id));
 if (!info) { console.error(`unknown machine ${id}`); process.exit(2); }
-const fbW = dv().getUint16(info + 16, true), fbH = dv().getUint16(info + 18, true);
+const fbH = dv().getUint16(info + 18, true);
 const romNames = dv().getUint32(info + 28, true);
 const romsOptional = dv().getUint32(info + 40, true);
 
@@ -117,10 +117,10 @@ function run(n, h) {
     x.zxm_run_frame(m);
     const fb = x.zxm_framebuffer(m, out);
     const pitch = dv().getInt32(out, true);
-    const mem = u8();
+    const mem = u8(), w = x.zxm_fb_width(m);
     for (let y = 0; y < fbH; y++) {
       const a = fb + y * pitch * 2;
-      h = fnv(h, mem.subarray(a, a + fbW * 2));
+      h = fnv(h, mem.subarray(a, a + w * 2));
     }
     const au = x.zxm_audio(m, out);
     const samples = dv().getInt32(out, true);

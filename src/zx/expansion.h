@@ -12,7 +12,15 @@
  *                 (1F 0F 4F 5F): A and B on the left, C and D on the right
  *   Kempston mouse  ports FBDF FFDF FADF
  *   Timex video   port FF: second screen, hi-colour (8x1 attributes),
- *                 interrupt disable
+ *                 hi-res (512x192 in two colours), interrupt disable. The
+ *                 machine's picture becomes 640 wide (zx.h, screen_w) so
+ *                 hi-res keeps every pixel
+ *   Radastan      the ZX-Uno's 128x96 16-colour mode: ZX-Uno registers on
+ *                 FC3B/FD3B (40 on, 41 offset, 42 padding, 43 palette
+ *                 quarter), or 3 in the ULA+ mode register
+ *   GigaScreen    colours mixed for a steady picture (m_zxi_00B or
+ *                 g_zxi_008): 1 the two 128K screens, 2 this frame with the
+ *                 last, 3 that only while the program flips screens
  *   SAA1099       register select on 6F3B or 1FF, data on 6E3B or FF (FF
  *                 is shared with the Timex port, as on the hardware)
  *   SID           6581/8580 on 6C3B (register) and 6D3B (data); register
@@ -56,11 +64,13 @@ enum {
     ZX_EXP_TIMEX      = 16,
     ZX_EXP_SAA        = 32,
     ZX_EXP_SID        = 64,
-    ZX_EXP_ZXI        = 128
+    ZX_EXP_ZXI        = 128,
+    ZX_EXP_RADASTAN   = 256,
+    ZX_EXP_GIGA       = 512
 };
 
 #define ZX_EXP_MB03 (ZX_EXP_DIVMMC | ZX_EXP_TURBOSOUND | ZX_EXP_DAC | ZX_EXP_MOUSE | ZX_EXP_TIMEX \
-                     | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI)
+                     | ZX_EXP_SAA | ZX_EXP_SID | ZX_EXP_ZXI | ZX_EXP_RADASTAN | ZX_EXP_GIGA)
 
 /* m_zxi_001, audio select */
 enum {
@@ -109,6 +119,18 @@ typedef struct zx_exp {
     uint8_t zxi_sel, gzxi_sel;
     uint8_t zxi[8][256];
     uint8_t gzxi[256];
+
+    /* ZX-Uno registers (u_zxi): Radastan, the core ID */
+    uint8_t uno_sel, uno_hi, uno_id;
+    uint8_t uno[256];
+    uint16_t radas_offset;
+
+    /* The 640-wide picture is the interface's (not an ATM's own). */
+    uint8_t own_wide;
+
+    /* GigaScreen: the last frame as drawn, and how the program flips */
+    uint16_t *giga_prev;
+    uint8_t giga_buf, giga_flips;
 } zx_exp;
 
 /* A device is fitted and, where the ZXi registers are, switched on. */
@@ -150,8 +172,14 @@ void zx_exp_io_write(struct zx *m, uint16_t port, uint8_t v);
 void zx_exp_audio_run(struct zx *m, uint32_t dt);
 void zx_exp_audio_take(struct zx *m, uint32_t span, int32_t *l, int32_t *r);
 
-/* Video: where the ULA reads a pixel byte and its attribute (offsets in
- * the screen page), given the standard offsets. */
+/* Video: draw the 8 pixels of a chunk (paper row and column, or outside
+ * the paper for the border) into px, and 16 into wide when the picture is
+ * 640 wide, if a mode of the interface's own shows there. 0 to leave it to
+ * the ULA. */
+int zx_exp_draw(struct zx *m, int row, int col, uint16_t *px, uint16_t *wide);
+
+/* Where the ULA reads a pixel byte and its attribute (offsets in the
+ * screen page), given the standard offsets. */
 static inline void zx_exp_screen(const zx_exp *e, uint32_t *pix, uint32_t *attr)
 {
     if (!(e->features & ZX_EXP_TIMEX))
