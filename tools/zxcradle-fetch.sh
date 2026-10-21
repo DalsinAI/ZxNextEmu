@@ -196,7 +196,14 @@ def norm(s):
 
 def safe_name(n):
     n = os.path.basename(n.replace('\\', '/')) or 'file'
-    return re.sub(r'[\x00-\x1f/:*?"<>|]', '_', n).strip() or 'file'
+    n = re.sub(r'[\x00-\x1f/:*?"<>|]', '_', n).strip() or 'file'
+    if len(n.encode('utf-8', 'surrogateescape')) > 120:   # file systems cap a name at 255 bytes
+        stem, ext = os.path.splitext(n)
+        ext = ext if len(ext) <= 10 else ''
+        while len((stem + ext).encode('utf-8', 'surrogateescape')) > 120:
+            stem = stem[:-1]
+        n = stem.rstrip() + ext
+    return n
 
 
 # ---------------------------------------------------------------- library
@@ -568,27 +575,54 @@ def zx_people(p):
 
 
 def zx_names(prods):
-    """Fill NAMES; returns the (type, id) keys whose lookup failed, so their titles can wait for the next run."""
+    """Fill NAMES; returns the (type, id) keys whose lookup failed, so their titles can wait for the next run.
+    An id zxart answers for but never names (a publisher that is a person, a removed author) is tried as the
+    other type, then recorded as nameless so its titles still file, just without that name."""
     want = sorted({k for p in prods for k in zx_people(p) if k not in NAMES})
     lost = set()
-    for typ, f in (('author', 'authorId'), ('group', 'groupId')):
+
+    def ask(typ, ids):
+        f = typ + 'Id'
+        for size in (50, 10):
+            try:
+                got = {}
+                for i in range(0, len(ids), size):
+                    j = fetch_json(f'{ZX}/types:{typ}/export:{typ}/start:0/limit:{size}/filter:{f}={",".join(ids[i:i + size])};')
+                    for a in j['responseData'].get(typ, []):
+                        got[str(a['id'])] = html.unescape(a['title'])
+                return got
+            except Exception as e:
+                log('zxart names', typ, size, e)
+        return None
+
+    for typ in ('author', 'group'):
         ids = [i for t, i in want if t == typ]
         for i in range(0, len(ids), 50):
-            ch = ','.join(ids[i:i + 50])
-            try:
-                j = fetch_json(f'{ZX}/types:{typ}/export:{typ}/start:0/limit:50/filter:{f}={ch};')
-                for a in j['responseData'].get(typ, []):
-                    NAMES[(typ, str(a['id']))] = html.unescape(a['title'])
-                # an id the answer left out is lost too, so its titles wait rather than file without the name
-                lost.update((typ, x) for x in ids[i:i + 50] if (typ, x) not in NAMES)
-            except Exception as e:
-                log('zxart names', e)
-                lost.update((typ, x) for x in ids[i:i + 50])
+            chunk = ids[i:i + 50]
+            got = ask(typ, chunk)
+            if got is None:   # the lookup itself failed: these titles wait for the next run
+                lost.update((typ, x) for x in chunk)
+                continue
+            for x, n in got.items():
+                NAMES[(typ, x)] = n
+    # Ids zxart leaves out are often aliases (a group's or person's other name) or the other kind of entity.
+    for typ in ('author', 'group'):
+        ids = [i for t, i in want if t == typ and (t, i) not in NAMES and (t, i) not in lost]
+        for other in (typ + 'Alias', 'group' if typ == 'author' else 'author', 'groupAlias' if typ == 'author' else 'authorAlias'):
+            if not ids:
+                break
+            got = ask(other, ids) or {}
+            for x, n in got.items():
+                if x in ids:
+                    NAMES[(typ, x)] = n
+            ids = [x for x in ids if (typ, x) not in NAMES]
+        for x in ids:
+            NAMES[(typ, x)] = None   # zxart has no name for it
     return lost
 
 
 def zx_pubs(r):
-    return [NAMES[('group', str(i))] for i in r.get('publishersIds', []) if ('group', str(i)) in NAMES]
+    return [NAMES[('group', str(i))] for i in r.get('publishersIds', []) if NAMES.get(('group', str(i)))]
 
 
 def zx_companies(p):
@@ -605,7 +639,7 @@ def zx_companies(p):
 
 def zx_authors(r):
     return list(dict.fromkeys(NAMES[('author', str(a['authorId']))] for a in r.get('authorsInfo', [])
-                              if ('author', str(a.get('authorId'))) in NAMES))
+                              if NAMES.get(('author', str(a.get('authorId'))))))
 
 
 def zx_title(lib, p, rels, hw):
