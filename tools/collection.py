@@ -1,6 +1,7 @@
 # Pack the shared title folders into collection.json for the published page.
 # Files are included only for titles whose licence allows redistribution;
-# every title keeps its title.json (or older title.toml), about.md and screenshots.
+# every title keeps its title.json (or older title.toml), about.md, reviews.json
+# and screenshots.
 import base64, json, os, re, sys
 src, out = sys.argv[1], sys.argv[2]
 FREE = {'freeware', 'public-domain'}
@@ -21,6 +22,9 @@ for tid in sorted(os.listdir(src)):
     about = os.path.join(d, 'about.md')
     if os.path.isfile(about):
         t['about'] = open(about, encoding='utf-8').read()
+    reviews = os.path.join(d, 'reviews.json')
+    if os.path.isfile(reviews):
+        t['reviews'] = json.load(open(reviews, encoding='utf-8'))
     for kind in ('files', 'screens'):
         if kind == 'files' and lic not in FREE:
             continue

@@ -5,6 +5,7 @@ import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
   importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, attachFiles, romsAdded,
   normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
+  versionsOf, titleLangs, langName, langFlag, ratingOf,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -15,7 +16,7 @@ const JOYSTICKS = ['', 'kempston', 'sinclair', 'cursor', 'none'];
 
 let titles = [];
 let opts = null;          // { machines(): [{id, name}], runnable(id), run(title, run, machine), current?(): machine id }
-const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), license: new Set() };
+const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), lang: new Set(), license: new Set() };
 // Instance mode: show only what runs on one set-up {machine, offers, name}.
 // null shows everything. It follows the running machine unless the user
 // chose Show everything.
@@ -155,6 +156,7 @@ function facetValues(t) {
     genre: t.meta.genres || [],
     decade: [decade(t.meta.year)].filter(Boolean),
     needs: [...new Set((t.meta.runs || []).flatMap(r => r.needs || []))],
+    lang: titleLangs(t),
     license: [t.meta.license || 'unknown'],
   };
 }
@@ -176,7 +178,8 @@ function render() {
   const bySort = (a, b) =>
     sort === 'year' ? (a.meta.year || 9999) - (b.meta.year || 9999) || a.meta.name.localeCompare(b.meta.name)
       : sort === 'added' ? b.added - a.added
-        : a.meta.name.localeCompare(b.meta.name);
+        : sort === 'rating' ? (ratingOf(b)?.score ?? -1) - (ratingOf(a)?.score ?? -1) || a.meta.name.localeCompare(b.meta.name)
+          : a.meta.name.localeCompare(b.meta.name);
   let list = visible().sort(bySort);
   const fits = new Map();
   let needs = [];
@@ -208,7 +211,7 @@ function render() {
     li.innerHTML = `<button class="lib-card" data-id="${esc(t.id)}">
       <span class="lib-cover">${cover ? `<img alt="" src="${url(cover.blob)}">` : `<span class="lib-nocover"><i class="zxc-stripe"></i><span>${t.needsShots && runs ? 'Taking screenshots' : t.loadFailed ? 'Did not load in the browser' : 'No screenshot'}</span></span>`}</span>
       <span class="lib-card-text">
-        <b>${esc(t.meta.name)}</b>
+        <b>${esc(t.meta.name)}${flags(t)}</b>${stars(t)}
         <small>${esc([t.meta.year, t.meta.publisher || (t.meta.authors || [])[0]].filter(Boolean).join(' · ') || kindWord(t.meta.kind))}</small>
         ${fits.has(t.id) ? fitChip(fits.get(t.id)) : `<span class="badges">${machines.slice(0, 4).map(m => `<span class="badge${opts.runnable(m) ? '' : ' off'}">${esc(label(m))}</span>`).join('')}${machines.length > 4 ? `<span class="badge more">${machines.length - 4} more</span>` : ''}</span>`}
       </span></button>`;
@@ -217,6 +220,14 @@ function render() {
   }
   $('lib-empty').hidden = titles.length > 0;
   $('lib-none').hidden = !titles.length || list.length > 0;
+}
+
+// Flags for the languages a title comes in, English left out.
+const flagOf = c => `<span class="lang-flag" title="${esc(langName(c))}" aria-label="${esc(langName(c))}">${langFlag(c) || esc(c.toUpperCase())}</span>`;
+const flags = t => titleLangs(t).filter(c => c !== 'en').map(flagOf).join('');
+function stars(t) {
+  const r = ratingOf(t);
+  return r ? `<small class="lib-rating" title="${esc(`${r.score} out of 10${r.votes ? ` from ${r.votes} votes` : ''}`)}">★ ${r.score.toFixed(1)}</small>` : '';
 }
 
 const kindWord = k => (k || 'game').replace(/^./, c => c.toUpperCase()).replace('-', ' ');
@@ -235,8 +246,8 @@ function renderFilters() {
   const inMode = instanceMode() ? t => fitFor(t, setup).fit === 'runs' : () => true;
   for (const k of Object.keys(counts))
     for (const t of visible(k)) if (inMode(t)) for (const v of facetValues(t)[k]) counts[k].set(v, counts[k].get(v) + 1);
-  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', license: 'Licence' };
-  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, license: l => l.replace('-', ' ') };
+  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', lang: 'Language', license: 'Licence' };
+  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, lang: c => `${langFlag(c)} ${langName(c)}`.trim(), license: l => l.replace('-', ' ') };
   box.textContent = '';
   if (instanceMode()) {
     const sec = document.createElement('section');
@@ -273,6 +284,23 @@ function renderFilters() {
 
 // ---- a title's page -------------------------------------------------------------
 
+// Ratings from each site, then the reviews, in English. A translated review
+// keeps its original a click away.
+function reviewsHtml(t) {
+  const r = t.reviews;
+  if (!r) return '';
+  const all = ratingOf(t);
+  const link = (x, text) => x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
+  const score = x => x.score != null && x.scale ? `${+x.score}/${x.scale}` : '';
+  return `<h3>Ratings and reviews${all ? ` <small class="lib-rating">★ ${all.score.toFixed(1)} out of 10</small>` : ''}</h3>
+    ${r.ratings.length ? `<ul class="det-ratings">${r.ratings.map(x => `<li>${link(x, x.site || 'Rating')} <b>${esc(score(x))}</b>${x.votes ? ` <small>${x.votes} vote${x.votes === 1 ? '' : 's'}</small>` : ''}${x.version ? ` <small>${esc(x.version)}</small>` : ''}</li>`).join('')}</ul>` : ''}
+    ${r.reviews.map(x => `<article class="det-review">
+      <header>${x.title ? `<b>${esc(x.title)}</b> ` : ''}<small>${[x.author && esc(x.author), x.site && link(x, x.site), x.date && esc(x.date), score(x) && `<b>${esc(score(x))}</b>`].filter(Boolean).join(' · ')}</small></header>
+      <div class="det-review-text">${esc(x.text)}</div>
+      ${x.translated ? `<details><summary>Translated from ${x.language ? `${flagOf(x.language)} ${esc(langName(x.language))}` : 'another language'}</summary><div class="det-review-text">${esc(x.original || '')}</div></details>` : ''}
+    </article>`).join('')}`;
+}
+
 function closeDetail() { openId = null; $('lib-detail').close(); }
 
 export async function showDetail(id) {
@@ -283,7 +311,7 @@ export async function showDetail(id) {
   const d = $('lib-detail');
   const line = [m.year, m.publisher, (m.authors || []).join(', ')].filter(Boolean).join(' · ');
   const chips = [kindWord(m.kind), ...(m.genres || []), ...(m.tags || []), m.license && m.license !== 'unknown' ? m.license.replace('-', ' ') : null].filter(Boolean);
-  const runs = (m.runs || []).map((r, i) => {
+  const runItem = (r, i) => {
     const machines = r.machines || [];
     const ok = machines.filter(x => opts.runnable(x));
     if (setup && ok.includes(setup.machine)) ok.unshift(...ok.splice(ok.indexOf(setup.machine), 1));
@@ -304,7 +332,14 @@ export async function showDetail(id) {
         <span class="det-say"><button class="zxc-btn small" data-works="${i}">Works here</button><button class="zxc-btn small" data-broken="${i}">Doesn't work here</button></span></div>`
         : `<small class="det-later">${machines.includes('next') ? 'The Next is not in the browser yet' : 'Not in the browser yet'}</small>`}
     </li>`;
-  }).join('');
+  };
+  // With versions, each one heads its own runs.
+  const runs = m.versions?.length
+    ? versionsOf(t).filter(v => v.runs.length || v.id).map(v => `<li class="det-ver"><h4>${v.language && v.language !== 'en' ? flagOf(v.language) : ''}${esc(v.label || v.id || 'Main version')}
+        <small>${esc([v.year, v.language && langName(v.language), v.publisher, (v.authors || []).join(', ')].filter(Boolean).join(' · '))}</small></h4>
+        ${v.notes ? `<small>${esc(v.notes)}</small>` : ''}
+        <ul class="det-runs">${v.runs.map(x => runItem(x.run, x.i)).join('') || '<li class="det-later">No files for this version.</li>'}</ul></li>`).join('')
+    : (m.runs || []).map(runItem).join('');
   const controls = m.controls ? [m.controls.keyboard, m.controls.joystick && `Joystick: ${m.controls.joystick}`].filter(Boolean) : [];
   d.innerHTML = `<article class="det">
     <header class="det-head">
@@ -325,7 +360,8 @@ export async function showDetail(id) {
       <div class="det-info">
         ${chips.length ? `<p class="chips">${chips.map(c => `<span class="badge">${esc(c)}</span>`).join('')}</p>` : ''}
         ${m.summary ? `<p class="det-summary">${esc(m.summary)}</p>` : ''}
-        <h3>Runs on</h3><ul class="det-runs">${runs || '<li class="det-later">No files to run.</li>'}</ul>
+        <h3>${m.versions?.length > 1 ? 'Versions' : 'Runs on'}</h3><ul class="det-runs">${runs || '<li class="det-later">No files to run.</li>'}</ul>
+        ${reviewsHtml(t)}
         ${controls.length ? `<h3>Controls</h3><p>${controls.map(esc).join('<br>')}</p>` : ''}
         ${t.about ? `<h3>About</h3><div class="det-about">${esc(t.about)}</div>` : ''}
         <h3>Files</h3><ul class="det-files">${t.files.map(f => `<li><span>${esc(f.path.replace(/^files\//, ''))}</span><small>${size(f.bytes.length)}</small></li>`).join('')}</ul>

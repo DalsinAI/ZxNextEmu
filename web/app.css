@@ -649,3 +649,19 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .lib-locked small { color: var(--zxc-muted); }
 .det-known { color: var(--zxc-muted); }
 .det-say { display: inline-flex; gap: 4px; }
+
+/* Versions, languages and reviews */
+.lang-flag { margin-left: 4px; font-size: 0.95em; font-weight: 400; }
+.lib-card-text .lib-rating { color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
+.det-ver { padding: var(--zxc-space-2) 0; border-bottom: 1px solid var(--zxc-line); }
+.det-ver h4 { margin: 0; font: 600 var(--zxc-size-sm)/1.3 var(--zxc-font-display); }
+.det-ver h4 small, .det-ver > small { display: block; color: var(--zxc-muted); font: 400 var(--zxc-size-xs)/1.4 var(--zxc-font-body, inherit); }
+.det-ver .det-run:last-child { border-bottom: 0; }
+.det-ratings { display: flex; flex-wrap: wrap; gap: var(--zxc-space-2) var(--zxc-space-3); margin: 0; padding: 0; list-style: none; font-size: var(--zxc-size-sm); }
+.det-ratings small { color: var(--zxc-muted); }
+.det-review { padding: var(--zxc-space-2) 0; border-bottom: 1px solid var(--zxc-line); font-size: var(--zxc-size-sm); }
+.det-review header small { color: var(--zxc-muted); }
+.det-review-text { max-height: 260px; overflow: auto; margin-top: 4px; white-space: pre-wrap; }
+.det-review details { margin-top: 4px; color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
+.det-review summary { cursor: pointer; }
+.det-ver h4 .lang-flag, .det-review summary .lang-flag { margin: 0 6px 0 0; }
