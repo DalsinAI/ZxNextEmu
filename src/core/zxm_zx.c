@@ -227,8 +227,9 @@ static int media_insert(zxm *b, const zxm_slot *s, const zxm_media *media)
             return -1;
         nx_attach_serial(z, slot[4] - '0', media->serial);
         return 0;
+    default:
+        return -1;
     }
-    return -1;
 }
 
 static int media_eject(zxm *b, const zxm_slot *s)
