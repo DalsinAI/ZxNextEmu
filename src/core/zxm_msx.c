@@ -235,5 +235,5 @@ static const zxm_debug *debugger(zxm *m)
 const zxm_family zxm_family_msx = {
     machines, MACHINES, NULL, size, create, destroy, reset, run_frame,
     framebuffer, audio, input, type, typing, media_insert, media_eject,
-    state_size, state_save, state_load, debugger, NULL, NULL, NULL, NULL
+    state_size, state_save, state_load, debugger, NULL, NULL, NULL, NULL, NULL
 };

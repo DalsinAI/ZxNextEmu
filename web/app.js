@@ -1,5 +1,10 @@
-// ZX Cradle runtime page: one machine, its screen, sound, keyboard and media.
-// The machine itself runs in worker.js; kept media live in IndexedDB.
+// ZX Cradle page: the software library, and one machine with its screen,
+// sound, keyboard and media. The machine runs in worker.js; the library and
+// saved states live in IndexedDB.
+
+import { tx, runParts, romsAdded, romAdd, offersOf } from './library.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor } from './libview.js';
+import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, recipeFor, RECIPES } from './cradle.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -17,6 +22,14 @@ let pending = null;            // latest frame not yet drawn
 let audio = null, gain = null; // sound, once the user has interacted
 let lastSnapshot = null;       // library id of the last saved snapshot
 let soundState = 'Starts when you click the screen';
+let shown = null;              // which view is on screen: 'machine', or a Cradle view
+const CRADLE_VIEWS = ['instances', 'recipes', 'library', 'roms'];
+let instance = null;           // the instance the machine belongs to
+let pendingRestore = null;     // its saved state, restored once the machine exists
+let resumeOnReturn = false;
+let userPaused = false;        // paused with the pause button, so stay paused
+let pendingLoad = null;        // a library title to load once the machine exists
+let currentTitle = null;       // the library title running now
 
 function loadPrefs() {
   try { return JSON.parse(localStorage.getItem('zxc-prefs')) || {}; } catch { return {}; }
@@ -37,8 +50,33 @@ worker.onmessage = async e => {
   case 'ready':
     machines = msg.machines;
     buildMachineMenu();
-    if (!machines.some(mc => mc.id === machineId && mc.id !== 'next')) machineId = 'zx48';
-    create(machineId);
+    await firstInstance();
+    await initCradle({
+      machines: () => machines,
+      current: () => ({ id: instance?.id, running }),
+      start: inst => { userPaused = false; resumeOnReturn = true; startInstance(inst); showView('machine'); },
+      romDialog,
+      show: showView,
+      library: inst => { libraryFor(inst); showView('library'); },
+      renamed: async id => { if (instance?.id === id) { instance = await instanceGet(id); showName(); } },
+      error: showError,
+      onCount: n => { $('lib-readout').textContent = n; },
+    });
+    initLibraryView({
+      machines: () => machines,
+      runnable: usable,
+      machineName: id => machines.find(mc => mc.id === id)?.name || id,
+      run: runTitle,
+      current: () => machineId,
+      onCount: () => {},
+    }).then(() => { libraryReady = true; libraryFor(instance); migrateMedia(); showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'); });
+    break;
+  case 'machines':   // the user added ROMs
+    machines = msg.machines;
+    buildMachineMenu();
+    libraryReload();
+    cradleRefresh();
+    if ($('rom-dlg').open) romDialog(romFor);
     break;
   case 'created':
     fbW = msg.fbW;
@@ -50,13 +88,32 @@ worker.onmessage = async e => {
     lastSnapshot = null;
     updateSnapshotItem();
     showStatus();
-    send('start');
+    if (pendingRestore) {
+      send('restore', { name: instance.name, bytes: pendingRestore });
+      pendingRestore = null;
+    }
+    if (pendingLoad) {
+      send('loadSet', pendingLoad, pendingLoad.parts.map(p => p.bytes));
+      pendingLoad = null;
+    } else {
+      currentTitle = null;
+      updateShotItem();
+    }
+    if (shown === 'machine') send('start');
+    else resumeOnReturn = true;
+    break;
+  case 'shot':
+    if (currentTitle) {
+      await addShot(currentTitle.id, msg.pixels, msg.w, msg.h);
+      $('take-shot-note').textContent = `Added to ${currentTitle.meta.name}`;
+    }
     break;
   case 'frame':
     pending = msg;
     break;
   case 'state':
     running = msg.running;
+    if (running) ranSince = true;
     $('run').setAttribute('aria-label', running ? 'Pause' : 'Start');
     $('run').title = running ? 'Pause' : 'Start';
     $('run-icon').innerHTML = running ? '<path d="M5.5 3.5v9M10.5 3.5v9"/>' : '<path d="M4.5 3l8 5-8 5z"/>';
@@ -65,6 +122,7 @@ worker.onmessage = async e => {
     setChip(running ? 'running' : 'paused');
     break;
   case 'status':
+    if (running) ranSince = true;   // it has moved on since the last keep
     $('led-tape').classList.toggle('on', msg.tape);
     $('st-fps').textContent = `${msg.fps.toFixed(1)} frames/s`;
     $('st-frames').textContent = msg.frames.toLocaleString();
@@ -73,6 +131,10 @@ worker.onmessage = async e => {
     setSlot(msg.name);
     break;
   case 'saved': {
+    if (msg.name.startsWith('instance:')) {
+      await keepInstance(msg.name.slice(9), msg.bytes);
+      break;
+    }
     let id = null;
     try { id = await libAdd({ name: msg.name, kind: 'state', machine: machineId, bytes: msg.bytes }); } catch {
       showError('This browser is not keeping files for this page, so the snapshot could not be kept.');
@@ -88,18 +150,94 @@ worker.onmessage = async e => {
   }
 };
 
+// ---- instances --------------------------------------------------------------
+
+const usable = id => id !== 'next' && machines.some(mc => mc.id === id && mc.available);
+const nameOf = id => machines.find(mc => mc.id === id)?.name || id;
+
+// The instance to open the page on: the last one used, or one for ?m=, or a
+// new Spectrum 48K the first time.
+async function firstInstance() {
+  const all = await instanceAll().catch(() => []);
+  const want = new URLSearchParams(location.search).get('m');
+  let inst = want ? null : all.find(i => i.id === prefs.instance && usable(i.machine));
+  if (!inst && want && usable(want)) inst = await instanceFor(want);
+  inst ??= all.filter(i => usable(i.machine)).sort((a, b) => (b.lastRun || 0) - (a.lastRun || 0))[0];
+  inst ??= await instanceFor('zx48');
+  startInstance(inst);
+}
+
+// The most recently used instance of a machine, made from its recipe if
+// there is none.
+async function instanceFor(machine) {
+  const all = await instanceAll().catch(() => []);
+  const have = all.filter(i => i.machine === machine).sort((a, b) => (b.lastRun || b.created) - (a.lastRun || a.created))[0];
+  if (have) return have;
+  const r = RECIPES.find(x => x.machine === machine && !x.later);
+  const fields = { name: r?.title || nameOf(machine), machine, recipe: r?.id || null };
+  // Without IndexedDB the instance lasts as long as the page.
+  return instanceMake(fields).catch(() => ({ id: `${machine}-here`, ...fields, notes: '', created: Date.now(), lastRun: null, state: null, stateSize: 0, thumb: null, title: null }));
+}
+
+// Switch the machine to an instance, keeping the one it leaves.
+function startInstance(inst) {
+  if (instance?.id === inst.id) return;
+  if (instance) keepState();
+  ranSince = false;
+  instance = inst;
+  prefs.instance = inst.id;
+  savePrefs();
+  pendingRestore = inst.state || null;
+  create(inst.machine);
+  instanceUpdate(inst.id, { lastRun: Date.now() }).catch(() => {});
+}
+
+// The library shows what suits an instance: its machine and what its recipe offers.
+let libraryReady = false;
+function libraryFor(inst) {
+  if (libraryReady && inst) showFor(inst.machine, offersOf(inst.machine, recipeFor(inst.recipe)?.offers), inst.name);
+}
+
+function showName() {
+  $('machine-name').textContent = instance?.name || nameOf(machineId);
+  $('machine-name').title = `${instance?.name || ''} · ${nameOf(machineId)}`;
+}
+
+// Ask the machine for its state; 'saved' brings it back to keepInstance.
+// Only once it has run since it was restored, so a state is never replaced
+// by a machine that has not started yet.
+let ranSince = false;
+function keepState() {
+  if (!instance || !ranSince) return;
+  ranSince = false;
+  send('save', { name: `instance:${instance.id}` });
+}
+async function keepInstance(id, bytes) {
+  let thumb = null;
+  try { thumb = await frameCanvas.convertToBlob({ type: 'image/png' }); } catch {}
+  try {
+    const title = currentTitle && instance?.id === id ? { id: currentTitle.id, name: currentTitle.meta.name } : undefined;
+    await instanceUpdate(id, { state: bytes, stateSize: bytes.byteLength, thumb, lastRun: Date.now(), ...(title ? { title } : {}) });
+  } catch { /* the browser is not keeping data for this page */ }
+  if (shown !== 'machine') cradleRefresh();
+}
+// Keep the running instance now and then, and when the page goes away.
+setInterval(() => { if (running && shown === 'machine') keepState(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && shown === 'machine') keepState(); });
+
 function create(id) {
   machineId = id;
+  libraryFor(instance);
   prefs.machine = id;
   savePrefs();
   setChip('starting');
   hideError();
   const mc = machines.find(m => m.id === id);
-  $('machine-name').textContent = mc ? mc.name : id;
+  showName();
   $('media-machine').textContent = mc ? mc.name : id;
   for (const b of document.querySelectorAll('#machine-list .pop-item'))
     b.classList.toggle('current', b.dataset.id === id);
-  history.replaceState(null, '', `?m=${id}`);
+  history.replaceState(null, '', location.pathname);
   send('create', { id, roms: 'roms.json' });
   renderLibrary();
 }
@@ -116,22 +254,79 @@ function buildMachineMenu() {
     if (mc.id === 'next') {
       b.disabled = true;
       b.querySelector('small').textContent = 'SD card next';
+    } else if (!mc.available) {
+      b.classList.add('needs-rom');
+      b.querySelector('small').textContent = 'Add ROM…';
     } else {
-      b.querySelector('small').textContent = mc.id;
+      b.querySelector('small').textContent = mc.id === machineId ? 'This one' : 'Its instance';
     }
-    b.addEventListener('click', () => { closeMenus(); if (mc.id !== machineId) create(mc.id); canvas.focus(); });
+    b.addEventListener('click', async () => {
+      closeMenus();
+      if (!mc.available) return romDialog(mc.id);
+      if (mc.id !== machineId) startInstance(await instanceFor(mc.id));
+      canvas.focus();
+    });
     list.append(b);
   }
 }
 
+// ---- ROMs the user adds ---------------------------------------------------
+
+// Machines whose ROMs are not shipped (Scorpion, ATM Turbo, Oric) can be
+// turned on with the user's own ROM files. They are kept in this browser.
+let romFor = null;
+function romDialog(id) {
+  romFor = id;
+  const mc = machines.find(m => m.id === id);
+  const dlg = $('rom-dlg');
+  const optional = new Set(mc.roms.filter((r, k) => mc.optional >> k & 1));
+  dlg.innerHTML = `<form method="dialog" class="edit">
+    <header class="det-head"><div><h2>ROMs for the ${esc(mc.name)}</h2>
+      <p class="det-line">${mc.available ? 'Everything it needs is here.' : 'Pick each file from your computer. They stay in this browser and are not uploaded anywhere.'}</p></div></header>
+    <ul class="rom-list">${mc.roms.map(r => {
+      const have = !mc.missing.includes(r);
+      return `<li><code>${esc(r)}</code>${optional.has(r) ? '<small>optional</small>' : ''}
+        <span class="rom-state ${have ? 'ok' : ''}">${have ? 'Ready' : 'Missing'}</span>
+        <label class="zxc-btn">${have ? 'Replace' : 'Choose file'}<input type="file" hidden data-rom="${esc(r)}"></label></li>`;
+    }).join('')}</ul>
+    <footer class="det-foot"><span class="spacer"></span><button class="zxc-btn" value="close">Close</button>
+      <button class="zxc-btn zxc-btn--primary" value="start"${mc.available ? '' : ' disabled'}>Start the ${esc(mc.name)}</button></footer>
+  </form>`;
+  for (const inp of dlg.querySelectorAll('input[data-rom]')) inp.addEventListener('change', async () => {
+    const f = inp.files[0];
+    if (!f) return;
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (!bytes.length || bytes.length > 512 * 1024) return showError(`${f.name} doesn't look like a ROM.`);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const b64 = btoa(bin);
+    await romAdd(inp.dataset.rom, b64);
+    const roms = { [inp.dataset.rom]: b64 };
+    send('addRoms', { roms });
+    romsChanged(roms);
+  });
+  dlg.querySelector('form').addEventListener('submit', async e => {
+    if (e.submitter?.value !== 'start') return;
+    showView('machine');
+    if (id !== machineId) return startInstance(await instanceFor(id));
+    // The same machine, perhaps failed with the old ROM: start it again.
+    pendingRestore = instance?.state || null;
+    create(id);
+  });
+  if (!dlg.open) dlg.showModal();
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 // ---- screen -------------------------------------------------------------
 
-// The picture is 320x256 including the border (a Next frame is 640 wide with
-// half-width pixels and shows at the same size). Without the border it is
-// the 256x192 paper. Scale 0 fits the window, smoothing off, whole pixels.
+// Frames 512 or more wide have half-width pixels (the Next, SAM, MSX, ATM),
+// so they show at half their width in "base" pixels. Only a Spectrum-shaped
+// 320x256 frame has a border that can be hidden.
+const baseW = () => fbW >= 512 ? fbW / 2 : fbW;
 function view() {
-  const border = prefs.border !== false;
-  return border ? { x: 0, y: 0, w: 320, h: 256 } : { x: 32, y: 32, w: 256, h: 192 };
+  const spectrum = baseW() === 320 && fbH === 256;
+  if (spectrum && prefs.border === false) return { x: 32, y: 32, w: 256, h: 192 };
+  return { x: 0, y: 0, w: baseW(), h: fbH };
 }
 
 function fit() {
@@ -140,7 +335,7 @@ function fit() {
   const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 56;
   const best = Math.max(1, Math.min(Math.floor(maxW / v.w), Math.floor(maxH / v.h)));
   const s = prefs.scale ? Math.min(prefs.scale, best) : best;
-  canvas.width = v.w * (fbW / 320);
+  canvas.width = v.w * (fbW / baseW());
   canvas.height = v.h;
   canvas.style.width = `${v.w * s}px`;
   canvas.style.height = `${v.h * s}px`;
@@ -155,7 +350,7 @@ new ResizeObserver(fit).observe($('stage'));
 function draw() {
   if (pending) {
     frameCtx.putImageData(new ImageData(new Uint8ClampedArray(pending.pixels), pending.w, pending.h), 0, 0);
-    const v = view(), k = fbW / 320;
+    const v = view(), k = fbW / baseW();
     ctx.drawImage(frameCanvas, v.x * k, v.y, v.w * k, v.h, 0, 0, canvas.width, canvas.height);
     pending = null;
   }
@@ -244,7 +439,7 @@ for (const d of ['media-drawer', 'status-drawer']) $(d).addEventListener('click'
 
 // ---- controls -------------------------------------------------------------
 
-$('run').addEventListener('click', e => { e.stopPropagation(); startAudio(); send(running ? 'stop' : 'start'); });
+$('run').addEventListener('click', e => { e.stopPropagation(); startAudio(); userPaused = running; send(running ? 'stop' : 'start'); });
 $('reset').addEventListener('click', () => { closeMenus(); send('reset', { power: false }); canvas.focus(); });
 $('power').addEventListener('click', () => { closeMenus(); send('reset', { power: true }); canvas.focus(); });
 $('save').addEventListener('click', () => {
@@ -421,35 +616,10 @@ applyVolume();
 
 // ---- kept media (IndexedDB) -----------------------------------------------
 
-let dbp = null;
-function db() {
-  dbp ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open('zx-cradle', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('media', { keyPath: 'id', autoIncrement: true });
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-  });
-  return dbp;
-}
-function tx(mode, fn) {
-  return db().then(d => new Promise((resolve, reject) => {
-    const t = d.transaction('media', mode);
-    const req = fn(t.objectStore('media'));
-    t.oncomplete = () => resolve(req?.result);
-    t.onerror = () => reject(t.error);
-  }));
-}
-const libAdd = item => tx('readwrite', s => s.add({ ...item, size: item.bytes.byteLength, added: Date.now() }));
-const libGet = id => tx('readonly', s => s.get(id));
-const libDelete = id => tx('readwrite', s => s.delete(id));
-const libAll = () => tx('readonly', s => s.getAll());
-
-function kindOf(name) {
-  const n = name.toLowerCase();
-  if (n.endsWith('.tap') || n.endsWith('.tzx')) return 'tape';
-  if (n.endsWith('.sna') || n.endsWith('.z80')) return 'snapshot';
-  return null;
-}
+const libAdd = item => tx('media', 'readwrite', st => st.add({ ...item, size: item.bytes.byteLength, added: Date.now() }));
+const libGet = id => tx('media', 'readonly', st => st.get(id));
+const libDelete = id => tx('media', 'readwrite', st => st.delete(id));
+const libAll = () => tx('media', 'readonly', st => st.getAll());
 
 const icons = {
   tape: '<rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/>',
@@ -472,7 +642,7 @@ async function renderLibrary() {
   items.sort((a, b) => b.added - a.added);
   const mc = machines.find(m => m.id === machineId);
   for (const it of items) {
-    if (it.kind === 'state' && it.machine !== machineId) continue;
+    if (it.kind !== 'state' || it.machine !== machineId) continue;
     const li = document.createElement('li');
     li.innerHTML = `<svg viewBox="0 0 16 16">${icons[it.kind]}</svg><div class="lib-name"><b></b><small></small></div><div class="lib-actions"><button class="zxc-btn small use"></button><button class="zxc-btn small remove">Remove</button></div>`;
     li.querySelector('b').textContent = it.name;
@@ -491,7 +661,7 @@ async function renderLibrary() {
   if (!list.children.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = `Nothing kept yet. Add a tape or a snapshot, or save the ${mc ? mc.name : 'machine'} from the Power menu.`;
+    li.textContent = `No saved states yet. Save the ${mc ? mc.name : 'machine'} from the Power menu.`;
     list.append(li);
   }
 }
@@ -502,6 +672,8 @@ async function useItem(it) {
   startAudio();
   const bytes = it.bytes.slice(0);
   if (it.kind === 'state') {
+    currentTitle = null;   // the state may hold anything
+    updateShotItem();
     send('restore', { name: it.name, bytes }, [bytes]);
   } else {
     send('load', { name: it.name, bytes, id: machineId, autostart: $('autostart').checked }, [bytes]);
@@ -509,21 +681,25 @@ async function useItem(it) {
   if (!running) send('start');
 }
 
-// Keep each file, then load the last one.
+// Tapes and snapshots kept by earlier versions of the page move into the
+// library; the media store keeps only saved states.
+async function migrateMedia() {
+  let old = [];
+  try { old = (await libAll()).filter(it => it.kind !== 'state'); } catch { return; }
+  if (!old.length) return;
+  try {
+    await libraryAdd(old.map(it => new File([it.bytes], it.name)));
+    for (const it of old) await libDelete(it.id);
+  } catch (e) {
+    showError(`Your kept tapes could not move into the library: ${e.message}`);
+  }
+}
+
+// Dropped files go into the library.
 async function addFiles(files) {
   hideError();
-  let last = null;
-  for (const f of files) {
-    const kind = kindOf(f.name);
-    if (!kind) { showError(`${f.name}: ZX Cradle keeps .tap, .tzx, .sna and .z80 files.`); continue; }
-    const bytes = await f.arrayBuffer();
-    let id = null;
-    try { id = await libAdd({ name: f.name, kind, bytes }); } catch {}
-    last = id != null ? await libGet(id) : { name: f.name, kind, bytes };
-  }
-  renderLibrary();
-  if (last) await useItem(last);
-  canvas.focus();
+  showView('library');
+  await libraryAdd(files);
 }
 
 function setSlot(name) {
@@ -534,8 +710,71 @@ function setSlot(name) {
   $('eject-tape').disabled = !name;
 }
 $('eject-tape').addEventListener('click', () => send('eject', { slot: 'tape' }));
-$('add-media').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
+$('add-media').addEventListener('click', () => { toggleDrawer('media-drawer', false); showView('library'); });
+
+// ---- library and machine views ----------------------------------------------
+
+function showView(v) {
+  if (v === shown) return;
+  const was = shown;
+  shown = v;
+  prefs.view = v;
+  const cradle = v !== 'machine';
+  if (cradle) prefs.cradleView = v;
+  savePrefs();
+  closeMenus();
+  $('cradle-top').hidden = !cradle;
+  $('libview').hidden = v !== 'library';
+  for (const k of ['instances', 'recipes', 'roms']) $(`${k}-view`).hidden = v !== k;
+  for (const b of document.querySelectorAll('.cradle-nav [data-view]')) b.setAttribute('aria-current', String(b.dataset.view === v));
+  $('stage').hidden = cradle;
+  $('lib-btn').setAttribute('aria-pressed', String(cradle));
+  if (v === 'library') $('lib-q').focus();
+  if (cradle && was !== 'machine') return;
+  if (cradle) {
+    toggleDrawer('media-drawer', false);
+    // The machine may still be starting, so stop it whatever it says now.
+    resumeOnReturn = !userPaused;
+    send('stop');
+    keepState();
+  } else {
+    if (resumeOnReturn) send('start');
+    resumeOnReturn = false;
+    fit();
+    canvas.focus();
+  }
+}
+$('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(shown !== 'machine' ? 'machine' : prefs.cradleView || 'instances'); });
+
+// Run a library title: on this instance if it is that machine, else on the
+// machine's own instance. Then load it.
+async function runTitle(t, run, id) {
+  const { parts, missing } = runParts(t, run);
+  if (missing.length || !parts.length) return;
+  currentTitle = t;
+  updateShotItem();
+  const load = { parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id, autostart: true };
+  resumeOnReturn = true;
+  userPaused = false;
+  showView('machine');
+  if (id !== machineId) {
+    const inst = await instanceFor(id);
+    pendingLoad = load;
+    startInstance(inst);
+    // A title replaces whatever the instance was doing, so don't restore over it.
+    pendingRestore = null;
+  } else {
+    send('loadSet', load, load.parts.map(p => p.bytes));
+    send('start');
+  }
+  instanceUpdate(instance.id, { title: { id: t.id, name: t.meta.name } }).catch(() => {});
+}
+
+function updateShotItem() {
+  $('take-shot').disabled = !currentTitle;
+  $('take-shot-note').textContent = currentTitle ? `Adds to ${currentTitle.meta.name}` : 'Run a library title first';
+}
+$('take-shot').addEventListener('click', () => send('shot', { tag: 'user' }));
 
 let dragDepth = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('drop').hidden = false; });
@@ -550,5 +789,5 @@ window.addEventListener('drop', e => {
 
 // ---- go -------------------------------------------------------------------
 
-send('init', { wasm: 'zxcore.wasm' });
+romsAdded().catch(() => ({})).then(extra => send('init', { wasm: 'zxcore.wasm', extra }));
 canvas.focus();
