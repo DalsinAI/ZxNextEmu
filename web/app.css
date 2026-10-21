@@ -285,8 +285,9 @@ h3 {
 /* ---- narrow windows ---------------------------------------------------- */
 
 @media (max-width: 980px) {
-  .bar { grid-template-columns: minmax(0, 1fr) auto; }
-  .leds { display: none; }
+  .bar { grid-template-columns: auto minmax(0, 1fr); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .bar-name, .leds { display: none; }
+  .bar-controls { justify-content: flex-end; }
   .menu-btn span:not(.readout) { display: none; }
   .menu-btn { padding: 0 var(--zxc-space-2); }
 }
