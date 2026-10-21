@@ -12,10 +12,10 @@ BUILD   ?= build
 
 CORE_SRC = src/z80/z80.c
 STORE_SRC = src/storage/blockdev.c src/storage/vfat.c
-DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
+DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c src/devices/saa1099.c src/devices/sid.c src/devices/gs.c src/devices/ata.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
-SAM_SRC  = src/sam/sam.c src/devices/saa1099.c src/devices/floppy.c src/devices/wd177x.c
+SAM_SRC  = src/sam/sam.c src/devices/floppy.c src/devices/wd177x.c
 MSX_SRC  = src/msx/msx.c src/msx/vdp.c src/msx/vdpcmd.c src/msx/cart.c src/msx/scc.c src/msx/rtc.c \
            src/msx/fdc.c src/msx/ide.c
 ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_sam.c src/core/zxm_msx.c $(SAM_SRC) $(MSX_SRC)
@@ -102,6 +102,7 @@ ulaplus: $(BUILD)/ulaplus
 
 # Save, run on, load, run again: every machine must repeat itself exactly.
 ESXDOS_ROM ?= tests-data/esxdos/esxmmc.bin
+GS_ROM     ?= tests-data/gs/gs105a.rom
 
 # The clones' ROMs are not in the repository: put them in CLONE_ROMS (with
 # the others) to include them; without, they are skipped.
@@ -133,9 +134,10 @@ esxdos: $(BUILD)/zxrun
 WASM_CC      ?= clang
 WASI_SYSROOT ?= /usr
 WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/beta.c src/zx/expansion.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c \
-           src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
+           src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c \
+           src/devices/saa1099.c src/devices/sid.c src/devices/gs.c src/devices/ata.c
 WASM_EXPORTS = zxm_lookup zxm_machine zxm_size zxm_create zxm_destroy zxm_info_of zxm_reset \
-           zxm_run_frame zxm_framebuffer zxm_audio zxm_input zxm_type zxm_typing \
+           zxm_run_frame zxm_framebuffer zxm_fb_width zxm_audio zxm_input zxm_type zxm_typing \
            zxm_media_insert zxm_media_eject zxm_media_active zxm_media_progress zxm_interface_lookup zxm_interface_at zxm_attach zxm_slots zxm_inputs \
            zxm_state_size zxm_state_save zxm_state_load \
            zxm_debugger malloc free
@@ -147,7 +149,10 @@ $(BUILD)/zxcore.wasm: $(WASM_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 	    -mexec-model=reactor $(addprefix -Wl$(comma)--export=,$(WASM_EXPORTS)) -o $@ $(WASM_SRC)
 
 # The WebAssembly core must give exactly the native core's pictures and sound.
-wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm
+$(BUILD)/mb03tune: tests/mb03tune.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/mb03tune.c
+
+wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(BUILD)/mb03tune
 	@for mc in $(MACHINES); do rd=$(CLONE_ROMS); \
 	    a=$$($(BUILD)/zxm $$rd $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    case "$$a" in *skipped*) echo "$$a"; continue;; esac; \
@@ -159,7 +164,14 @@ wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm
 	    a=$$($(BUILD)/zxm roms $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm roms $$mc 300 'print 2+2\n') || exit 1; \
 	    if [ "$$a" = "$$b" ]; then echo "$$b with an MB03+ (native and wasm agree)"; \
-	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; done; fi
+	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; done; \
+	    $(BUILD)/mb03tune $(BUILD)/mb03tune.sna || exit 1; \
+	    export ZXM_SNAP=$(BUILD)/mb03tune.sna; \
+	    if [ -f $(GS_ROM) ]; then export ZXM_GS_ROM=$(GS_ROM); fi; \
+	    a=$$($(BUILD)/zxm roms zx48 100 | cut -d' ' -f1-4) || exit 1; \
+	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm roms zx48 100) || exit 1; \
+	    if [ "$$a" = "$$b" ]; then echo "$$b, MB03+ SID, SAA1099$${ZXM_GS_ROM:+ and General Sound} (native and wasm agree)"; \
+	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; fi
 
 # ---- The browser runtime: build/web is a static site (open it through any
 # web server; `make serve` uses port 7081, ZX Cradle's dev port). ----------

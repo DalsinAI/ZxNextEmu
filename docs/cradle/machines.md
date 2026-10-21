@@ -30,7 +30,7 @@ interface's slots and inputs to the instance):
 | Id | Interface | Notes |
 | --- | --- | --- |
 | `divmmc` | divMMC | esxDOS ROM, 512K, slot `sd0` |
-| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens; General Sound, SAA1099, SID, GigaScreen, MBIDE and the config registers to come |
+| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive/Czech DACs, SAA1099, SID, Kempston mouse, Timex screens and hi-res, Radastan, GigaScreen, ZXi settings registers, and General Sound when the optional second ROM `gs105a.rom` is given, two CF cards `cf0` and `cf1` on the MBIDE (off until m_zxi_002 picks DRON, PVL or HOOD ports), the RTC72421 (emulated time from 2026-01-01). With it attached the picture is 640 wide: read `zxm_fb_width` after `zxm_attach` |
 
 ## Wave 2: the big Z80 families
 

@@ -89,6 +89,7 @@ static const zxm_input_desc inputs_next[] = {
 };
 
 static const char *const roms_esxdos[] = { "esxmmc.bin", NULL };
+static const char *const roms_mb03[] = { "esxmmc.bin", "gs105a.rom", NULL };
 
 static const zxm_slot slots_divmmc[] = {
     { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
@@ -98,6 +99,8 @@ static const zxm_slot slots_divmmc[] = {
 static const zxm_slot slots_mb03[] = {
     { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
     { "sd1", "Second SD card", ZXM_SLOT_SD, ".img .mmc" },
+    { "cf0", "CF card (IDE master)", ZXM_SLOT_HARDDISK, ".img .hdf .hdd" },
+    { "cf1", "CF card (IDE slave)", ZXM_SLOT_HARDDISK, ".img .hdf .hdd" },
     { NULL, NULL, 0, NULL },
 };
 
@@ -111,8 +114,8 @@ static const zxm_input_desc inputs_mb03[] = {
 };
 
 static const zxm_interface interfaces[] = {
-    { "divmmc", "divMMC", roms_esxdos, slots_divmmc, inputs_none },
-    { "mb03", "MB03+ Ultimate", roms_esxdos, slots_mb03, inputs_mb03 },
+    { "divmmc", "divMMC", roms_esxdos, slots_divmmc, inputs_none, 0 },
+    { "mb03", "MB03+ Ultimate", roms_mb03, slots_mb03, inputs_mb03, 1u << 1 },
 };
 
 static const uint32_t interface_features[] = { ZX_EXP_DIVMMC, ZX_EXP_MB03 };
@@ -193,8 +196,17 @@ static int attach(zxm *b, const char *id, const zxm_rom_set *roms)
     const zxm_interface *f = zxm_interface_lookup(id);
     if (!f || m->iface || !roms || !roms->rom[0])
         return -1;
+    /* the Spec256 draws its own picture, which has no room for the MB03+'s
+     * 640-wide one */
+    if (m->s256 && (interface_features[f - interfaces] & ZX_EXP_TIMEX))
+        return -1;
     if (zx_exp_attach(&m->m, interface_features[f - interfaces], roms->rom[0], roms->len[0]))
         return -1;
+    /* the MB03+'s General Sound, when its ROM is there */
+    if (f->roms[1] && roms->rom[1] && zx_exp_attach_gs(&m->m, roms->rom[1], roms->len[1])) {
+        zx_exp_free(&m->m);
+        return -1;
+    }
     m->iface = f;
     build_lists(m);
     zx_reset(&m->m);
@@ -321,6 +333,11 @@ static const void *framebuffer(const zxm *b, int *pitch)
     return m->m.pixels;
 }
 
+static int fb_width(const zxm *b)
+{
+    return CZX(b)->m.screen_w;
+}
+
 static const int16_t *audio(const zxm *b, int *samples)
 {
     const zxm_zx *m = CZX(b);
@@ -396,6 +413,10 @@ static int media_insert(zxm *b, const zxm_slot *s, const zxm_media *media)
         if (media->kind != ZXM_MEDIA_BLOCKS)
             return -1;
         return zx_attach_sd_dev(z, slot[2] - '0', media->blocks);
+    case ZXM_SLOT_HARDDISK:
+        if (media->kind != ZXM_MEDIA_BLOCKS || !media->blocks)
+            return -1;
+        return zx_exp_attach_ide(z, slot[2] - '0', media->blocks);
     case ZXM_SLOT_SERIAL:
         if (media->kind != ZXM_MEDIA_SERIAL || !z->next)
             return -1;
@@ -432,6 +453,8 @@ static int media_eject(zxm *b, const zxm_slot *s)
         nx_sd_close(z->next->sd[slot[2] - '0']);
         z->next->sd[slot[2] - '0'] = NULL;
         return 0;
+    case ZXM_SLOT_HARDDISK:
+        return zx_exp_attach_ide(z, slot[2] - '0', NULL);
     case ZXM_SLOT_SERIAL:
         nx_attach_serial(z, slot[4] - '0', NULL);
         return 0;
@@ -556,5 +579,5 @@ const zxm_family zxm_family_zx = {
     machines, MACHINES, init_info, size, create, destroy, reset, run_frame,
     framebuffer, audio, input, type, typing, media_insert, media_eject,
     state_size, state_save, state_load, debugger, attach, slots, inputs, media_active,
-    media_progress
+    media_progress, fb_width
 };

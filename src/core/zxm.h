@@ -148,6 +148,9 @@ void   zxm_run_frame(zxm *m);                       /* exactly one video frame *
 /* The picture: fb_w x fb_h, pitch in pixels (a Next is 640 wide: each
  * classic pixel is two). */
 const void *zxm_framebuffer(const zxm *m, int *pitch);
+/* The picture's width now: fb_w, or 640 once an interface whose modes need
+ * it is attached (the MB03+'s Timex hi-res; each classic pixel is two). */
+int zxm_fb_width(const zxm *m);
 /* This frame's sound: *samples stereo pairs, interleaved L R. */
 const int16_t *zxm_audio(const zxm *m, int *samples);
 
@@ -158,13 +161,18 @@ int    zxm_typing(const zxm *m);
 
 /* Interfaces for a classic machine's expansion port: "divmmc" (esxDOS and
  * an SD card), "mb03" (the MB03+ Ultimate: divMMC with two SD cards,
- * TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex screens). */
+ * TurboSound, DACs, SAA1099, SID, Kempston mouse, Timex screens, the
+ * ZXi settings registers, MBIDE with two CF cards, the RTC and, given its
+ * ROM, General Sound). */
 typedef struct zxm_interface {
     const char *id;
     const char *name;
-    const char *const *roms;     /* ROM file names, NULL-terminated (8K each) */
+    const char *const *roms;     /* ROM file names, NULL-terminated: the 8K
+                                  * esxDOS ROM, then for the MB03+ the 32K
+                                  * General Sound ROM */
     const zxm_slot *slots;       /* the slots it adds, ending with a NULL id */
     const zxm_input_desc *inputs;     /* the inputs it adds, ending with a NULL id */
+    uint32_t rom_optional;       /* bit n: roms[n] may be left out */
 } zxm_interface;
 
 /* Interfaces: by id, or the i'th (NULL past the end). */
