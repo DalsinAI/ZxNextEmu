@@ -263,6 +263,7 @@ export const NEEDS = {
   beta: 'a Beta Disk (TR-DOS)', interface1: 'Interface 1', divmmc: 'divMMC with esxDOS', plus3dos: 'the +3 disk drive',
   kempston: 'a Kempston joystick', mouse: 'a Kempston mouse', ulaplus: 'ULAplus', 'timex-hires': 'Timex hi-res modes',
   spec256: 'Spec256 graphics', pi: 'the NextPi', wifi: 'wifi', mb03: 'an MB03+ interface',
+  symbos: 'SymbOS',
 };
 export const needWord = n => NEEDS[n] || (n.startsWith('next:core>=') ? `Next core ${n.slice(11)} or newer` : n);
 
