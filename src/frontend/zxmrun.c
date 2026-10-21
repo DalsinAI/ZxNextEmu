@@ -3,12 +3,12 @@
  * Cradle uses. For tests and scripting.
  *
  *   zxmrun -m machine [-r romdir] [-R n=file] [-f frames] [-t text [-d delay]]
- *          [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [-k frame:row:bit[:frames]]...
+ *          [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [-P] [-k frame:row:bit[:frames]]...
  *          [-T frame:text]... [[-i] slot=file ...]
  *   zxmrun -l
  *
  * -x resets (power on) after the media go in. -p prints memory, as the
- * CPU sees it, after the run.
+ * CPU sees it, after the run; -P prints the CPU's registers.
  * -R replaces ROM n (0..3, in the order the machine lists them); -R n=
  * leaves an optional ROM out. Media go in as slot=file: cart1=game.rom,
  * disk0=disk.dsk, ide0=folder-or-image, tape=game.tap. Block devices
@@ -163,7 +163,7 @@ int main(int argc, char **argv)
 {
     const char *id = "msx2", *romdir = "roms", *text = NULL, *shot = NULL, *wav = NULL;
     const char *rom_override[4] = { NULL, NULL, NULL, NULL };
-    int frames = 300, delay = 0, i, reset_after = 0, nmedia = 0;
+    int frames = 300, delay = 0, i, reset_after = 0, nmedia = 0, regs = 0;
     unsigned dump_addr = 0, dump_len = 0;
     const char *media[16];
     held_key keys[32];
@@ -190,6 +190,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-s") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(a, "-w") && i + 1 < argc) wav = argv[++i];
         else if (!strcmp(a, "-x")) reset_after = 1;
+        else if (!strcmp(a, "-P")) regs = 1;
         else if (!strcmp(a, "-p") && i + 1 < argc && sscanf(argv[i + 1], "%x:%u", &dump_addr, &dump_len) == 2) i++;
         else if (!strcmp(a, "-R") && i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '3'
                  && argv[i + 1][1] == '=') {
@@ -214,7 +215,7 @@ int main(int argc, char **argv)
         } else if (strchr(a, '=') && a[0] != '-' && nmedia < 16) media[nmedia++] = a;
         else {
             fprintf(stderr, "usage: %s -m machine [-r romdir] [-R n=file] [-f frames] [-t text [-d delay]]\n"
-                            "       [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [-k frame:row:bit[:frames]]...\n"
+                            "       [-s out.ppm] [-w out.wav] [-x] [-p addr:len] [-P] [-k frame:row:bit[:frames]]...\n"
                             "       [-T frame:text]... [[-i] slot=file ...] | -l\n", argv[0]);
             return 2;
         }
@@ -302,6 +303,12 @@ int main(int argc, char **argv)
         unsigned k;
         for (k = 0; k < dump_len; k++)
             printf("%02x%s", dbg->peek(m, (uint16_t)(dump_addr + k)), (k & 15) == 15 || k + 1 == dump_len ? "\n" : " ");
+    }
+    if (regs) {
+        zxm_regs r;
+        zxm_debugger(m)->get_regs(m, &r);
+        printf("pc %04x sp %04x af %04x bc %04x de %04x hl %04x ix %04x iy %04x i %02x im %d iff1 %d halted %d\n",
+               r.pc, r.sp, r.af, r.bc, r.de, r.hl, r.ix, r.iy, r.i, r.im, r.iff1, r.halted);
     }
     zxm_destroy(m);
     free(m);
