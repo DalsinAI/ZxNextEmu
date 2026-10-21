@@ -507,7 +507,7 @@ ZX_HW = {
     'next': ['zxnext'],
     'clones': ['pentagon128', 'scorpion', 'atm', 'atm2'],
     'sam': ['samcoupe'],
-    'mb03': ['gs', 'tsfm', 'saa', 'ulaplus', 'soundrive', 'specdrum', 'divmmc', 'divide', 'zxuno'],
+    'mb03': ['gs', 'tsfm', 'saa', 'ulaplus', 'soundrive', 'specdrum', 'covox', 'divmmc', 'divide', 'zxuno'],
 }
 HW_MACH = {'zx16': FAM48, 'zx48': FAM48, 'zx128': FAM128, 'zx+2': FAM128, 'zx+2a': ['plus2a', 'plus3'],
            'zx+3': ['plus3', 'plus2a'], 'zx+2b': ['plus2a', 'plus3'], 'pentagon128': BETA,
@@ -549,6 +549,8 @@ def zx_names(prods):
                 j = fetch_json(f'{ZX}/types:{typ}/export:{typ}/start:0/limit:50/filter:{f}={ch};')
                 for a in j['responseData'].get(typ, []):
                     NAMES[(typ, str(a['id']))] = html.unescape(a['title'])
+                # an id the answer left out is lost too, so its titles wait rather than file without the name
+                lost.update((typ, x) for x in ids[i:i + 50] if (typ, x) not in NAMES)
             except Exception as e:
                 log('zxart names', e)
                 lost.update((typ, x) for x in ids[i:i + 50])
@@ -788,6 +790,9 @@ def worldofsam(lib, made=0):
                 broken.append(f'{kind}s page {page + 1}')
                 break
             new = [h for h in re.findall(r'<td[^>]*>\s*<a href="(/products/[^"?#]+)"', p) if h not in links]
+            if not new and page == 0:   # an interstitial or changed markup, not an empty category
+                say(f'  worldofsam.org: no {kind}s on the first page')
+                broken.append(f'{kind}s page 1 (unparsable)')
             for h in new:
                 links[h] = kind
             if not new or f'page={page + 1}"' not in p:
@@ -1474,6 +1479,7 @@ def reviews(lib):
             j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:0/limit:50/filter:zxProdId={",".join(zids[k:k + 50])};')
             for p in j['responseData'].get('zxProd') or []:
                 prods[str(p['id'])] = p
+            lost.update(z for z in zids[k:k + 50] if z not in prods)   # left out of the answer
         except Exception as e:
             log('zxart votes', e)
             lost.update(zids[k:k + 50])
@@ -1488,6 +1494,8 @@ def reviews(lib):
                 j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:0/limit:1/filter:zxProdId={ids["zxart"]};')
                 for p in j['responseData'].get('zxProd') or []:
                     prods[str(p['id'])] = p
+                if str(ids['zxart']) not in prods:
+                    raise RuntimeError(f'zxart.ee left out prod {ids["zxart"]}')
             a, b = zxart_reviews(ids['zxart'], prods.get(str(ids['zxart'])))
             ratings += a
             revs += b

@@ -13,6 +13,9 @@ TODAY = datetime.date.today().isoformat()
 # which no machine has a drive for yet) is left out.
 LOADS = {'tape': ('.tap', '.tzx'), 'snapshot': ('.sna', '.z80')}
 NO_SLOT = {'snapshot': {'next'}}  # machines without that slot (src/core/zxm_zx.c)
+# A Next tape needs NextZXOS from an SD card the player cannot mount from bytes yet, and there is
+# no 16K machine (a 48K runs those), as in zxcradle-fetch.sh's run_table.
+MACHINE_AS = {'next': None, 'zx16': 'zx48'}
 
 def say(*a):
     print(*a, flush=True)
@@ -206,7 +209,8 @@ def runs_for(got, sub):
     many = len(got) > 1
     rs = []
     for x, name, slot in got:
-        machines = [m for m in x['machines'] if m not in NO_SLOT.get(slot, ())]
+        machines = [MACHINE_AS.get(m, m) for m in x['machines'] if m not in NO_SLOT.get(slot, ())]
+        machines = list(dict.fromkeys(m for m in machines if m))
         if not machines:
             continue
         v = {'platform': 'zx-spectrum', 'machines': machines, 'files': ['files/' + sub + name], 'slot': slot, 'needs': []}
@@ -351,12 +355,14 @@ def main():
         sys.exit(3 if failed else 0)
     index_library(lib)
     say(f'Filing {len(recs)} titles into {lib}...')
+    missing = 0
     for n, r in enumerate(recs, 1):
         key = str(r['zxdb'] or r['groups'][0])
         if done.get(key) in ('new', 'merged'):
             continue
         tid, st = file_title(r, dest, lib, link)
         done[key] = st
+        missing += st == 'missing'
         if n % 100 == 0 or n == len(recs):
             write_json(logp, done)
             say(f'  {n}/{len(recs)} titles')
@@ -364,7 +370,9 @@ def main():
     c = {s: sum(1 for v in done.values() if v == s) for s in ('new', 'merged', 'missing', 'unsupported')}
     say(f'Done: {c["new"]} new titles, {c["merged"]} merged into existing ones, {c["missing"]} with files missing, '
         f'{c["unsupported"]} with no file the player can load.')
-    if failed:
+    if failed or missing:
+        if missing and not failed:
+            say(f'{missing} titles name files that are not in the shared folder; run this again to retry them.')
         sys.exit(3)  # 3, not 1, so a caller can tell failed downloads from a bad link
 
 if __name__ == '__main__':
