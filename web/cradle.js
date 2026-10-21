@@ -56,9 +56,10 @@ export async function instanceMake({ name, machine, recipe = null, notes = '' })
 
 // ---- recipes ----------------------------------------------------------------
 
-// Built-in recipes: a machine and what it offers, in the library's needs
-// vocabulary (ram:128, ay, beta, divmmc, mouse...), so an instance made from
-// one can show the titles that suit it. See docs/cradle/recipes.md.
+// Built-in recipes: a machine and what the recipe adds to it, in the
+// library's needs vocabulary (ram:128, ay, beta, divmmc, mouse...); the
+// machine's own offers come from library.js offersOf(). An instance made
+// from one shows the titles that suit it. See docs/cradle/recipes.md.
 export const RECIPES = [
   { id: 'spectrum-48', title: 'Spectrum 48K', machine: 'zx48', offers: [],
     summary: 'The rubber-key Spectrum: most of the 1980s catalogue runs here.' },
@@ -68,7 +69,7 @@ export const RECIPES = [
     summary: 'The grey +2 with its built-in tape deck.' },
   { id: 'spectrum-plus2a', title: 'Spectrum +2A', machine: 'plus2a', offers: ['ram:128', 'ay'],
     summary: 'The black +2A, a +3 without the disk drive.' },
-  { id: 'spectrum-plus3', title: 'Spectrum +3', machine: 'plus3', offers: ['ram:128', 'ay', 'disk:+3'],
+  { id: 'spectrum-plus3', title: 'Spectrum +3', machine: 'plus3', offers: [],
     summary: '+3DOS and the 3-inch disk drive.' },
   { id: 'pentagon-trdos', title: 'Pentagon 128 with TR-DOS', machine: 'pentagon', offers: ['ram:128', 'ay', 'beta'],
     summary: 'The Russian clone most demos were written for, with the Beta Disk interface.' },
@@ -115,7 +116,7 @@ export function initCradle(hooks) {
 
 // Draw whichever screen is showing again (instances changed, ROMs added).
 export async function refresh() {
-  const all = await instanceAll();
+  const all = await instanceAll().catch(() => []);
   o.onCount(all.length);
   await renderInstances(all);
   renderRecipes();
@@ -158,7 +159,7 @@ function thumbUrl(inst) {
 }
 
 async function renderInstances(all) {
-  all ??= await instanceAll();
+  all ??= await instanceAll().catch(() => []);
   const list = all.filter(i => !query || `${i.name} ${machineName(i.machine)} ${i.notes} ${i.title?.name || ''}`.toLowerCase().includes(query));
   list.sort(sort === 'name' ? (a, b) => a.name.localeCompare(b.name)
     : sort === 'machine' ? (a, b) => machineName(a.machine).localeCompare(machineName(b.machine)) || a.name.localeCompare(b.name)

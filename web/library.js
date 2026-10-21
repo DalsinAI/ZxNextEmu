@@ -68,7 +68,7 @@ export function detect(name, bytes) {
   const lower = name.toLowerCase();
   const wants128 = /128|\+2|\+3|ay\b/.test(lower);
   switch (e) {
-  case 'tap': case 'tzx': case 'pzx':
+  case 'tap': case 'tzx':
     return { platform: 'zx-spectrum', slot: 'tape', machines: wants128 ? TAPE_128 : TAPE_48 };
   case 'sna':
     return { platform: 'zx-spectrum', slot: 'snapshot', machines: bytes.length === 49179 ? TAPE_48 : TAPE_128 };
