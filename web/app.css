@@ -380,6 +380,7 @@ select, .edit input, .edit textarea {
   padding: 0;
   list-style: none;
 }
+.lib-more { grid-column: 1 / -1; height: 1px; list-style: none; }
 .lib-card {
   display: grid;
   width: 100%;
