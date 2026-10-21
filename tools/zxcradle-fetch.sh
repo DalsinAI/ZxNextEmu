@@ -505,7 +505,7 @@ def zx_title(lib, p, rels, hw):
          'license': LIC.get(p.get('legalStatus'), 'unknown'), 'source': url,
          'sources': [url] + ([f'https://spectrumcomputing.co.uk/entry/{ids["zxdb"]}'] if 'zxdb' in ids else []),
          'ids': ids, 'runs': runs, 'compat': {}, 'versions': versions,
-         'party': {'zxart_party': int(p['partyId']), 'place': int(p['partyPlace']) if str(p.get('partyPlace') or '').isdigit() else None,
+         'party': {'zxart_party': int(p['partyId']), 'name': None, 'year': p.get('year') or None, 'place': int(p['partyPlace']) if str(p.get('partyPlace') or '').isdigit() else None,
                    'compo': p.get('compo')} if p.get('partyId') else None,
          'screens': get_screens(tdir, p.get('imagesUrls') or [])}
     t = {k: v for k, v in t.items() if v not in (None, [], '')} | {'runs': runs}
@@ -1201,6 +1201,22 @@ def zxart_reviews(zid, prod):
     return ratings, reviews
 
 
+def fill_party(t, p):
+    """Give a zxart party placing its party name and year from pouet."""
+    tf = os.path.join(TITLES, t, 'title.json')
+    j = json.load(open(tf, encoding='utf-8'))
+    party = j.get('party')
+    pl = (p.get('placings') or [None])[0]
+    if not party or party.get('name') or not pl:
+        return
+    party['name'] = html.unescape((pl.get('party') or {}).get('name') or '') or None
+    party['year'] = int(pl['year']) if str(pl.get('year') or '').isdigit() else j.get('year')
+    party['compo'] = party.get('compo') or pl.get('compo_name')
+    with open(tf + '.part', 'w', encoding='utf-8') as f:
+        json.dump(j, f, indent=2, ensure_ascii=False)
+    os.replace(tf + '.part', tf)
+
+
 def reviews(lib):
     todo = []
     for t in sorted(os.listdir(TITLES)):
@@ -1244,6 +1260,7 @@ def reviews(lib):
             a, b = pouet_reviews(ids['pouet'])
             ratings += a
             revs += b
+            fill_party(t, pouet_prod(ids['pouet']))
         out = {'format': 1, 'title': t, 'updated': TODAY, 'ratings': ratings, 'reviews': revs}
         rf = os.path.join(TITLES, t, 'reviews.json')
         with open(rf + '.part', 'w', encoding='utf-8') as f:
