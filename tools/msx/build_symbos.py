@@ -207,7 +207,10 @@ for sub in ('Apps', 'Development'):
     for f in sorted(os.listdir(d)):
         base = re.sub(r'\.zip$', '', f, flags=re.I)
         k = slug(base).replace('-', '')
-        if k in seen or any(k.startswith(s) or s.startswith(k) for s in seen if len(s) > 3) or not f.lower().endswith('.zip'):
+        # The same app under symbos.de's name, maybe with a version after it ("SymAmp_1.6"); only exact
+        # matches, so a different package with a longer name (QuigsBeta, Quigs_Beta_G9K_3) is kept.
+        kv = slug(re.sub(r'[\s_-]*v?\d+(\.\d+)*[a-z]?$', '', base, flags=re.I)).replace('-', '')
+        if k in seen or (kv and kv in seen) or not f.lower().endswith('.zip'):
             continue
         seen.add(k)
         if not good_zip(os.path.join(d, f)):
