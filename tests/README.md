@@ -29,3 +29,9 @@ Test programs are not kept in git; they are downloaded into `tests-data/`.
 - **SAM Coupé**: `make sam` fetches SAMDOS 2 (`samdos2.sbt`, from SimCoupé's
   resources) into `tests-data/`, builds a boot disk with `tests/mkmgt.c`,
   boots it, saves a file from BASIC and reads it back out of the image.
+- **Beta 128 / TR-DOS**: `make beta` (or `make beta CLONE_ROMS=dir`) builds
+  disks with python3, then on the Pentagon, Scorpion and ATM Turbo loads,
+  saves, catalogues and formats through the emulated WD1793 and checks what
+  ended up in the images. Needs the clones' ROMs (`roms/README.md`); a
+  machine without them is skipped. `make state` and `make wasmtest` take
+  `CLONE_ROMS` too.

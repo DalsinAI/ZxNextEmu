@@ -33,7 +33,7 @@ typedef enum {
     ZXM_SLOT_SNAPSHOT,           /* bytes, loaded once: .sna, .z80 */
     ZXM_SLOT_SD,                 /* blocks */
     ZXM_SLOT_SERIAL,             /* a serial device on a UART */
-    ZXM_SLOT_DISK,               /* a floppy disk drive */
+    ZXM_SLOT_DISK,               /* a floppy drive: bytes or blocks */
     ZXM_SLOT_CARTRIDGE,          /* a ROM cartridge */
     ZXM_SLOT_HARDDISK,           /* a hard disk */
     ZXM_SLOT_COMPANION           /* bytes, kept: files a snapshot goes with
@@ -64,7 +64,7 @@ typedef struct zxm_input_desc {
 } zxm_input_desc;
 
 typedef struct zxm_info {
-    const char *id;              /* "zx48", "zx128", "next" */
+    const char *id;              /* "zx48", "zx128", "next", "scorpion", "atm2" */
     const char *name;            /* "ZX Spectrum 128K" */
     uint32_t cpu_hz, frame_t;    /* nominal clock, T-states per frame */
     uint16_t fb_w, fb_h;         /* framebuffer size in pixels */

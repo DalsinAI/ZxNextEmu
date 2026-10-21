@@ -16,10 +16,11 @@ the core already has, then the large families, then the rest.
 | `zx48`, `zx16` | ZX Spectrum 48K and 16K, issue 2 and 3 boards | 48K done in the core; 16K is a 48K manifest with less RAM |
 | `zx128`, `plus2` | Spectrum 128K, +2 | done in the core |
 | `plus2a`, `plus3` | +2A, +2B, +3 | done except the +3 disk drive (uPD765) |
-| `pentagon` | Pentagon 128 | done; Beta Disk to come |
+| `pentagon` | Pentagon 128 | done, with the Beta 128 disk interface (TR-DOS, .trd / .scl) when `trdos.rom` is supplied |
 | `next` | ZX Spectrum Next (TBBlue) | timing from the official FPGA sources |
 | `spec256` | Spec256, the 256-colour Spectrum | done in the core: a 48K or 128K (the snapshot decides) with eight shadow CPUs on bit-planes; see [../spec256.md](../spec256.md) |
-| `scorpion` | Scorpion ZS-256 | Pentagon-like, extra paging |
+| `scorpion` | Scorpion ZS-256 | done: 256K, port 1FFD paging, service ROM, Beta 128 disk |
+| `atm2` | ATM Turbo 2+ | done: 1024K, xxF7 window paging, 7 MHz turbo, EGA / hi-res / 80-column text modes, 16-colour palette, Beta 128 disk |
 | `ts2068`, `tc2048` | Timex Sinclair 2068, Timex Computer 2048 | ULA hi-res and hi-colour modes, cartridge slot |
 | `zx80`, `zx81` | ZX80, ZX81 (Timex TS1000/TS1500) | the CPU generates the picture; needs the core's per-T-state bus |
 
