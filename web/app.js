@@ -2,7 +2,7 @@
 // sound, keyboard and media. The machine runs in worker.js; the library and
 // saved states live in IndexedDB.
 
-import { tx, runParts, romsAdded, romAdd } from './library.js';
+import { tx, runParts, romsAdded, romAdd, offersOf } from './library.js';
 import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor } from './libview.js';
 import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, recipeFor, RECIPES } from './cradle.js';
 
@@ -69,7 +69,7 @@ worker.onmessage = async e => {
       run: runTitle,
       current: () => machineId,
       onCount: () => {},
-    }).then(() => { libraryReady = true; libraryFor(instance); showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'); });
+    }).then(() => { libraryReady = true; libraryFor(instance); migrateMedia(); showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'); });
     break;
   case 'machines':   // the user added ROMs
     machines = msg.machines;
@@ -122,6 +122,7 @@ worker.onmessage = async e => {
     setChip(running ? 'running' : 'paused');
     break;
   case 'status':
+    if (running) ranSince = true;   // it has moved on since the last keep
     $('led-tape').classList.toggle('on', msg.tape);
     $('st-fps').textContent = `${msg.fps.toFixed(1)} frames/s`;
     $('st-frames').textContent = msg.frames.toLocaleString();
@@ -173,7 +174,9 @@ async function instanceFor(machine) {
   const have = all.filter(i => i.machine === machine).sort((a, b) => (b.lastRun || b.created) - (a.lastRun || a.created))[0];
   if (have) return have;
   const r = RECIPES.find(x => x.machine === machine && !x.later);
-  return instanceMake({ name: r?.title || nameOf(machine), machine, recipe: r?.id || null });
+  const fields = { name: r?.title || nameOf(machine), machine, recipe: r?.id || null };
+  // Without IndexedDB the instance lasts as long as the page.
+  return instanceMake(fields).catch(() => ({ id: `${machine}-here`, ...fields, notes: '', created: Date.now(), lastRun: null, state: null, stateSize: 0, thumb: null, title: null }));
 }
 
 // Switch the machine to an instance, keeping the one it leaves.
@@ -192,7 +195,7 @@ function startInstance(inst) {
 // The library shows what suits an instance: its machine and what its recipe offers.
 let libraryReady = false;
 function libraryFor(inst) {
-  if (libraryReady && inst) showFor(inst.machine, recipeFor(inst.recipe)?.offers || [], inst.name);
+  if (libraryReady && inst) showFor(inst.machine, offersOf(inst.machine, recipeFor(inst.recipe)?.offers), inst.name);
 }
 
 function showName() {
@@ -303,7 +306,12 @@ function romDialog(id) {
     romsChanged(roms);
   });
   dlg.querySelector('form').addEventListener('submit', async e => {
-    if (e.submitter?.value === 'start' && id !== machineId) { showView('machine'); startInstance(await instanceFor(id)); }
+    if (e.submitter?.value !== 'start') return;
+    showView('machine');
+    if (id !== machineId) return startInstance(await instanceFor(id));
+    // The same machine, perhaps failed with the old ROM: start it again.
+    pendingRestore = instance?.state || null;
+    create(id);
   });
   if (!dlg.open) dlg.showModal();
 }
@@ -664,11 +672,27 @@ async function useItem(it) {
   startAudio();
   const bytes = it.bytes.slice(0);
   if (it.kind === 'state') {
+    currentTitle = null;   // the state may hold anything
+    updateShotItem();
     send('restore', { name: it.name, bytes }, [bytes]);
   } else {
     send('load', { name: it.name, bytes, id: machineId, autostart: $('autostart').checked }, [bytes]);
   }
   if (!running) send('start');
+}
+
+// Tapes and snapshots kept by earlier versions of the page move into the
+// library; the media store keeps only saved states.
+async function migrateMedia() {
+  let old = [];
+  try { old = (await libAll()).filter(it => it.kind !== 'state'); } catch { return; }
+  if (!old.length) return;
+  try {
+    await libraryAdd(old.map(it => new File([it.bytes], it.name)));
+    for (const it of old) await libDelete(it.id);
+  } catch (e) {
+    showError(`Your kept tapes could not move into the library: ${e.message}`);
+  }
 }
 
 // Dropped files go into the library.

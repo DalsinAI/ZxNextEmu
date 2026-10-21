@@ -270,15 +270,31 @@ const handlers = {
   },
   // Several files for one run: each into its slot, a tape or snapshot last
   // through load() so it starts as usual.
+  // A disk or cartridge on its own boots the machine from it; of several
+  // disks for one drive, the first goes in.
   loadSet(msg) {
+    const filled = new Set();
+    let boots = false, starts = false;
     for (const p of msg.parts) {
       if (p.slot === 'tape' || p.slot === 'snapshot') {
         handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
-      } else {
+        starts = true;
+      } else if (!filled.has(p.slot)) {
         if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
+        filled.add(p.slot);
+        if (/^(disk|cart)/.test(p.slot)) boots = true;
         postMessage({ type: 'media', slot: p.slot, name: p.name });
       }
     }
+    if (boots && !starts && msg.autostart) {
+      x.zxm_reset(m, 1);
+      if (msg.id === 'plus3' || msg.id === 'plus2a') {   // the menu's Loader
+        const p = cstr('\n');
+        x.zxm_type(m, p, 90);
+        x.free(p);
+      }
+    }
+    postMessage({ type: 'loadedSet' });
   },
   eject(msg) { x.zxm_media_eject(m, cstr(msg.slot)); postMessage({ type: 'media', slot: msg.slot, name: null }); },
   save(msg) {
