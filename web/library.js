@@ -577,7 +577,7 @@ export function haystack(t) {
   const m = t.meta;
   return [m.name, m.publisher, m.summary, m.kind, m.license, ...(m.authors || []), ...(m.genres || []), ...(m.tags || []),
     ...t.files.map(f => f.path.replace(/^files\//, '')), ...(m.runs || []).flatMap(r => (r.machines || []).map(label)),
-    ...(m.versions || []).map(v => v.label), ...titleLangs(t).map(langName)]
+    ...(m.versions || []).flatMap(v => [v.label, v.publisher, ...(v.authors || [])]), ...titleLangs(t).map(langName)]
     .filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -622,8 +622,9 @@ export function runParts(t, run) {
 }
 
 // Put the user's own copies of missing files into a title, matched by name.
-export function attachFiles(t, picked) {
-  const wanted = (t.meta.runs || []).flatMap(r => r.files || (r.file ? [r.file] : []))
+// run: only that run's files (two versions can share a file name).
+export function attachFiles(t, picked, run) {
+  const wanted = (run ? [run] : t.meta.runs || []).flatMap(r => r.files || (r.file ? [r.file] : []))
     .filter(p => !t.files.some(f => f.path === p));
   const added = [];
   for (const { name, bytes } of picked) {

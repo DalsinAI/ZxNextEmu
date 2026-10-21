@@ -297,7 +297,7 @@ function reviewsHtml(t) {
   const r = t.reviews;
   if (!r) return '';
   const all = ratingOf(t);
-  const link = (x, text) => x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
+  const link = (x, text) => /^https?:/i.test(x.url || '') ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
   const score = x => x.score != null && x.scale ? `${+x.score}/${x.scale}` : '';
   return `<h3>Ratings and reviews${all ? ` <small class="lib-rating">★ ${all.score.toFixed(1)} out of 10</small>` : ''}</h3>
     ${r.ratings.length ? `<ul class="det-ratings">${r.ratings.map(x => `<li>${link(x, x.site || 'Rating')} <b>${esc(score(x))}</b>${x.votes ? ` <small>${x.votes} vote${x.votes === 1 ? '' : 's'}</small>` : ''}${x.version ? ` <small>${esc(x.version)}</small>` : ''}</li>`).join('')}</ul>` : ''}
@@ -341,7 +341,7 @@ export async function showDetail(id) {
     </li>`;
   };
   // With versions, each one heads its own runs.
-  const runs = m.versions?.length
+  const runs = m.versions?.length || (m.language && m.language !== 'en')
     ? versionsOf(t).filter(v => v.runs.length || v.id).map(v => `<li class="det-ver"><h4>${v.language && v.language !== 'en' ? flagOf(v.language) : ''}${esc(v.label || v.id || 'Main version')}
         <small>${esc([v.year, v.language && langName(v.language), v.publisher, (v.authors || []).join(', ')].filter(Boolean).join(' · '))}</small></h4>
         ${v.notes ? `<small>${esc(v.notes)}</small>` : ''}
@@ -400,7 +400,7 @@ export async function showDetail(id) {
     input.multiple = true;
     input.addEventListener('change', async () => {
       const picked = await Promise.all([...input.files].map(async f => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })));
-      const added = attachFiles(t, picked);
+      const added = attachFiles(t, picked, m.runs[Number(b.dataset.need)]);
       if (!added.length) { status(`Those are not the files ${t.meta.name} needs.`); return; }
       status(`Added ${added.length} file${added.length === 1 ? '' : 's'} to ${t.meta.name}.`);
       if (!t.screens.length) t.needsShots = true;
