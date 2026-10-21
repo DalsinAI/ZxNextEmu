@@ -131,10 +131,10 @@ for folder in sorted(os.listdir(root)):
         else: meta['tags'] = ['msx', 'demo']
         meta['tags'] += [n for n in hneeds]
         meta['license'] = 'unknown'
-        url = lambda f: FH + 'Demos/' + urllib.parse.quote(folder) + '/' + urllib.parse.quote(f)   # names hold # and spaces
+        url = lambda f: FH + 'Demos/' + urllib.parse.quote(folder) + '/' + urllib.parse.quote(re.sub(r'\.part$', '', f))   # names hold # and spaces
         meta['source'] = url(srcs[0])
         meta['sources'] = [url(s) for s in srcs]
-        meta['added'] = TODAY
+        meta['added'] = old_added(tdir) or TODAY
         meta['runs'] = runs
         meta['compat'] = {}
         if p.get('fhid'): meta['ids'] = {'filehunter': [int(p['fhid'])]}

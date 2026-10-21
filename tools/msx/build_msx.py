@@ -130,6 +130,14 @@ def mapper_ok(mapper, path):
         return False
 
 
+def old_added(tdir):
+    """The date an earlier build of this title was first added, kept across rebuilds."""
+    try:
+        return json.load(open(os.path.join(os.path.dirname(tdir), '.old-' + os.path.basename(tdir), 'title.json')))['added']
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def shelve(tdir):
     """Move an earlier build aside while a title is rebuilt; settle() then drops or restores it.
     Returns whether there was one."""
@@ -177,8 +185,10 @@ def parse(base, typ):
     year = next((p for p in parens if re.fullmatch(r'(19|20)[0-9x]{2}', p)), None)
     lang = next((p for p in parens if p.lower() in LANGS), None)
     if not lang:   # ROM names also write it in brackets: [English], [Jp], [Portuguese Only], [English Version]
-        word = lambda f: re.sub(r'\s+(only|version|translation|translated)$', '',
-                                re.sub(r'^(translated|translation) (in)?to (\w+).*$', r'\3', f.strip().lower()))
+        # also "English Translation by MSX Translations - Trained", "Spanish Translation by ...", "English by Django"
+        word = lambda f: re.sub(r'^(\w+) (translation|translated|version|by)\b.*$', r'\1',
+                                re.sub(r'\s+(only|version|translation|translated)$', '',
+                                       re.sub(r'^(translated|translation) (in)?to (\w+).*$', r'\3', f.strip().lower())))
         lang = next((LANG_WORDS[word(f)] for f in flags if word(f) in LANG_WORDS), None)
         flags = [f for f in flags if word(f) not in LANG_WORDS]
     part = [p for p in parens if re.match(r'(disk|tape|side|disc|part) ', p, re.I) or re.fullmatch(r'side [ab]', p, re.I)]
@@ -382,6 +392,16 @@ def ours(tdir):
 
 
 used = set()     # ids given out in this run; an earlier run's folders are rebuilt, not doubled
+# The id each title had last time, from the key written in its marker, so a title keeps its folder
+# when one sharing its slug comes or goes. Folders from before markers held keys have none.
+prior = {}
+for d in os.listdir(OUT):
+    try:
+        k = open(os.path.join(OUT, d, MARK)).read().strip()
+    except OSError:
+        continue
+    if k and not d.startswith('.'):
+        prior.setdefault(k, d)
 index = []
 only = set(sys.argv[4].split(',')) if len(sys.argv) > 4 else None
 for key, t in sorted(titles.items()):
@@ -393,7 +413,10 @@ for key, t in sorted(titles.items()):
     tid = 'msx-' + slug(name)
     base = tid
     n = 2
-    while tid in used or (os.path.exists(os.path.join(OUT, tid)) and not ours(os.path.join(OUT, tid))):
+    taken = {d for k, d in prior.items() if k != key and k in titles}   # another title's folder
+    if prior.get(key) and prior[key] not in used and ours(os.path.join(OUT, prior[key])):
+        tid = prior[key]
+    while tid in used or tid in taken or (os.path.exists(os.path.join(OUT, tid)) and not ours(os.path.join(OUT, tid))):
         tid = '%s-%d' % (base, n); n += 1
     used.add(tid)
     if only and key not in only:
@@ -401,7 +424,8 @@ for key, t in sorted(titles.items()):
     tdir = os.path.join(OUT, tid)
     had = shelve(tdir)   # ours from an earlier run, kept until this build has files
     os.makedirs(tdir)
-    open(os.path.join(tdir, MARK), 'w').close()
+    with open(os.path.join(tdir, MARK), 'w') as f:
+        f.write(key)
     fdir = os.path.join(tdir, 'files')
     os.makedirs(fdir, exist_ok=True)
     runs, allfiles, sdbhit, sources, unrun, failed = [], [], None, [], [], []
@@ -515,7 +539,7 @@ for key, t in sorted(titles.items()):
     meta['license'] = 'unknown'
     meta['source'] = sources[0]
     meta['sources'] = sources
-    meta['added'] = TODAY
+    meta['added'] = old_added(tdir) or TODAY
     ids = {}
     if sdbhit and (sdbhit.get('genmsx') or '').isdigit(): ids['genmsx'] = int(sdbhit['genmsx'])
     fhids = sorted({v['parse']['fhid'] for v in vs if v['parse']['fhid']})
