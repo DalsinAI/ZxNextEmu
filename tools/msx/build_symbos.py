@@ -55,6 +55,7 @@ def platforms_of(platforms):
 
 MARK = '.build_symbos'
 used = set()
+kept = set()   # titles whose local download is missing or damaged: an earlier build is left alone
 
 
 def ours(tdir):
@@ -98,9 +99,11 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
     seen.add(slug(name).replace('-', ''))
     if not os.path.exists(z):
         skipped.append(name + ' (part of the SymbOS core package)')
+        kept.add('symbos-' + slug(name))
         continue
     if not good_zip(z):
         skipped.append(name + ' (damaged download)')
+        kept.add('symbos-' + slug(name))
         continue
     tid = claim('symbos-' + slug(name))
     tdir = os.path.join(OUT, tid)
@@ -157,6 +160,7 @@ built = {}
 for tid, name, remote, local, machines, slot, needs, text in systems:
     z = os.path.join(osdir, local)
     if not os.path.exists(z) or not good_zip(z):
+        kept.add(tid)
         continue
     key, tid = tid, claim(tid)
     built[key] = tid   # by the plain id: claim() may have added -2
@@ -184,6 +188,7 @@ extras = [('symbos-hdd-4-0', 'SymbOS 4.0 hard disk image (File-Hunter)', 'SymbOS
 for tid, name, src, machines, slot, needs, text in extras:
     z = os.path.join(fh, src)
     if not os.path.exists(z) or not good_zip(z):
+        kept.add(tid)
         continue
     tid = claim(tid)
     fdir = os.path.join(OUT, tid, 'files')
@@ -207,6 +212,7 @@ for sub in ('Apps', 'Development'):
         seen.add(k)
         if not good_zip(os.path.join(d, f)):
             skipped.append(base + ' (damaged download)')
+            kept.add('symbos-' + slug(base))
             continue
         tid = claim('symbos-' + slug(base))
         fdir = os.path.join(OUT, tid, 'files')
@@ -219,9 +225,14 @@ for sub in ('Apps', 'Development'):
         index.append(tid)
 
 # A titles folder this builder made that no longer comes out of the archive (a game gone, or a
-# renamed slug) is stale; only folders carrying the marker are touched.
+# renamed slug) is stale; only folders carrying the marker are touched. A title skipped because
+# its download is missing or damaged keeps its folder (and any -2, -3 twin) from the last build.
+def skipped_here(d):
+    return any(d == k or re.fullmatch(re.escape(k) + r'-\d+', d) for k in kept)
+
+
 for d in os.listdir(OUT):
-    if d not in used and os.path.exists(os.path.join(OUT, d, MARK)):
+    if d not in used and not skipped_here(d) and os.path.exists(os.path.join(OUT, d, MARK)):
         shutil.rmtree(os.path.join(OUT, d))
 json.dump({'titles': index, 'skipped': skipped}, open(os.path.join(OUT, '..', 'symbos-index.json'), 'w'), indent=1)
 print('symbos written', len(index), 'skipped', len(skipped))
