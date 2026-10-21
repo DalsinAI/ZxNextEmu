@@ -32,7 +32,10 @@ typedef enum {
     ZXM_SLOT_TAPE = 1,           /* bytes: .tap, .tzx */
     ZXM_SLOT_SNAPSHOT,           /* bytes, loaded once: .sna, .z80 */
     ZXM_SLOT_SD,                 /* blocks */
-    ZXM_SLOT_SERIAL              /* a serial device on a UART */
+    ZXM_SLOT_SERIAL,             /* a serial device on a UART */
+    ZXM_SLOT_COMPANION           /* bytes, kept: files a snapshot goes with
+                                    (Spec256 graphics); insert them first,
+                                    eject clears them all */
 } zxm_slot_kind;
 
 typedef struct zxm_slot {
