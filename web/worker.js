@@ -249,6 +249,18 @@ const handlers = {
       throw new Error(`${msg.name}: ZX Cradle loads .tap, .tzx, .sna and .z80 files.`);
     }
   },
+  // Several files for one run: each into its slot, a tape or snapshot last
+  // through load() so it starts as usual.
+  loadSet(msg) {
+    for (const p of msg.parts) {
+      if (p.slot === 'tape' || p.slot === 'snapshot') {
+        handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
+      } else {
+        if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
+        postMessage({ type: 'media', slot: p.slot, name: p.name });
+      }
+    }
+  },
   eject(msg) { x.zxm_media_eject(m, cstr(msg.slot)); postMessage({ type: 'media', slot: msg.slot, name: null }); },
   save(msg) {
     const len = x.zxm_state_size(m);

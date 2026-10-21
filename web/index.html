@@ -27,6 +27,7 @@
       <div class="lib-add">
         <button class="zxc-btn zxc-btn--primary" id="lib-add-files">Add files</button>
         <button class="zxc-btn" id="lib-add-folder">Add a folder</button>
+        <button class="zxc-btn" data-collection hidden>Add the Cradle collection</button>
         <input type="file" id="lib-files" multiple hidden accept=".tap,.tzx,.pzx,.sna,.z80,.nex,.dsk,.trd,.scl,.mdr,.zip,.png,.jpg,.scr,.txt,.md,.toml">
         <input type="file" id="lib-folder" webkitdirectory multiple hidden>
       </div>
@@ -40,6 +41,7 @@
           <i class="zxc-stripe"></i>
           <h2>Your library is empty</h2>
           <p>Add tapes, snapshots or whole folders of games. ZX Cradle works out what each one runs on, takes screenshots on a hidden machine, and keeps everything in this browser.</p>
+          <p><button class="zxc-btn zxc-btn--primary" data-collection hidden>Add the Cradle collection</button></p>
           <p>A folder with a <code>title.toml</code> keeps the details you wrote; export any title as a <code>.zip</code> to move it to another Cradle.</p>
         </div>
         <p class="lib-none" id="lib-none" hidden>Nothing matches. Try fewer words or clear the filters.</p>
