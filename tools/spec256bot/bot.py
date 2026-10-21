@@ -23,6 +23,8 @@ import sys
 import zlib
 import struct
 
+import background
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 
@@ -253,7 +255,11 @@ def default_ramp(s):
 
 
 def default_plan(sprites):
-    return {"sprites": [{"id": s["id"], "what": "",
+    # Space behind a game played mostly on black paper; nothing otherwise.
+    black = sum(s["times"] for s in sprites if s["paper"] % 8 == 0)
+    bg = "starfield" if black > 0.8 * sum(s["times"] for s in sprites) else "none"
+    return {"background": {"kind": bg, "ramps": ["zx_blue"], "brightness": 2, "seed": 1},
+            "sprites": [{"id": s["id"], "what": "",
                          "style": "gradient" if s["start"] < 0x4000 else "bevel",
                          "bands": [{"from_row": 0, "ramp": default_ramp(s)}]} for s in sprites]}
 
@@ -261,6 +267,18 @@ def default_plan(sprites):
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
+        "background": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(background.KINDS)},
+                "ramps": {"type": "array", "items": {"type": "string", "enum": background.RAMPS}},
+                "brightness": {"type": "integer", "enum": [1, 2, 3, 4]},
+                "seed": {"type": "integer"},
+                "why": {"type": "string"},
+            },
+            "required": ["kind", "ramps", "brightness", "seed", "why"],
+            "additionalProperties": False,
+        },
         "sprites": {
             "type": "array",
             "items": {
@@ -287,13 +305,14 @@ PLAN_SCHEMA = {
             },
         }
     },
-    "required": ["sprites"],
+    "required": ["background", "sprites"],
     "additionalProperties": False,
 }
 
 
 def ai_prompt(title, sprites):
     looks = "\n".join(f"- {k}: {v}" for k, v in RAMP_LOOKS.items())
+    kinds = "\n".join(f"- {k}: {v}" for k, v in background.KINDS.items())
     listing = "\n".join(
         f"- sprite {s['id']}: {s['w'] * 8}x{s['h']} pixels, drawn {s['times']} times, "
         f"in Spectrum ink {s['ink'] % 8}{' bright' if s['ink'] >= 8 else ''} on paper {s['paper'] % 8}"
@@ -338,7 +357,34 @@ Ramps:
 The sprites:
 {listing}
 
+Also design a background. The other images are screenshots of the game as
+it was played. Spec256 shows a 320x200 background wherever the game leaves
+paper, so it sits behind the whole picture. Choose one that suits the game's
+setting (space, a jungle, a castle, underwater...) and keep it dim enough
+(brightness 1 or 2 usually) that the sprites and text stay easy to see.
+Choose "none" when the game paints areas of the screen with coloured paper
+on purpose (a background would cover them). Kinds:
+{kinds}
+ramps: one to three of {", ".join(background.RAMPS)} (these start at
+black, so the background can stay dark), the main colour first (for sky and hills
+the second is the hills; for water the last is the bubbles). seed: any
+number, it varies the pattern. why: one sentence.
+
 Answer for every sprite listed."""
+
+
+def screenshots(work, most=3):
+    """The tracer's screenshots as PNGs (work/shotNNNN.png), up to `most`."""
+    shots = sorted(f for f in os.listdir(work) if f.startswith("shot") and f.endswith(".ppm"))
+    out = []
+    for f in shots[-most:]:
+        data = open(os.path.join(work, f), "rb").read()
+        parts = data.split(b"\n", 3)                # P6, size, 255, pixels
+        w, h = map(int, parts[1].split())
+        png = os.path.join(work, f[:-4] + ".png")
+        write_png(png, w, h, parts[3])
+        out.append(png)
+    return out
 
 
 def cmd_ai(a):
@@ -346,7 +392,7 @@ def cmd_ai(a):
 
     mem, trace = load(a.work)
     sprites = json.load(open(os.path.join(a.work, "sprites.json")))
-    png = open(os.path.join(a.work, "sheet.png"), "rb").read()
+    images = [os.path.join(a.work, "sheet.png")] + screenshots(a.work)
     client = anthropic.Anthropic()
     response = client.beta.messages.create(
         model="claude-opus-5-5",
@@ -356,9 +402,9 @@ def cmd_ai(a):
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                         "data": base64.standard_b64encode(png).decode()}},
-            {"type": "text", "text": ai_prompt(a.title, sprites)},
-        ]}],
+                                         "data": base64.standard_b64encode(open(f, "rb").read()).decode()}}
+            for f in images
+        ] + [{"type": "text", "text": ai_prompt(a.title, sprites)}]}],
     )
     if response.stop_reason == "refusal":
         sys.exit(f"Claude declined: {response.stop_details}")
@@ -465,11 +511,17 @@ def cmd_emit(a):
     if any(addr < 0x4000 for addr in colours):
         with open(gfb, "wb") as f:
             f.write(page(0))
+    bg = background.paint(plan.get("background") or {}, RAMPS)
     with open(os.path.join(a.out, name + ".CFG"), "w") as f:
         # Uncoloured bytes are 0 and 0xFF, drawn in the attribute's paper and ink, even for the
-        # games the player otherwise draws plainly by name.
-        f.write("UpColorsMixed=8\r\nPaper00InkFF=1\r\n")
-    print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX")
+        # games the player otherwise draws plainly by name. With a background, colour 0 has to
+        # stay see-through instead, and 0xFF is mixed with the ink (UpColorsMixed).
+        f.write("UpColorsMixed=8\r\n" + ("Paper00InkFF=0\r\n" if bg else "Paper00InkFF=1\r\n"))
+    if bg:
+        with open(os.path.join(a.out, name + ".B00"), "wb") as f:
+            f.write(bg)
+    print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX"
+          + (f", background {plan['background']['kind']}" if bg else ""))
 
 
 def main():
