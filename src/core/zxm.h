@@ -50,9 +50,9 @@ typedef enum {
     ZXM_IN_KEMPSTON,             /* Kempston joystick */
     ZXM_IN_MOUSE,                /* Kempston mouse */
     ZXM_IN_ORIC_KEYBOARD,        /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
+    ZXM_IN_SAM_KEYBOARD,         /* SAM Coupe matrix */
     ZXM_IN_MSX_KEYBOARD,         /* MSX matrix */
-    ZXM_IN_JOYSTICK,             /* a general joystick (ZXM_EV_JOYSTICK) */
-    ZXM_IN_SAM_KEYBOARD          /* SAM Coupe matrix */
+    ZXM_IN_JOYSTICK              /* a general joystick (ZXM_EV_JOYSTICK) */
 } zxm_input_kind;
 
 typedef struct zxm_input_desc {
