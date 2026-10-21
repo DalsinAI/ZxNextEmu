@@ -72,6 +72,20 @@ build/zxrun -m 128 -i mb03 -e esxmmc.bin -c sd-folder -f 800 -d 450 -t '.ls
 esxDOS's `SYS/` and `BIN/` go in the folder. Use the ones that match the
 ROM's version; tests/README.md says where to get a matching set. What the
 Spectrum saves (`SAVE *"name"`) lands in the folder.
+### SAM Coupé
+
+`build/zxmrun` runs any machine through the zxm interface, the SAM Coupé
+(`sam`) among them, with ROM 3.0 from `roms/`. Disks go in drives
+`disk.1` and `disk.2` (MGT, SAD, DSK or EDSK images) and tapes in `tape`:
+
+```sh
+build/zxmrun -m sam -i disk.1=game.mgt -f 1500 -t '\n\nboot\n' -d 150 -s shot.ppm
+build/zxmrun -m sam -i tape=game.tzx -f 9000 -t '\n\nload ""\n' -d 150 -s shot.ppm
+```
+
+`zxmrun -l` lists the machines; `-T frame:text` types more text later on.
+The disk drives run in real time (300 rpm, a byte every 32 us), as does
+the tape through the ROM's loader.
 
 ### Wifi
 
@@ -115,7 +129,7 @@ next.
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
 up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-`spec256`, `oric1`, `atmos`),
+`spec256`, `oric1`, `atmos`, `sam`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
 state. The core does no file I/O: ROMs, tapes and snapshots come in as
@@ -164,6 +178,7 @@ mid-frame changes land where they do on the hardware.
 | +3 disk drive | not yet |
 | 6502 core | done: every opcode, documented and not, cycle by cycle on the bus; NMOS decimal mode; interrupt polling on the last cycle but one |
 | Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Checked with a test ROM; the real BASIC ROMs still to be tried. Microdisc not yet |
+| SAM Coupé | boots ROM 3.0 to BASIC and SAMDOS from disk. 512K paging, ASIC screen modes 1 to 4 with the CLUT, memory and ASIC port contention, line and frame interrupts, light pen and attribute ports, SAA1099, beeper, keyboard, two VL1772 drives in real time (MGT, SAD, DSK, EDSK), tape. Still to come: mouse, external memory, mode-change artefacts |
 | Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
@@ -191,6 +206,7 @@ mid-frame changes land where they do on the hardware.
 | Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens | all pass (`make mb03`) |
 | esxDOS 0.8.9 on an MB03+ (48K, 128K, +3, Pentagon): boot, `SAVE *` into the SD folder | all pass (`make esxdos`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
+| SAM Coupé: BOOT SAMDOS from an MGT, SAVE from BASIC and read the bytes back from the image, SAA1099 pitch | all pass (`make sam`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
 The test programs are downloaded into `tests-data/`, see

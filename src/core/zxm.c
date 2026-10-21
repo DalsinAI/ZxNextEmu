@@ -9,6 +9,7 @@
 static const zxm_family *const families[] = {
     &zxm_family_zx,
     &zxm_family_oric,
+    &zxm_family_sam,
 };
 
 #define FAMILIES ((int)(sizeof families / sizeof families[0]))
