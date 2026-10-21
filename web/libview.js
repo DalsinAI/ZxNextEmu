@@ -3,7 +3,7 @@
 
 import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
-  importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, attachFiles, romsAdded,
+  importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, fillParts, attachFiles, romsAdded, hostTitles,
   normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
   versionsOf, titleLangs, titleYears, insideSymbos, langName, langFlag, ratingOf,
   companiesOf, workOf, groupByWork, groupBySeries, slug,
@@ -26,6 +26,14 @@ const urls = new Map();   // blob -> object URL
 let openId = null;
 
 const url = blob => { if (!urls.has(blob)) urls.set(blob, URL.createObjectURL(blob)); return urls.get(blob); };
+// A screenshot's picture: kept in the browser, or on the host.
+const src = s => s.url || url(s.blob);
+// The host's titles, read once; titles kept in the browser (added or edited
+// here) replace the host's with the same id.
+let fromHost = null;
+// Cards are drawn a page at a time as the grid scrolls, so a big library stays quick.
+const PAGE = 120;
+let shown = PAGE, more = null;
 const decade = y => y ? `${Math.floor(y / 10) * 10}s` : null;
 
 export async function initLibraryView(o) {
@@ -51,7 +59,11 @@ export async function initLibraryView(o) {
 }
 
 export async function reload() {
-  try { titles = await titleAll(); } catch { titles = []; status('This browser is not keeping files for this page, so the library cannot be stored.'); }
+  let kept = [];
+  try { kept = await titleAll(); } catch { status('This browser is not keeping files for this page, so the library cannot be stored.'); }
+  fromHost ??= await hostTitles();
+  const mine = new Set(kept.map(t => t.id));
+  titles = [...fromHost.filter(t => !mine.has(t.id)), ...kept];
   for (const t of titles) { delete t._hay; t.meta = normalize(t.meta); }
   try { everything = localStorage.getItem('zxc-lib-everything') === '1'; } catch { /* storage off */ }
   if (!setup && opts.current) setup = setupFor(opts.current());
@@ -214,17 +226,27 @@ function render() {
   // the series view is one card per series.
   const group = instanceMode() ? 'titles' : $('lib-group').value;
   $('lib-group').disabled = instanceMode();
+  more?.disconnect();
   if (group === 'series') return renderSeries(grid, list);
   const games = group === 'games' ? groupByWork(list) : list.map(t => ({ titles: [t] }));
   if (group === 'games' && games.length !== list.length) $('lib-count').textContent += ` · ${games.length} games`;
-  for (const { titles: same } of games) {
+  shown = PAGE;
+  drawCards(grid, games, 0, fits);
+  $('lib-empty').hidden = titles.length > 0;
+  $('lib-none').hidden = !titles.length || list.length > 0;
+}
+
+// Cards from `from` up to `shown`, each one game: [{titles}].
+function drawCards(grid, games, from, fits) {
+  grid.querySelector('.lib-more')?.remove();
+  for (const { titles: same } of games.slice(from, shown)) {
     const t = same.find(x => x.screens.length) || same[0];
     const li = document.createElement('li');
     const cover = t.screens[0];
     const machines = [...new Set(same.flatMap(titleMachines))];
     const runs = (t.meta.runs || []).some(r => (r.machines || []).some(m => opts.runnable(m)) && !runParts(t, r).missing.length);
     li.innerHTML = `<button class="lib-card" data-id="${esc(t.id)}">
-      <span class="lib-cover">${cover ? `<img alt="" src="${url(cover.blob)}">` : `<span class="lib-nocover"><i class="zxc-stripe"></i><span>${t.needsShots && runs ? 'Taking screenshots' : t.loadFailed ? 'Did not load in the browser' : 'No screenshot'}</span></span>`}</span>
+      <span class="lib-cover">${cover ? `<img alt="" loading="lazy" src="${esc(src(cover))}">` : `<span class="lib-nocover"><i class="zxc-stripe"></i><span>${t.needsShots && runs ? 'Taking screenshots' : t.loadFailed ? 'Did not load in the browser' : 'No screenshot'}</span></span>`}</span>
       <span class="lib-card-text">
         <b>${esc(same[0].meta.name)}${flags(t)}</b>${stars(t)}${same.length > 1 ? `<small class="lib-same">${same.length} versions</small>` : ''}
         <small>${esc([t.meta.year, t.meta.publisher || (t.meta.authors || [])[0]].filter(Boolean).join(' · ') || kindWord(t.meta.kind))}</small>
@@ -233,8 +255,19 @@ function render() {
     li.firstElementChild.addEventListener('click', () => showDetail(same[0].id));
     grid.append(li);
   }
-  $('lib-empty').hidden = titles.length > 0;
-  $('lib-none').hidden = !titles.length || list.length > 0;
+  if (shown >= games.length) return;
+  const end = document.createElement('li');
+  end.className = 'lib-more';
+  end.setAttribute('aria-hidden', 'true');
+  grid.append(end);
+  more = new IntersectionObserver(seen => {
+    if (!seen.some(e => e.isIntersecting)) return;
+    more.disconnect();
+    const at = shown;
+    shown += PAGE;
+    drawCards(grid, games, at, fits);
+  }, { rootMargin: '600px' });
+  more.observe(end);
 }
 
 // One card per series; opening one shows its games in order.
@@ -247,7 +280,7 @@ function renderSeries(grid, list) {
     const games = new Set(g.titles.map(x => workOf(x.t))).size;
     const li = document.createElement('li');
     li.innerHTML = `<button class="lib-card">
-      <span class="lib-cover">${cover ? `<img alt="" src="${url(cover.blob)}">` : '<span class="lib-nocover"><i class="zxc-stripe"></i><span>No screenshot</span></span>'}</span>
+      <span class="lib-cover">${cover ? `<img alt="" loading="lazy" src="${esc(src(cover))}">` : '<span class="lib-nocover"><i class="zxc-stripe"></i><span>No screenshot</span></span>'}</span>
       <span class="lib-card-text"><b>${esc(g.name)}</b>
         <small>${games} game${games === 1 ? '' : 's'}${years.length ? ` · ${Math.min(...years)}${Math.max(...years) > Math.min(...years) ? `–${Math.max(...years)}` : ''}` : ''}</small>
         <small>${esc(g.titles.slice(0, 3).map(x => x.t.meta.name).join(', '))}${g.titles.length > 3 ? '…' : ''}</small></span></button>`;
@@ -432,9 +465,9 @@ export async function showDetail(id) {
     </header>
     <div class="det-body">
       <div class="det-shots">
-        ${t.screens.length ? `<figure><img class="det-cover" alt="${esc(t.screens[0].caption || m.name)}" src="${url(t.screens[0].blob)}"><figcaption>${esc(t.screens[0].caption)}</figcaption></figure>`
+        ${t.screens.length ? `<figure><img class="det-cover" alt="${esc(t.screens[0].caption || m.name)}" src="${esc(src(t.screens[0]))}"><figcaption>${esc(t.screens[0].caption)}</figcaption></figure>`
           : `<div class="det-cover lib-nocover"><i class="zxc-stripe"></i><span>${t.loadFailed ? `It did not load on the ${t.loadFailed.map(opts.machineName).join(' or the ')}, so there are no screenshots` : 'No screenshot yet'}</span></div>`}
-        <div class="det-thumbs">${t.screens.map((s, i) => `<button class="det-thumb${i ? '' : ' on'}" data-shot="${i}" aria-label="Screenshot ${i + 1}"><img alt="" src="${url(s.blob)}"></button>`).join('')}</div>
+        <div class="det-thumbs">${t.screens.map((s, i) => `<button class="det-thumb${i ? '' : ' on'}" data-shot="${i}" aria-label="Screenshot ${i + 1}"><img alt="" loading="lazy" src="${esc(src(s))}"></button>`).join('')}</div>
         <div class="det-shot-actions">
           ${t.screens.length > 1 ? '<button class="zxc-btn small" data-cover>Make this the cover</button>' : ''}
           ${t.screens.length ? '<button class="zxc-btn small" data-dropshot>Remove this one</button>' : ''}
@@ -450,7 +483,7 @@ export async function showDetail(id) {
         ${reviewsHtml(t)}
         ${controls.length ? `<h3>Controls</h3><p>${controls.map(esc).join('<br>')}</p>` : ''}
         ${t.about ? `<h3>About</h3><div class="det-about">${esc(t.about)}</div>` : ''}
-        <h3>Files</h3><ul class="det-files">${t.files.map(f => `<li><span>${esc(f.path.replace(/^files\//, ''))}</span><small>${size(f.bytes.length)}</small></li>`).join('')}</ul>
+        <h3>Files</h3><ul class="det-files">${t.files.map(f => `<li><span>${esc(f.path.replace(/^files\//, ''))}</span><small>${size(f.size ?? f.bytes.length)}</small></li>`).join('')}</ul>
         ${m.source ? `<p class="det-source">From ${link(m.source)}</p>` : ''}
       </div>
     </div>
@@ -466,7 +499,7 @@ export async function showDetail(id) {
   const pick = i => {
     shot = i;
     const s = t.screens[i];
-    d.querySelector('.det-cover').src = url(s.blob);
+    d.querySelector('.det-cover').src = src(s);
     d.querySelector('figcaption').textContent = s.caption || '';
     d.querySelectorAll('.det-thumb').forEach((b, j) => b.classList.toggle('on', j === i));
   };
@@ -667,6 +700,7 @@ async function takeShots(t) {
     return;
   }
   const { parts } = runParts(t, run);
+  try { await fillParts(parts); } catch (err) { console.warn(`Screenshots of ${t.id}: ${err.message}`); t.needsShots = false; return; }
   const tried = [];
   let keep = [], worked = null;
   for (const machine of run.machines.filter(m => opts.runnable(m))) {
@@ -676,7 +710,7 @@ async function takeShots(t) {
     if (r.loaded && r.keep.length) { keep = r.keep; worked = machine; break; }
   }
   t.needsShots = false;
-  const fresh = await titleGet(t.id);
+  const fresh = (await titleGet(t.id)) || (t.host ? { ...t, meta: structuredClone(t.meta), screens: [...t.screens] } : null);
   if (!fresh) return;
   if (worked && worked !== run.machines[0]) {
     const fr = fresh.meta.runs.find(r => String(r.files) === String(run.files));

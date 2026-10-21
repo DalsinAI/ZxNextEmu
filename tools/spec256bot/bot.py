@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """spec256bot: colour a classic 48K Spectrum game for Spec256.
 
-    bot.py trace  game.sna work/            run the tracer (build/s256trace)
+    bot.py trace  game.sna work/            run the tracer (build/s256trace);
+                                            a 48K .z80 works too
     bot.py sheet  work/                     group the graphics into sprites,
                                             draw work/sheet.png
     bot.py ai     work/ --title "Jetpac"    ask Claude to plan the colours
@@ -22,6 +23,8 @@ import subprocess
 import sys
 import zlib
 import struct
+
+import background
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -67,7 +70,7 @@ def cmd_trace(a):
     subprocess.check_call(["make", "-s", "-C", ROOT, "build/s256trace"])  # make rebuilds it only when a source changed
     os.makedirs(a.work, exist_ok=True)
     # A new trace makes the old sprites and plan wrong, so sheet has to run again.
-    for f in ("sprites.json", "plan.json", "snapshot.sha256"):
+    for f in ("sprites.json", "plan.json", "snapshot.sha256", "start.sna"):
         if os.path.exists(os.path.join(a.work, f)):
             os.remove(os.path.join(a.work, f))
     # Hashed before and after: a file swapped mid-trace would not match what s256trace loaded.
@@ -128,12 +131,28 @@ def find_sprites(mem, trace):
     out = []
     for i, s in enumerate(sprites):
         w = s["w"] or 1
-        # Which bytes start a row: the ones never drawn just right of the byte before.
-        def misses(p):
-            return sum((trace[a]["left"] > 0) == ((a - p) % w == 0) for a in s["bytes"])
-        phase = min(range(w), key=misses)
-        start = s["start"] - (s["start"] - phase) % w
-        h = (s["end"] - start) // w + 1
+        across = {}
+        for a in s["bytes"]:
+            for d, c in trace[a].get("across", {}).items():
+                across[int(d)] = across.get(int(d), 0) + c
+        col_h = max(across, key=across.get) if across else 1
+        # (A font has votes spread over many distances: whatever letters were next to each other.)
+        if w == 1 and col_h > 1 and across[col_h] >= 10 and across[col_h] >= 0.6 * sum(across.values()):
+            # Stored a column at a time: each byte below the last, the next
+            # column col_h bytes on. A column's last byte has nothing below it.
+            def misses(p):
+                return sum((trace[a]["stride"].get("1", 0) == 0) != ((a - p) % col_h == col_h - 1)
+                           for a in s["bytes"])
+            phase = min(range(col_h), key=misses)
+            start = s["start"] - (s["start"] - phase) % col_h
+            h, w, layout = col_h, (s["end"] - start) // col_h + 1, "columns"
+        else:
+            # Which bytes start a row: the ones never drawn just right of the byte before.
+            def misses(p):
+                return sum((trace[a]["left"] > 0) == ((a - p) % w == 0) for a in s["bytes"])
+            phase = min(range(w), key=misses)
+            start = s["start"] - (s["start"] - phase) % w
+            h, layout = (s["end"] - start) // w + 1, "rows"
         ink = [0] * 16
         paper = [0] * 16
         n = up = down = 0
@@ -145,7 +164,7 @@ def find_sprites(mem, trace):
             for k in range(16):
                 ink[k] += e["ink"][k]
                 paper[k] += e["paper"][k]
-        out.append({"id": len(out), "start": start, "w": w, "h": h,
+        out.append({"id": len(out), "start": start, "w": w, "h": h, "layout": layout,
                     "drawn": sorted(s["bytes"]), "times": n,
                     "ink": best(ink), "paper": best(paper),
                     "ink_share": round(max(ink) / max(1, sum(ink)), 2),
@@ -159,13 +178,20 @@ def rows_of(s):
     return reversed(r) if s.get("upside_down") else r
 
 
+def addr_at(s, y, xb):
+    """Address of memory row y, byte column xb of the sprite."""
+    if s.get("layout") == "columns":
+        return s["start"] + xb * s["h"] + y
+    return s["start"] + y * s["w"] + xb
+
+
 def pixels(mem, s):
     """The sprite as rows of 0/1, w*8 wide, top row first."""
     rows = []
     for y in rows_of(s):
         row = []
         for xb in range(s["w"]):
-            a = s["start"] + y * s["w"] + xb
+            a = addr_at(s, y, xb)
             v = mem[a] if a < 65536 else 0
             row.extend((v >> (7 - b)) & 1 for b in range(8))
         rows.append(row)
@@ -253,7 +279,11 @@ def default_ramp(s):
 
 
 def default_plan(sprites):
-    return {"sprites": [{"id": s["id"], "what": "",
+    # Space behind a game played mostly on black paper; nothing otherwise.
+    black = sum(s["times"] for s in sprites if s["paper"] % 8 == 0)
+    bg = "starfield" if black > 0.8 * sum(s["times"] for s in sprites) else "none"
+    return {"background": {"kind": bg, "ramps": ["zx_blue"], "brightness": 2, "seed": 1},
+            "sprites": [{"id": s["id"], "what": "",
                          "style": "gradient" if s["start"] < 0x4000 else "bevel",
                          "bands": [{"from_row": 0, "ramp": default_ramp(s)}]} for s in sprites]}
 
@@ -261,6 +291,18 @@ def default_plan(sprites):
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
+        "background": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(background.KINDS)},
+                "ramps": {"type": "array", "items": {"type": "string", "enum": background.RAMPS}},
+                "brightness": {"type": "integer", "enum": [1, 2, 3, 4]},
+                "seed": {"type": "integer"},
+                "why": {"type": "string"},
+            },
+            "required": ["kind", "ramps", "brightness", "seed", "why"],
+            "additionalProperties": False,
+        },
         "sprites": {
             "type": "array",
             "items": {
@@ -287,13 +329,14 @@ PLAN_SCHEMA = {
             },
         }
     },
-    "required": ["sprites"],
+    "required": ["background", "sprites"],
     "additionalProperties": False,
 }
 
 
 def ai_prompt(title, sprites):
     looks = "\n".join(f"- {k}: {v}" for k, v in RAMP_LOOKS.items())
+    kinds = "\n".join(f"- {k}: {v}" for k, v in background.KINDS.items())
     listing = "\n".join(
         f"- sprite {s['id']}: {s['w'] * 8}x{s['h']} pixels, drawn {s['times']} times, "
         f"in Spectrum ink {s['ink'] % 8}{' bright' if s['ink'] >= 8 else ''} on paper {s['paper'] % 8}"
@@ -330,15 +373,43 @@ Ramps:
   Spectrum's own colours, black up to normal brightness
 - bright_blue, bright_red, bright_magenta, bright_green, bright_cyan,
   bright_yellow: the same up to full brightness
-- ink: shades of whatever ink colour the game gives that spot of the screen
-  at the time. Use it for graphics the game draws in different colours
+- ink: exactly the ink colour the game gives that spot of the screen at the
+  time, unshaded. Use it for graphics the game draws in different colours
   (fonts, tiles shared by several objects), so the game's colour coding
-  survives.
+  survives. With a background it becomes the sprite's main game colour,
+  shaded, since the background hides the game's own colouring.
 
 The sprites:
 {listing}
 
+Also design a background. The other images are screenshots of the game as
+it was played. Spec256 shows a 320x200 background wherever the game leaves
+paper, so it sits behind the whole picture. Choose one that suits the game's
+setting (space, a jungle, a castle, underwater...) and keep it dim enough
+(brightness 1 or 2 usually) that the sprites and text stay easy to see.
+Choose "none" when the game paints areas of the screen with coloured paper
+on purpose (a background would cover them). Kinds:
+{kinds}
+ramps: one to three of {", ".join(background.RAMPS)} (these start at
+black, so the background can stay dark), the main colour first (for sky and hills
+the second is the hills; for water the last is the bubbles). seed: any
+number, it varies the pattern. why: one sentence.
+
 Answer for every sprite listed."""
+
+
+def screenshots(work, most=3):
+    """The tracer's screenshots as PNGs (work/shotNNNN.png), up to `most`."""
+    shots = sorted(f for f in os.listdir(work) if f.startswith("shot") and f.endswith(".ppm"))
+    out = []
+    for f in shots[-most:]:
+        data = open(os.path.join(work, f), "rb").read()
+        parts = data.split(b"\n", 3)                # P6, size, 255, pixels
+        w, h = map(int, parts[1].split())
+        png = os.path.join(work, f[:-4] + ".png")
+        write_png(png, w, h, parts[3])
+        out.append(png)
+    return out
 
 
 def cmd_ai(a):
@@ -346,7 +417,7 @@ def cmd_ai(a):
 
     mem, trace = load(a.work)
     sprites = json.load(open(os.path.join(a.work, "sprites.json")))
-    png = open(os.path.join(a.work, "sheet.png"), "rb").read()
+    images = [os.path.join(a.work, "sheet.png")] + screenshots(a.work)
     client = anthropic.Anthropic()
     response = client.beta.messages.create(
         model="claude-opus-5-5",
@@ -356,9 +427,9 @@ def cmd_ai(a):
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                         "data": base64.standard_b64encode(png).decode()}},
-            {"type": "text", "text": ai_prompt(a.title, sprites)},
-        ]}],
+                                         "data": base64.standard_b64encode(open(f, "rb").read()).decode()}}
+            for f in images
+        ] + [{"type": "text", "text": ai_prompt(a.title, sprites)}]}],
     )
     if response.stop_reason == "refusal":
         sys.exit(f"Claude declined: {response.stop_details}")
@@ -395,7 +466,7 @@ def colour_of(ramp, level):
     return min(c, 254)              # 255 is "ink" under Paper00InkFF
 
 
-def colour_sprite(mem, s, p):
+def colour_sprite(mem, s, p, with_bg=False):
     """{address: [colour of pixel bit 0..7]} for the sprite."""
     rows = pixels(mem, s)
     my = list(rows_of(s))
@@ -406,13 +477,18 @@ def colour_sprite(mem, s, p):
         top = bands[bi]["from_row"]
         bottom = bands[bi + 1]["from_row"] - 1 if bi + 1 < len(bands) else s["h"] - 1
         ramp = bands[bi]["ramp"] if bands[bi]["ramp"] in RAMPS else ZX_RAMP[s["ink"]]
+        if ramp == "ink" and with_bg:
+            # Under a background 0xFF is not the cell's ink, and greys mixed
+            # with the ink come out pale: shade the colour the game drew it in.
+            ramp = ZX_RAMP[s["ink"]] if ZX_RAMP[s["ink"]] != "ink" else "grey"
         for xb in range(s["w"]):
-            a = s["start"] + my[y] * s["w"] + xb
+            a = addr_at(s, my[y], xb)
             cols = [0] * 8
             for b in range(8):
                 x = xb * 8 + 7 - b
                 if rows[y][x]:
-                    cols[b] = colour_of(ramp, shade(rows, x, y, p["style"], top, bottom))
+                    # "ink" without a background: 0xFF, exactly the cell's ink.
+                    cols[b] = 0xff if ramp == "ink" else colour_of(ramp, shade(rows, x, y, p["style"], top, bottom))
             out[a] = cols
     return out
 
@@ -427,16 +503,22 @@ def cmd_emit(a):
     # The ROM is in the traced memory too, and goes into a .GFB, so the replay ROMs must be the traced ones.
     if len(lines) < 2 or lines[1] != roms_sha256(a.roms):
         sys.exit(f"The ROMs in {a.roms} are not the ones traced into {a.work}; pass the same --roms, or trace again.")
+    # A .z80 was played as the .sna s256trace made from it, and Spec256 needs that .sna.
+    start = os.path.join(a.work, "start.sna")
+    if os.path.exists(start):
+        snap = open(start, "rb").read()
     mem, trace = load(a.work)
     sprites = json.load(open(os.path.join(a.work, "sprites.json")))
     path = os.path.join(a.work, "plan.json")
     plan = json.load(open(path)) if os.path.exists(path) and not a.default else default_plan(sprites)
     by_id = {p["id"]: p for p in plan["sprites"]}
+    bg = background.paint(plan.get("background") or {}, RAMPS)
+    with_bg = bg is not None
     colours = {}
     for s in sprites:
         p = by_id.get(s["id"]) or default_plan([s])["sprites"][0]
         drawn = set(s["drawn"])
-        for addr, cols in colour_sprite(mem, s, p).items():
+        for addr, cols in colour_sprite(mem, s, p, with_bg).items():
             if addr < len(mem) and mem[addr] and (a.fill or addr in drawn):
                 colours[addr] = cols
 
@@ -467,9 +549,14 @@ def cmd_emit(a):
             f.write(page(0))
     with open(os.path.join(a.out, name + ".CFG"), "w") as f:
         # Uncoloured bytes are 0 and 0xFF, drawn in the attribute's paper and ink, even for the
-        # games the player otherwise draws plainly by name.
-        f.write("UpColorsMixed=8\r\nPaper00InkFF=1\r\n")
-    print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX")
+        # games the player otherwise draws plainly by name. With a background, colour 0 has to
+        # stay see-through instead, and 0xFF is mixed with the ink (UpColorsMixed).
+        f.write("UpColorsMixed=8\r\n" + ("Paper00InkFF=0\r\n" if bg else "Paper00InkFF=1\r\n"))
+    if bg:
+        with open(os.path.join(a.out, name + ".B00"), "wb") as f:
+            f.write(bg)
+    print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX"
+          + (f", background {plan['background']['kind']}" if bg else ""))
 
 
 def main():

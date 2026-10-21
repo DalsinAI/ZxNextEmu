@@ -560,6 +560,34 @@ export async function importCollection(data) {
   return added;
 }
 
+// ---- the host's library ------------------------------------------------------
+
+// Under the Node host (host/host.mjs) the library is a folder of titles on the
+// computer, read in place: the page gets every title's description, and a
+// title's files and screenshots only when they are needed. Returns [] when the
+// page is not served by the host.
+export async function hostTitles() {
+  let data;
+  try {
+    const res = await fetch('library/titles.json');
+    if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return [];
+    data = await res.json();
+  } catch { return []; }
+  const at = (id, p) => `library/titles/${encodeURIComponent(id)}/${p.split('/').map(encodeURIComponent).join('/')}`;
+  const out = [];
+  for (const c of data.titles || []) {
+    let meta;
+    try { meta = c.json ? normalize(c.json) : normalize(parseToml(c.toml)); } catch { continue; }
+    const screens = c.screens.filter(s => /\.(png|jpe?g|gif|webp)$/i.test(s.path)).map(s => ({
+      path: s.path, url: at(c.id, s.path), caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
+    }));
+    delete meta.screens;
+    out.push({ id: c.id, meta, about: c.about || '', reviews: normalizeReviews(c.reviews),
+      files: c.files.map(f => ({ path: f.path, size: f.size, url: at(c.id, f.path) })), screens, added: 0, needsShots: false, host: true });
+  }
+  return out;
+}
+
 // ---- export -------------------------------------------------------------------
 
 export async function exportTitle(t) {
@@ -569,8 +597,8 @@ export async function exportTitle(t) {
   const entries = [{ path: `${t.id}/title.json`, bytes: enc.encode(toJson(meta, t.id)) }];
   if (t.about) entries.push({ path: `${t.id}/about.md`, bytes: enc.encode(t.about) });
   if (t.reviews) entries.push({ path: `${t.id}/reviews.json`, bytes: enc.encode(JSON.stringify({ ...t.reviews, title: t.id }, null, 2) + '\n') });
-  for (const f of t.files) entries.push({ path: `${t.id}/${f.path}`, bytes: f.bytes });
-  for (const s of t.screens) entries.push({ path: `${t.id}/${s.path}`, bytes: new Uint8Array(await s.blob.arrayBuffer()) });
+  for (const f of t.files) entries.push({ path: `${t.id}/${f.path}`, bytes: await fileBytes(f) });
+  for (const s of t.screens) entries.push({ path: `${t.id}/${s.path}`, bytes: s.blob ? new Uint8Array(await s.blob.arrayBuffer()) : await fileBytes(s) });
   return makeZip(entries);
 }
 
@@ -624,10 +652,24 @@ export function runParts(t, run) {
     const name = p.replace(/^.*\//, '');
     const e = ext(name);
     const slot = paths.length > 1 && ['sna', 'z80'].includes(e) ? 'snapshot' : run.slot || detect(name, new Uint8Array(64))?.slot;
-    return { name, slot, bytes: t.files.find(f => f.path === p).bytes };
+    const f = t.files.find(f => f.path === p);
+    return { name, slot, bytes: f.bytes, url: f.url };
   });
   parts.sort((a, b) => (a.slot === 'snapshot') - (b.slot === 'snapshot'));
   return { parts, missing };
+}
+
+// Fetch the bytes of parts that are still on the host (titles from the host's library).
+export async function fillParts(parts) {
+  await Promise.all(parts.map(async p => { p.bytes ??= await fileBytes(p); }));
+  return parts;
+}
+
+async function fileBytes(f) {
+  if (f.bytes) return f.bytes;
+  const res = await fetch(f.url);
+  if (!res.ok) throw new Error(`${f.path || f.url} is not in the library (${res.status})`);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 // Put the user's own copies of missing files into a title, matched by name.
