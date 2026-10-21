@@ -3,7 +3,7 @@
 A ZX Spectrum Next (TBBlue) emulator that is timed to the T-state, with the
 classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3, the Russian
 clones Pentagon 128, Scorpion ZS-256 and ATM Turbo 2+ with their Beta 128
-disk drives, and the 6502-based Oric-1 and Oric Atmos.
+disk drives.
 
 Written in portable C99 and built with GCC 16.2.0-open3
 ([DalsinAI/openamigagcc](https://github.com/DalsinAI/openamigagcc)) for
@@ -58,11 +58,25 @@ fits these so far:
 
 - a divMMC with 512K RAM and two SD cards
 - TurboSound: three AYs, which also gives a 48K an AY
-- SpecDrum, Covox and SounDrive DACs
+- SpecDrum, Covox, SounDrive and Czech DACs
+- the SAM Coupé's SAA1099, on ports 6E3B/6F3B and FF/1FF
+- a SID (6581 or 8580) on ports 6C3B/6D3B
 - a Kempston mouse
-- the Timex second screen and hi-colour modes
+- the Timex second screen, hi-colour and hi-res (512x192) modes; with
+  them the picture is 640 wide, each normal pixel drawn twice
+- the ZX-Uno's Radastan mode (128x96 in 16 colours from the ULA+ palette)
+- GigaScreen: the two 128K screens mixed, or each frame with the last
+  (by default only while a program flips screens every frame)
+- the board's ZXi settings registers (703B selects, 713B-773B read and
+  write; 7C3B/7D3B for the general ones), as in the MB03+ Programmer's
+  Reference. Register 1 switches the sound devices (and the beeper) on and
+  off, 0B picks the GigaScreen mode and 0C the Timex modes; the rest are
+  kept but have no effect yet
 
-The board's ULA+ is the machine's own, since every classic model has ULA+.
+As on the real board after its SetUp, the SAA1099 starts switched off,
+because its data port FF is also the Timex port. `OUT 28731,1: OUT 28987,127`
+switches it on. The board's ULA+ is the machine's own, since every classic
+model has ULA+.
 Both interfaces need the 8K esxDOS ROM, and the card is a folder, as on the
 Next:
 
@@ -131,7 +145,7 @@ next.
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
 up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-`scorpion`, `atm2`, `spec256`, `oric1`, `atmos`, `sam`, `msx1`, `msx1eu`, `msx2`,
+`scorpion`, `atm2`, `spec256`, `sam`, `msx1`, `msx1eu`, `msx2`,
 `msx2eu`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
@@ -143,19 +157,6 @@ wasi-libc's headers and malloc (about 150 KB, and it imports nothing).
 `make wasmtest` runs every machine natively and under Node with typed input
 and a state save and load part way, and checks the two give exactly the same
 pictures and sound.
-
-### Oric-1 and Oric Atmos
-
-The Orics need their BASIC ROM, which is not in this repository because
-its redistribution rights are unclear: `basic10.rom` (Oric-1, BASIC 1.0,
-CRC32 `f18710b4`) and `basic11b.rom` (Atmos, BASIC 1.1, CRC32 `c3a92bef`),
-16K each. Tapes are `.tap` files. With those two ROMs, CLOAD reads a tape
-almost at once by handing bytes to the ROM's own routines; any other
-loader gets the real 2400/1200 Hz signal on the VIA's CB1.
-
-With the ROMs in a folder, `zxmrun` (below) loads a tape and types for you:
-
-    build/zxmrun -m atmos -r ~/oric-roms -f 400 -T 150:'CLOAD""\n' -s shot.ppm tape=game.tap
 
 ### MSX1 and MSX2
 
@@ -190,12 +191,6 @@ video fetches, the floating bus, beeper and AY output are all computed at the
 exact T-state they happen, so multicolour effects, border stripes and
 timing-sensitive loaders behave as on the hardware.
 
-The 6502 core works the same way: every clock cycle is one bus access,
-dummy reads included, and the Oric's bus steps the VIA, the AY, the tape
-and the video ULA once per cycle. The ULA draws one 6-pixel cell each
-cycle, reading memory before the CPU's access, so serial attributes and
-mid-frame changes land where they do on the hardware.
-
 ## Status
 
 | Part | State |
@@ -206,8 +201,6 @@ mid-frame changes land where they do on the hardware.
 | Tape | TAP and TZX (all common blocks), instant ROM load + real-time pulses |
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
-| 6502 core | done: every opcode, documented and not, cycle by cycle on the bus; NMOS decimal mode; interrupt polling on the last cycle but one |
-| Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Both BASIC ROMs boot, run BASIC and CLOAD a tape, fast and in real time. Microdisc not yet |
 | SAM Coupé | boots ROM 3.0 to BASIC and SAMDOS from disk. 512K paging, ASIC screen modes 1 to 4 with the CLUT, memory and ASIC port contention, line and frame interrupts, light pen and attribute ports, SAA1099, beeper, keyboard, two VL1772 drives in real time (MGT, SAD, DSK, EDSK), tape. Still to come: mouse, external memory, mode-change artefacts |
 | Beta 128 (TR-DOS) | WD1793 on raw tracks, timed to the byte (seeks, rotation, DRQ per byte); .trd images written back, .scl read; Pentagon, Scorpion, ATM |
 | Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |
@@ -218,7 +211,7 @@ mid-frame changes land where they do on the hardware.
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
 | ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
-| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen and hi-colour. Still to come: General Sound, SAA1099, SID, GigaScreen, Radastan, Timex hi-res, MBIDE/CF, RTC, the board's config registers |
+| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen, hi-colour and hi-res, Radastan, GigaScreen, SAA1099, SID, the ZXi settings registers, and General Sound when its ROM (`gs105a.rom`) is given as the second interface ROM, MBIDE with two CF cards (`cf0`, `cf1`; DRON, PVL or HOOD ports picked in m_zxi_002) and the RTC72421 |
 | Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
 | MSX1 / MSX2 | boot C-BIOS; TMS9918/9929 and V9938 (all modes, sprites, timed command engine), AY, PPI keyboard, joysticks, mouse, slots and sub-slots, memory mapper, RP5C01 clock, ROM cartridges with ASCII/Konami/SCC mappers, WD2793 floppy and Sunrise IDE. Not yet: tape, MSX-MUSIC, Kanji ROM, V9958 (MSX2+), CPU waits on VRAM access |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
@@ -231,13 +224,11 @@ mid-frame changes land where they do on the hardware.
 | --- | --- |
 | ZEXDOC, ZEXALL | all pass (`make test`) |
 | SingleStepTests/z80, every opcode: registers, memory, exact T-states | all pass (`make sst`) |
-| SingleStepTests/65x02 (6502), every opcode: registers, memory, every bus cycle | all pass (`make sst6502`) |
-| Oric test ROM (`tests/oric/testrom.s`): VIA T1 period, ULA attributes and HIRES, keyboard, AY, a tape read back through CB1 | all pass (`make oric`, needs xa65) |
 | Folder-backed SD card: fsck.fat, then write back changes made with mtools | all pass (`make vfat`) |
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
 | Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`; `ZXM_SPEC256=game-folder` for a Spec256 game) |
-| Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens | all pass (`make mb03`) |
+| Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens and hi-res, Radastan, GigaScreen, SAA1099, SID, ZXi registers | all pass (`make mb03`) |
 | esxDOS 0.8.9 on an MB03+ (48K, 128K, +3, Pentagon): boot, `SAVE *` into the SD folder | all pass (`make esxdos`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
 | SAM Coupé: BOOT SAMDOS from an MGT, SAVE from BASIC and read the bytes back from the image, SAA1099 pitch | all pass (`make sam`) |

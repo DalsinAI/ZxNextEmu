@@ -47,16 +47,16 @@ static uint8_t *slurp(const char *path, uint32_t *len)
 static void save_ppm(const zxm *m, const char *path)
 {
     const zxm_info *info = zxm_info_of(m);
-    int pitch, x, y;
+    int pitch, x, y, w = zxm_fb_width(m);
     const uint16_t *fb = zxm_framebuffer(m, &pitch);
     FILE *fp = fopen(path, "wb");
     if (!fp) {
         perror(path);
         return;
     }
-    fprintf(fp, "P6\n%d %d\n255\n", info->fb_w, info->fb_h);
+    fprintf(fp, "P6\n%d %d\n255\n", w, info->fb_h);
     for (y = 0; y < info->fb_h; y++)
-        for (x = 0; x < info->fb_w; x++) {
+        for (x = 0; x < w; x++) {
             uint16_t c = fb[y * pitch + x];
             fputc(((c >> 6) & 7) * 255 / 7, fp);
             fputc(((c >> 3) & 7) * 255 / 7, fp);
