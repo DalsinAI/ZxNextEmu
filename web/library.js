@@ -41,7 +41,8 @@ export const titleDelete = id => tx('titles', 'readwrite', s => s.delete(id));
 // Short labels for badges, and the family a plain tape suits.
 export const machineLabels = {
   zx48: '48K', zx128: '128K', plus2: '+2', plus2a: '+2A', plus3: '+3', pentagon: 'Pentagon',
-  next: 'Next', spec256: 'Spec256', scorpion: 'Scorpion', atm: 'ATM Turbo',
+  next: 'Next', spec256: 'Spec256', scorpion: 'Scorpion', atm2: 'ATM Turbo', sam: 'SAM Coupé',
+  msx1: 'MSX1', msx1eu: 'MSX1 50 Hz', msx2: 'MSX2', msx2eu: 'MSX2 50 Hz', oric1: 'Oric-1', atmos: 'Atmos',
 };
 export const label = id => machineLabels[id] || id;
 
@@ -74,7 +75,9 @@ export function detect(name, bytes) {
   }
   case 'nex': return { platform: 'zx-spectrum', slot: 'sd0', machines: ['next'] };
   case 'dsk': return { platform: 'zx-spectrum', slot: 'disk.a', machines: ['plus3'] };
-  case 'trd': case 'scl': return { platform: 'zx-spectrum', slot: 'beta.a', machines: ['pentagon', 'scorpion'] };
+  case 'trd': case 'scl': return { platform: 'zx-spectrum', slot: 'beta.a', machines: ['pentagon', 'scorpion', 'atm2'] };
+  case 'mgt': case 'sad': return { platform: 'sam-coupe', slot: 'disk.1', machines: ['sam'] };
+  case 'mx1': case 'mx2': return { platform: 'msx', slot: 'cart1', machines: e === 'mx1' ? ['msx1', 'msx2'] : ['msx2'] };
   case 'mdr': return { platform: 'zx-spectrum', slot: 'md.1', machines: ['zx48'] };
   default: return null;
   }
