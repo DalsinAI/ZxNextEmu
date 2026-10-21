@@ -2,6 +2,7 @@
 // prints the same line, so the two builds can be compared byte for byte.
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
+// ZXM_IFACE / ZXM_IFACE_ROM plug in an interface, as for tests/zxm.c.
 import { readFileSync } from 'node:fs';
 
 const [wasmPath, romDir, id, framesArg, text] = process.argv.slice(2);
@@ -44,6 +45,15 @@ for (let i = 0; ; i++) {
 
 const m = x.malloc(x.zxm_size(info));
 if (x.zxm_create(m, info, roms)) { console.error('cannot create'); process.exit(1); }
+if (process.env.ZXM_IFACE) {
+  const data = readFileSync(process.env.ZXM_IFACE_ROM);
+  const ir = x.malloc(32), p = x.malloc(data.length);
+  u8().fill(0, ir, ir + 32);
+  u8().set(data, p);
+  dv().setUint32(ir, p, true);
+  dv().setUint32(ir + 16, data.length, true);
+  if (x.zxm_attach(m, cstr(process.env.ZXM_IFACE), ir)) { console.error('cannot plug in'); process.exit(1); }
+}
 if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), 0);
 
 const out = x.malloc(4);
