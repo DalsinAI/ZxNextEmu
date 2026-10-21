@@ -234,6 +234,7 @@ export function normalize(meta) {
     const needs = [...new Set([...(rest.needs || []), ...(rest.slot === 'beta.a' ? ['beta'] : []), ...(rest.slot === 'md.1' ? ['interface1'] : [])])];
     return { ...rest, files, needs };
   });
+  if (m.versions) m.versions = m.versions.filter(v => v && v.id);
   if (m.zxdb_id || m.zxart_id) {
     m.ids = { ...(m.ids || {}), ...(m.zxdb_id ? { zxdb: m.zxdb_id } : {}), ...(m.zxart_id ? { zxart: m.zxart_id } : {}) };
     delete m.zxdb_id;
@@ -243,7 +244,7 @@ export function normalize(meta) {
   return m;
 }
 
-const JSON_ORDER = ['format', 'id', 'name', 'kind', 'year', 'authors', 'publisher', 'genres', 'tags', 'summary', 'license', 'source', 'sources', 'ids', 'added', 'runs', 'compat', 'controls', 'screens'];
+const JSON_ORDER = ['format', 'id', 'name', 'kind', 'year', 'authors', 'publisher', 'genres', 'tags', 'summary', 'language', 'license', 'source', 'sources', 'ids', 'added', 'versions', 'runs', 'compat', 'controls', 'screens'];
 
 export function toJson(meta, id) {
   const m = { ...meta, format: 2, ...(id ? { id } : {}) };
@@ -488,7 +489,7 @@ async function titleFromGroup(key, group) {
   const rel = it => it.path.slice(prefix.length);
   const desc = group.find(i => rel(i).toLowerCase() === 'title.json') || group.find(i => rel(i).toLowerCase() === 'title.toml');
   const files = [], screens = [];
-  let about = '';
+  let about = '', reviews = null;
   if (desc) {
     const meta = parseTitle(new TextDecoder().decode(desc.bytes), desc.path);
     for (const it of group) {
@@ -499,10 +500,13 @@ async function titleFromGroup(key, group) {
         const cap = (meta.screens || []).find(s => s.file === r)?.caption || '';
         if (png) screens.push({ path: r.replace(/\.[^.]+$/, '.png'), blob: png, caption: cap });
       } else if (r.toLowerCase() === 'about.md') about = new TextDecoder().decode(it.bytes);
+      else if (r.toLowerCase() === 'reviews.json') {
+        try { reviews = normalizeReviews(JSON.parse(new TextDecoder().decode(it.bytes))); } catch { /* a bad reviews.json is left out */ }
+      }
     }
     const id = await freeId(slug(prefix.replace(/\/$/, '').replace(/^.*\//, '') || meta.name || 'title'));
     delete meta.screens;
-    return { id, meta, about, files, screens, added: Date.now(), needsShots: !screens.length };
+    return { id, meta, about, reviews, files, screens, added: Date.now(), needsShots: !screens.length };
   }
   // No title.toml: work out what we can.
   const runs = [];
@@ -532,7 +536,7 @@ async function titleFromGroup(key, group) {
 // ---- the shared collection --------------------------------------------------
 
 // collection.json, packed from a folder of titles: {titles: [{id, json (or
-// toml), about, files: [{path, b64}], screens: [{path, b64}]}]}. Titles
+// toml), about, reviews, files: [{path, b64}], screens: [{path, b64}]}]}. Titles
 // already in the library are left alone. Returns the ids added.
 export async function importCollection(data) {
   const have = new Set((await titleAll()).map(t => t.id));
@@ -546,7 +550,8 @@ export async function importCollection(data) {
       caption: (meta.screens || []).find(x => x.file === s.path)?.caption || '',
     }));
     delete meta.screens;
-    await titlePut({ id: c.id, meta, about: c.about || '', files: c.files.map(f => ({ path: f.path, bytes: bytes(f.b64) })), screens, added: Date.now(), needsShots: !screens.length });
+    const reviews = normalizeReviews(typeof c.reviews === 'string' ? JSON.parse(c.reviews) : c.reviews);
+    await titlePut({ id: c.id, meta, about: c.about || '', reviews, files: c.files.map(f => ({ path: f.path, bytes: bytes(f.b64) })), screens, added: Date.now(), needsShots: !screens.length });
     added.push(c.id);
   }
   return added;
@@ -560,6 +565,7 @@ export async function exportTitle(t) {
   if (!meta.screens.length) delete meta.screens;
   const entries = [{ path: `${t.id}/title.json`, bytes: enc.encode(toJson(meta, t.id)) }];
   if (t.about) entries.push({ path: `${t.id}/about.md`, bytes: enc.encode(t.about) });
+  if (t.reviews) entries.push({ path: `${t.id}/reviews.json`, bytes: enc.encode(JSON.stringify(t.reviews, null, 2) + '\n') });
   for (const f of t.files) entries.push({ path: `${t.id}/${f.path}`, bytes: f.bytes });
   for (const s of t.screens) entries.push({ path: `${t.id}/${s.path}`, bytes: new Uint8Array(await s.blob.arrayBuffer()) });
   return makeZip(entries);
@@ -570,13 +576,14 @@ export async function exportTitle(t) {
 export function haystack(t) {
   const m = t.meta;
   return [m.name, m.publisher, m.summary, m.kind, m.license, ...(m.authors || []), ...(m.genres || []), ...(m.tags || []),
-    ...t.files.map(f => f.path.replace(/^files\//, '')), ...(m.runs || []).flatMap(r => (r.machines || []).map(label))]
+    ...t.files.map(f => f.path.replace(/^files\//, '')), ...(m.runs || []).flatMap(r => (r.machines || []).map(label)),
+    ...(m.versions || []).map(v => v.label), ...titleLangs(t).map(langName)]
     .filter(Boolean).join(' ').toLowerCase();
 }
 
 // Plain words match anywhere; key:value words filter, the same in the search
 // box, the shell and MCP: machine:next kind:demo needs:beta compat:verified
-// year:1984 decade:1990s genre:platform. (fit: is the library view's.)
+// year:1984 decade:1990s genre:platform lang:ru rating:7 (7 or more out of 10). (fit: is the library view's.)
 export function matches(t, query) {
   if (!query) return true;
   const h = t._hay ??= haystack(t);
@@ -591,6 +598,8 @@ export function matches(t, query) {
     case 'year': return String(m.year) === v;
     case 'decade': return m.year && `${Math.floor(m.year / 10) * 10}s` === v;
     case 'genre': return (m.genres || []).some(g => g.toLowerCase().includes(v));
+    case 'lang': return titleLangs(t).some(c => c === v || langName(c).toLowerCase() === v);
+    case 'rating': return (ratingOf(t)?.score ?? -1) >= Number(v);
     case 'fit': return true;
     default: return h.includes(w);
     }
@@ -625,3 +634,50 @@ export function attachFiles(t, picked) {
 }
 
 export const titleMachines = t => [...new Set((t.meta.runs || []).flatMap(r => r.machines || []))];
+
+// ---- versions and languages -------------------------------------------------
+
+// Language codes (ISO 639-1) to a name and the flag shown beside a version
+// that is not in English.
+export const LANGS = {
+  en: ['English', 'GB'], ru: ['Russian', 'RU'], uk: ['Ukrainian', 'UA'], be: ['Belarusian', 'BY'], pl: ['Polish', 'PL'],
+  cs: ['Czech', 'CZ'], sk: ['Slovak', 'SK'], es: ['Spanish', 'ES'], pt: ['Portuguese', 'PT'], it: ['Italian', 'IT'],
+  de: ['German', 'DE'], fr: ['French', 'FR'], nl: ['Dutch', 'NL'], hu: ['Hungarian', 'HU'], sv: ['Swedish', 'SE'],
+  fi: ['Finnish', 'FI'], da: ['Danish', 'DK'], no: ['Norwegian', 'NO'], el: ['Greek', 'GR'], ro: ['Romanian', 'RO'],
+  bg: ['Bulgarian', 'BG'], hr: ['Croatian', 'HR'], sr: ['Serbian', 'RS'], sl: ['Slovenian', 'SI'], lt: ['Lithuanian', 'LT'],
+  lv: ['Latvian', 'LV'], et: ['Estonian', 'EE'], tr: ['Turkish', 'TR'], ja: ['Japanese', 'JP'], ko: ['Korean', 'KR'],
+  zh: ['Chinese', 'CN'], ar: ['Arabic', 'SA'], he: ['Hebrew', 'IL'], ca: ['Catalan', 'AD'], eu: ['Basque', 'ES'],
+};
+export const langName = c => LANGS[c]?.[0] || (c || '').toUpperCase();
+export const langFlag = c => (LANGS[c]?.[1] || '').replace(/./g, ch => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65));
+
+// A title's versions, each with its runs. Runs without a version, and a
+// title without versions, belong to the main version.
+export function versionsOf(t) {
+  const m = t.meta;
+  const list = m.versions?.length ? m.versions : [{ id: '', label: '', year: m.year, language: m.language }];
+  const out = list.map(v => ({ ...v, runs: [] }));
+  (m.runs || []).forEach((r, i) => (out.find(v => v.id && v.id === r.version) || out[0]).runs.push({ run: r, i }));
+  return out;
+}
+export const titleLangs = t => [...new Set([t.meta.language, ...(t.meta.versions || []).map(v => v.language)].filter(Boolean))];
+
+// ---- ratings and reviews (reviews.json) --------------------------------------
+
+export function normalizeReviews(r) {
+  if (!r) return null;
+  const n = { format: 1, ...r, ratings: (r.ratings || []).filter(x => x && x.score != null && x.scale), reviews: (r.reviews || []).filter(x => x && x.text) };
+  return n.ratings.length || n.reviews.length ? n : null;
+}
+
+// One rating out of 10: the sites' scores weighted by their votes, or the
+// reviews' own scores when no site rates it. null when nothing scores it.
+export function ratingOf(t) {
+  const r = t.reviews;
+  if (!r) return null;
+  let sum = 0, w = 0;
+  const add = (x, votes) => { sum += x.score / x.scale * 10 * votes; w += votes; };
+  for (const x of r.ratings) add(x, Math.max(1, x.votes || 1));
+  if (!w) for (const x of r.reviews) if (x.score != null && x.scale) add(x, 1);
+  return w ? { score: Math.round(sum / w * 10) / 10, votes: r.ratings.reduce((a, x) => a + (x.votes || 0), 0), reviews: r.reviews.length } : null;
+}
