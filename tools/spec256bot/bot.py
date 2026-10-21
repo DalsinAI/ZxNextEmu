@@ -14,6 +14,7 @@ drawn in. See README.md.
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -63,11 +64,16 @@ ZX_RGB = [(0, 0, 0), (0, 0, 0xd7), (0xd7, 0, 0), (0xd7, 0, 0xd7), (0, 0xd7, 0), 
 
 def cmd_trace(a):
     exe = os.path.join(ROOT, "build", "s256trace")
-    if not os.path.exists(exe):
-        subprocess.check_call(["make", "-C", ROOT, "build/s256trace"])
+    subprocess.check_call(["make", "-s", "-C", ROOT, "build/s256trace"])  # make rebuilds it only when a source changed
     os.makedirs(a.work, exist_ok=True)
     subprocess.check_call([exe, "-r", a.roms, "-f", str(a.frames), "-k", str(a.seed),
                            "-s", str(a.frames // 3), a.snapshot, a.work])
+    with open(os.path.join(a.work, "snapshot.sha256"), "w") as f:
+        f.write(sha256_of(a.snapshot) + "\n")
+
+
+def sha256_of(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
 def load(work):
@@ -388,6 +394,10 @@ def colour_sprite(mem, s, p):
 
 
 def cmd_emit(a):
+    # The graphics planes are built from the traced memory, so they must go with that same snapshot.
+    stamp = os.path.join(a.work, "snapshot.sha256")
+    if not os.path.exists(stamp) or open(stamp).read().strip() != sha256_of(a.snapshot):
+        sys.exit(f"{a.snapshot} is not the snapshot traced into {a.work}; run trace on it again first.")
     mem, trace = load(a.work)
     sprites = json.load(open(os.path.join(a.work, "sprites.json")))
     path = os.path.join(a.work, "plan.json")
@@ -398,7 +408,7 @@ def cmd_emit(a):
         p = by_id.get(s["id"]) or default_plan([s])["sprites"][0]
         drawn = set(s["drawn"])
         for addr, cols in colour_sprite(mem, s, p).items():
-            if mem[addr] and (a.fill or addr in drawn):
+            if addr < len(mem) and mem[addr] and (a.fill or addr in drawn):
                 colours[addr] = cols
 
     name = os.path.splitext(os.path.basename(a.snapshot))[0].upper()
