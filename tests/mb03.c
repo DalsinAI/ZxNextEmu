@@ -7,6 +7,9 @@
  */
 #include "../src/zx/zx.h"
 #include "../src/zx/expansion.h"
+#include "../src/storage/blockdev.h"
+
+#include <stdlib.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -108,6 +111,69 @@ static void test_divmmc(const char *romdir)
     out(&m, 0x00eb, 0xff);
     CHECK(in(&m, 0x00eb) == 0xff, "SPI with no card reads FF");
     zx_free(&m);
+}
+
+/* An empty card: reads give zeros, writes vanish. */
+static int bd_read(zx_blockdev *bd, uint64_t lba, uint8_t *buf) { (void)bd; (void)lba; memset(buf, 0, 512); return 0; }
+static int bd_write(zx_blockdev *bd, uint64_t lba, const uint8_t *buf) { (void)bd; (void)lba; (void)buf; return 0; }
+static void bd_close(zx_blockdev *bd) { free(bd); }
+
+static zx_blockdev *empty_card(void)
+{
+    zx_blockdev *bd = calloc(1, sizeof *bd);
+    bd->blocks = 65536;
+    bd->read = bd_read;
+    bd->write = bd_write;
+    bd->close = bd_close;
+    return bd;
+}
+
+/* CMD8 to card 0; the R1 byte (0x01 while the card is idle). */
+static uint8_t cmd8(zx *m)
+{
+    static const uint8_t c[6] = { 0x48, 0x00, 0x00, 0x01, 0xaa, 0x87 };
+    int i;
+    uint8_t r = 0xff;
+    out(m, 0x00e7, 0xfe);
+    for (i = 0; i < 6; i++)
+        out(m, 0x00eb, c[i]);
+    for (i = 0; i < 8 && r == 0xff; i++) {
+        out(m, 0x00eb, 0xff);     /* the byte it brings in is spi_miso */
+        r = m->exp->spi_miso;
+    }
+    out(m, 0x00e7, 0xff);
+    return r;
+}
+
+static void test_divmmc_more(const char *romdir)
+{
+    static zx m, d;
+    static uint8_t rom[0x2000], state[2 << 20];
+    if (machine(&m, ZX_128K, romdir, ZX_EXP_MB03, rom))
+        return;
+    /* 3Dxx only pages in under the 48K BASIC ROM */
+    zx_exp_fetch(&m, 0x3d00);
+    CHECK(!m.div_map, "3Dxx under the 128K editor ROM leaves the divMMC out");
+    out(&m, 0x7ffd, 0x10);
+    zx_exp_fetch(&m, 0x3d00);
+    CHECK(m.div_map, "3Dxx under the 48K ROM pages in");
+    zx_exp_fetch(&m, 0x1ff8);
+
+    /* a card put in after the state was saved keeps its own state */
+    CHECK(zx_state_size(&m) <= sizeof state, "state fits");
+    zx_state_save(&m, state, sizeof state);
+    zx_exp_attach_sd(&m, 0, empty_card());
+    CHECK(cmd8(&m) == 0x01, "a new card is idle");
+    CHECK(zx_state_load(&m, state, sizeof state) == 0, "state loads");
+    CHECK(cmd8(&m) == 0x01, "the card is still idle after a state without it");
+
+    /* a state from one interface does not load into another */
+    if (machine(&d, ZX_128K, romdir, ZX_EXP_DIVMMC, rom))
+        return;
+    CHECK(zx_state_size(&d) == zx_state_size(&m), "same state size");
+    CHECK(zx_state_load(&d, state, sizeof state) != 0, "an MB03+ state is refused by a divMMC machine");
+    zx_free(&m);
+    zx_free(&d);
 }
 
 static void test_turbosound(const char *romdir)
@@ -213,6 +279,7 @@ int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
     test_divmmc(romdir);
+    test_divmmc_more(romdir);
     test_turbosound(romdir);
     test_dac(romdir);
     test_mouse(romdir);
