@@ -311,7 +311,7 @@ def remark_blocks(remark):
     """An openMSX remark saying the ROM does not run on its own: support ROMs, hardware or disk companions."""
     return bool(remark) and bool(re.search(
         r'\bnot (meant|intended|supposed) to be (executed|run|started)\b|\b(needs?|requires?)\b.*\b(cas|tape|disks?|hardware|cartridge|interface|keyboard)\b'
-        r'|\bonly (usable|useful|works?|to be used|runs?)\b.*\bwith\b|\bpart of\b.*\b(package|set|bundle)\b|\brelated hardware\b', remark, re.I))
+        r'|\bonly (be used|usable|useful|works?|to be used|runs?)\b.*\bwith\b|\bpart of\b.*\b(package|set|bundle)\b|\brelated hardware\b', remark, re.I))
 
 
 # ---- collect variants ----------------------------------------------------------
