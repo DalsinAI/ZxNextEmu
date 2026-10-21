@@ -18,7 +18,7 @@ genre, ZXDB id) and up to three ZXDB screenshots. Raw `.hdf` hard-disk images
 are skipped; the same images are in the folder as `.rar`. Each tape side or
 part becomes a run of its own, a `.zip` is unpacked to the tapes and snapshots
 inside it, and files the player cannot load (`.sp`, `.slt`, `.mgt`, `.xml`) are
-left out. The script exits with status 3 if any download failed.
+left out, as are +3 `.dsk` images until a machine has a drive for them. Snapshots are not offered on the Next, which has no snapshot slot. The script exits with status 3 if any download failed.
 
 `onedrive-records.json.gz` lists which files make up each title and the ZXDB
 entry each was matched to (4,035 titles from 4,492 files). A title whose ZXDB
