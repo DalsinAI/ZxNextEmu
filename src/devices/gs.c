@@ -109,7 +109,11 @@ void gs_reset(gs *g)
     memset(g->vol, 0, sizeof g->vol);
     memset(g->dac, 0x80, sizeof g->dac);
     levels(g);
-    g->next_int = g->clock + GS_INT_T;
+    /* start over: no instruction overrun or audio from before the reset */
+    g->clock = g->target = 0;
+    g->next_int = GS_INT_T;
+    g->acc_l = g->acc_r = 0;
+    g->acc_t = 0;
 }
 
 void gs_run(gs *g, uint64_t clocks)

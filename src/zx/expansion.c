@@ -138,7 +138,7 @@ void zx_exp_reset(zx *m)
     e->port_ff = 0;
     saa_reset(&e->saa);
     sid_reset(&e->sid);
-    e->saa_frac = e->sid_frac = 0;
+    e->saa_frac = e->sid_frac = e->gs_frac = 0;
     if (e->gs)
         gs_reset(e->gs);
     e->sid_sel = 0;
