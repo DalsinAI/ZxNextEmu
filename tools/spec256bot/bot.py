@@ -51,8 +51,8 @@ RAMP_LOOKS = {
 }
 STYLES = ("bevel", "gradient", "flat")
 # Spectrum colour (0-7, +8 bright) to the ramp of that colour.
-ZX_RAMP = ["ink", "bright_blue", "bright_red", "bright_magenta", "bright_green", "bright_cyan",
-           "bright_yellow", "grey", "ink", "bright_blue", "bright_red", "bright_magenta", "bright_green", "bright_cyan",
+ZX_RAMP = ["ink", "zx_blue", "zx_red", "zx_magenta", "zx_green", "zx_cyan",
+           "zx_yellow", "zx_white", "ink", "bright_blue", "bright_red", "bright_magenta", "bright_green", "bright_cyan",
            "bright_yellow", "grey"]
 ZX_RGB = [(0, 0, 0), (0, 0, 0xd7), (0xd7, 0, 0), (0xd7, 0, 0xd7), (0, 0xd7, 0), (0, 0xd7, 0xd7),
           (0xd7, 0xd7, 0), (0xd7, 0xd7, 0xd7), (0, 0, 0), (0, 0, 0xff), (0xff, 0, 0), (0xff, 0, 0xff),
@@ -396,8 +396,9 @@ def cmd_emit(a):
     colours = {}
     for s in sprites:
         p = by_id.get(s["id"]) or default_plan([s])["sprites"][0]
+        drawn = set(s["drawn"])
         for addr, cols in colour_sprite(mem, s, p).items():
-            if mem[addr] and (a.fill or addr in trace):
+            if mem[addr] and (a.fill or addr in drawn):
                 colours[addr] = cols
 
     name = os.path.splitext(os.path.basename(a.snapshot))[0].upper()
@@ -415,9 +416,12 @@ def cmd_emit(a):
     with open(os.path.join(a.out, name + ".GFX"), "wb") as f:
         for base in (0x4000, 0x8000, 0xc000):
             f.write(page(base))
+    gfb = os.path.join(a.out, name + ".GFB")
     if any(addr < 0x4000 for addr in colours):
-        with open(os.path.join(a.out, name + ".GFB"), "wb") as f:
+        with open(gfb, "wb") as f:
             f.write(page(0))
+    elif os.path.exists(gfb):
+        os.remove(gfb)              # left from an earlier run that coloured the ROM
     with open(os.path.join(a.out, name + ".CFG"), "w") as f:
         f.write("UpColorsMixed=8\r\n")
     print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX")
