@@ -5,7 +5,9 @@
  * WebAssembly build (tests/wasm.mjs) must reproduce exactly.
  *
  * usage: zxm romdir machine frames [text]
- * ZXM_SD=folder-or-image puts an SD card in a Next.
+ * ZXM_SD=folder-or-image puts an SD card in the machine (the Next, or an
+ * interface's divMMC). ZXM_IFACE=divmmc|mb03 plugs an interface into a
+ * classic machine, with its 8K esxDOS ROM from ZXM_IFACE_ROM.
  * ZXM_SPEC256=folder loads a Spec256 game (machine spec256): its graphics
  * files into the "gfx" slot, then its .sna.
  */
@@ -136,6 +138,24 @@ int main(int argc, char **argv)
     if (!m || zxm_create(m, info, &roms)) {
         fprintf(stderr, "cannot create %s\n", info->id);
         return 1;
+    }
+    if (getenv("ZXM_IFACE")) {
+        static uint8_t esx[0x2000];
+        const char *path = getenv("ZXM_IFACE_ROM");
+        zxm_rom_set ir;
+        FILE *fp;
+        if (!path || !(fp = fopen(path, "rb")) || fread(esx, 1, sizeof esx, fp) != sizeof esx) {
+            fprintf(stderr, "cannot read the esxDOS ROM (ZXM_IFACE_ROM)\n");
+            return 1;
+        }
+        fclose(fp);
+        memset(&ir, 0, sizeof ir);
+        ir.rom[0] = esx;
+        ir.len[0] = sizeof esx;
+        if (zxm_attach(m, getenv("ZXM_IFACE"), &ir)) {
+            fprintf(stderr, "cannot plug in %s\n", getenv("ZXM_IFACE"));
+            return 1;
+        }
     }
     if (getenv("ZXM_SD")) {
         zxm_media sd;

@@ -1,10 +1,11 @@
 /*
  * zxrun: headless runner for tests and scripting.
  *
- *   zxrun [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
+ *   zxrun [-m model] [-r romdir] [-i divmmc|mb03 -e esxdos.rom] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-s out.ppm] [-w out.wav] [file]
  *
  * -g runs a Spec256 game: a folder with its .sna and graphics files.
- * -c attaches an SD card (ZX Spectrum Next, -m next): a folder or an image.
+ * -i plugs an interface into a classic machine, with its esxDOS ROM (-e).
+ * -c attaches an SD card (the Next, or the interface's divMMC): a folder or an image.
  * -p fits the Next's Raspberry Pi, keeping its files in a folder.
  */
 #include <stdio.h>
@@ -111,6 +112,7 @@ int main(int argc, char **argv)
     static zx_typer typer;
     zx_model model = ZX_48K;
     const char *romdir = "roms", *gfxdir = NULL, *shot = NULL, *wav = NULL, *file = NULL, *text = NULL, *sd = NULL, *pidir = NULL;
+    const char *iface = NULL, *esx = NULL;
     long frames = 100, delay = 120, i;
     FILE *wf = NULL;
     zx_net *net = NULL;
@@ -126,6 +128,8 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(argv[a], "-r") && a + 1 < argc) romdir = argv[++a];
         else if (!strcmp(argv[a], "-c") && a + 1 < argc) sd = argv[++a];
+        else if (!strcmp(argv[a], "-i") && a + 1 < argc) iface = argv[++a];
+        else if (!strcmp(argv[a], "-e") && a + 1 < argc) esx = argv[++a];
         else if (!strcmp(argv[a], "-p") && a + 1 < argc) pidir = argv[++a];
         else if (!strcmp(argv[a], "-g") && a + 1 < argc) gfxdir = argv[++a];
         else if (!strcmp(argv[a], "-f") && a + 1 < argc) frames = atol(argv[++a]);
@@ -136,7 +140,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-n")) noscroll = 1; /* keep BASIC from asking "scroll?" */
         else if (argv[a][0] != '-') file = argv[a];
         else {
-            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
+            fprintf(stderr, "usage: %s [-m model] [-r romdir] [-i divmmc|mb03 -e esxdos.rom] [-c sd-folder-or-image] [-p pi-folder] [-g spec256-folder] [-f frames] [-t text [-d delay]] [-n] [-s out.ppm] [-w out.wav] [file]\n", argv[0]);
             return 2;
         }
     }
@@ -152,6 +156,10 @@ int main(int argc, char **argv)
         nx_attach_serial(&m, 0, zx_esp8266_new(net));   /* the wifi module */
         if (pidir)
             nx_attach_serial(&m, 1, zx_nextpi_new(pidir));
+    }
+    if (iface && zx_attach_interface(&m, iface, esx)) {
+        fprintf(stderr, "cannot plug in %s\n", iface);
+        return 1;
     }
     if (sd && zx_attach_sd(&m, 0, sd)) {
         fprintf(stderr, "cannot attach SD card image %s\n", sd);

@@ -1,5 +1,6 @@
 #include "zx.h"
 #include "tape.h"
+#include "expansion.h"
 #include "../next/next.h"
 #include "../spec256/spec256.h"
 
@@ -41,6 +42,8 @@ int zx_model_from_name(const char *name, zx_model *out)
 
 static int is_plus3(const zx *m) { return m->model == ZX_PLUS2A || m->model == ZX_PLUS3; }
 static int has_ay(const zx *m) { return m->model != ZX_48K; }
+/* An interface's TurboSound takes over the AY ports. */
+static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && (m->exp->features & ZX_EXP_TURBOSOUND)); }
 
 /* ---- contention -------------------------------------------------------- */
 
@@ -92,9 +95,14 @@ static void draw_chunk(zx *m, uint32_t c)
 
     if (row >= 0 && row < 192 && col >= 0 && col < 32) {
         const uint8_t *scr = m->ram[m->screen_page];
-        uint8_t bits = scr[((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col];
-        uint8_t attr = scr[6144 + (row >> 3) * 32 + col];
+        uint32_t po = ((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col;
+        uint32_t ao = 6144 + (row >> 3) * 32 + col;
+        uint8_t bits, attr;
         uint16_t ink, paper;
+        if (m->exp)
+            zx_exp_screen(m->exp, &po, &ao);
+        bits = scr[po];
+        attr = scr[ao];
         if (m->ulaplus_mode & 1) {
             /* ULA+: FLASH and BRIGHT pick one of four 16-colour CLUTs. */
             const uint8_t *clut = &m->ulaplus_pal[(attr >> 6) * 16];
@@ -162,6 +170,8 @@ static void audio_accumulate(zx *m, uint32_t dt)
         ay_run(&m->ay, m->ay_half >> 1);
         m->ay_half &= 1;
     }
+    if (m->exp)
+        zx_exp_audio_run(m, dt);
 }
 
 static void audio_update(zx *m, uint32_t upto)
@@ -190,6 +200,8 @@ static void audio_update(zx *m, uint32_t upto)
         /* ACB stereo, as on the Next and most 128K add-ons. */
         l = beep / 2 + (ay[0] + ay[1] / 2) / 4;
         r = beep / 2 + (ay[2] + ay[1] / 2) / 4;
+        if (m->exp)
+            zx_exp_audio_take(m, span, &l, &r);
         if (m->audio_samples < (int)(sizeof m->audio / sizeof m->audio[0] / 2)) {
             m->audio[m->audio_samples * 2] = (int16_t)(l > 32767 ? 32767 : l);
             m->audio[m->audio_samples * 2 + 1] = (int16_t)(r > 32767 ? 32767 : r);
@@ -251,9 +263,20 @@ static void update_paging(zx *m)
 
 /* ---- bus --------------------------------------------------------------- */
 
+static inline uint8_t mem_read(const zx *m, uint16_t addr)
+{
+    if (addr < 0x4000 && m->div_map)
+        return zx_exp_read(m, addr);
+    return m->rd[addr >> 14][addr & 0x3fff];
+}
+
 static inline void mem_write(zx *m, uint16_t addr, uint8_t v)
 {
     uint8_t *p = m->wr[addr >> 14];
+    if (addr < 0x4000 && m->div_map) {
+        zx_exp_write(m, addr, v);
+        return;
+    }
     if (!p)
         return;
     if (p == m->ram[m->screen_page] && (addr & 0x3fff) < 6912)
@@ -267,6 +290,8 @@ static uint8_t b_fetch(void *ctx, uint16_t addr)
     if (m->contended[addr >> 14])
         m->t += contention(m, m->t);
     m->t += 4;
+    if (m->exp)
+        return zx_exp_fetch(m, addr);
     return m->rd[addr >> 14][addr & 0x3fff];
 }
 
@@ -276,7 +301,7 @@ static uint8_t b_read(void *ctx, uint16_t addr)
     if (m->contended[addr >> 14])
         m->t += contention(m, m->t);
     m->t += 3;
-    return m->rd[addr >> 14][addr & 0x3fff];
+    return mem_read(m, addr);
 }
 
 static void b_write(void *ctx, uint16_t addr, uint8_t v)
@@ -357,11 +382,13 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
         return (m->ulaplus_reg & 0xc0) == 0x40 ? m->ulaplus_mode
                                                 : m->ulaplus_pal[m->ulaplus_reg & 63];
     }
+    if (m->exp && zx_exp_io_read(m, port, &v))
+        return v;
     if ((port & 0xe0) == 0) { /* Kempston on port 0x1F */
         v = m->kempston;
         have = 1;
     }
-    if (has_ay(m) && (port & 0xc002) == 0xc000) {
+    if (own_ay(m) && (port & 0xc002) == 0xc000) {
         v = ay_read(&m->ay);
         have = 1;
     }
@@ -385,6 +412,11 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
         m->border = v & 7;
         m->speaker = (v >> 4) & 1;
         m->mic = (v >> 3) & 1;
+    }
+    if (m->exp) {
+        video_update(m, m->t);
+        audio_update(m, m->t);
+        zx_exp_io_write(m, port, v);
     }
     if (port == 0xbf3b) {           /* ULA+ register select */
         m->ulaplus_reg = v;
@@ -418,7 +450,9 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
         update_paging(m);
     }
 
-    if ((port & 0xc002) == 0xc000) {
+    if (!own_ay(m)) {
+        return;
+    } else if ((port & 0xc002) == 0xc000) {
         m->ay.sel = v;
     } else if ((port & 0xc002) == 0x8000) {
         audio_update(m, m->t);
@@ -433,21 +467,25 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
 #define ST_SD0  1
 #define ST_SD1  2
 #define ST_TAPE 4
-#define ST_S256 8
+#define ST_S256 32
+#define ST_SD_EXP0 8
+#define ST_SD_EXP1 16
+#define ST_EXP_SHIFT 8   /* the interface's feature bits, above the flags */
 
-/* Header, the zx struct, the Next's part, the tape position. The structs
+/* Header, the zx struct, the Next's part or the interface's, the tape
+ * position. The structs
  * are stored as they are in memory, so a state belongs to one build of the
  * core (native or WebAssembly); the sizes in the header catch a mismatch. */
 typedef struct state_hdr {
     uint32_t magic, version, model, flags;
-    uint32_t zx_size, nx_size, tape_size, reserved;
+    uint32_t zx_size, nx_size, tape_size, exp_size;
 } state_hdr;
 
 size_t zx_state_size(const zx *m)
 {
     return sizeof(state_hdr) + sizeof(zx)
         + (m->model == ZX_NEXT ? nx_state_size(m) : 0)
-        + zx_tape_state_size()
+        + zx_exp_state_size(m) + zx_tape_state_size()
         + (m->s256 ? s256_state_size(m->s256) : 0);
 }
 
@@ -464,6 +502,7 @@ int zx_state_save(const zx *m, void *buf, size_t len)
     h.zx_size = sizeof(zx);
     h.nx_size = m->model == ZX_NEXT ? (uint32_t)nx_state_size(m) : 0;
     h.tape_size = (uint32_t)zx_tape_state_size();
+    h.exp_size = (uint32_t)zx_exp_state_size(m);
     if (m->next && m->next->sd[0])
         h.flags |= ST_SD0;
     if (m->next && m->next->sd[1])
@@ -472,6 +511,13 @@ int zx_state_save(const zx *m, void *buf, size_t len)
         h.flags |= ST_TAPE;
     if (m->s256)
         h.flags |= ST_S256;
+    if (m->exp) {
+        h.flags |= m->exp->features << ST_EXP_SHIFT;
+        if (m->exp->sd[0])
+            h.flags |= ST_SD_EXP0;
+        if (m->exp->sd[1])
+            h.flags |= ST_SD_EXP1;
+    }
     memcpy(p, &h, sizeof h);
     p += sizeof h;
     memcpy(p, m, sizeof *m);
@@ -479,6 +525,10 @@ int zx_state_save(const zx *m, void *buf, size_t len)
     if (m->model == ZX_NEXT) {
         nx_state_save(m, p);
         p += h.nx_size;
+    }
+    if (m->exp) {
+        zx_exp_state_save(m, p);
+        p += h.exp_size;
     }
     if (m->tape)
         zx_tape_state_save(m->tape, p);
@@ -500,6 +550,7 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     struct zxn *next = m->next;
     struct zx_tape *tape = m->tape;
     struct s256 *s256 = m->s256;
+    struct zx_exp *exp = m->exp;
     int has_sd[2];
     if (len < sizeof h)
         return -1;
@@ -507,12 +558,14 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     if (h.magic != STATE_MAGIC || h.version != STATE_VERSION
         || h.model != (uint32_t)m->model || h.zx_size != sizeof(zx)
         || h.nx_size != (m->model == ZX_NEXT ? nx_state_size(m) : 0)
-        || h.tape_size != zx_tape_state_size() || len < zx_state_size(m)
-        || !(h.flags & ST_S256) != !s256)
+        || h.tape_size != zx_tape_state_size() || h.exp_size != zx_exp_state_size(m)
+        || h.flags >> ST_EXP_SHIFT != (m->exp ? m->exp->features : 0)
+        || len < zx_state_size(m) || !(h.flags & ST_S256) != !s256)
         return -1;
     p += sizeof h;
     /* The live machine's pointers: the timing table, the bus callbacks,
-     * the picture, the Next's own state and the tape stay as they are. */
+     * the picture, the Next's own state, the interface and the tape stay
+     * as they are. */
     memcpy(m, p, sizeof *m);
     p += sizeof *m;
     m->tm = tm;
@@ -521,6 +574,7 @@ int zx_state_load(zx *m, const void *buf, size_t len)
     m->next = next;
     m->tape = tape;
     m->s256 = s256;
+    m->exp = exp;
     if (m->model == ZX_NEXT) {
         has_sd[0] = (h.flags & ST_SD0) != 0;
         has_sd[1] = (h.flags & ST_SD1) != 0;
@@ -528,6 +582,12 @@ int zx_state_load(zx *m, const void *buf, size_t len)
         p += h.nx_size;
     } else {
         update_paging(m);
+    }
+    if (m->exp) {
+        has_sd[0] = (h.flags & ST_SD_EXP0) != 0;
+        has_sd[1] = (h.flags & ST_SD_EXP1) != 0;
+        zx_exp_state_load(m, p, has_sd);
+        p += h.exp_size;
     }
     if (m->tape && (h.flags & ST_TAPE))
         zx_tape_state_load(m->tape, p);
@@ -596,12 +656,13 @@ void zx_free(zx *m)
 {
     if (m->model == ZX_NEXT)
         nx_free(m);
+    zx_exp_free(m);
 }
 
 int zx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd)
 {
     if (m->model != ZX_NEXT)
-        return -1;
+        return zx_exp_attach_sd(m, slot, bd);
     return nx_attach_sd_dev(m, slot, bd);
 }
 
@@ -622,6 +683,7 @@ void zx_reset(zx *m)
     for (i = 0; i < 8; i++)
         m->keys[i] = 0x1f;
     ay_reset(&m->ay);
+    zx_exp_reset(m);
     m->t = 0;
     m->video_chunk = 0;
     m->audio_t = 0;
@@ -635,6 +697,10 @@ void zx_poke(zx *m, uint16_t addr, uint8_t v)
         m->next->slot[addr >> 13].wr[addr & 0x1fff] = v;
         return;
     }
+    if (addr < 0x4000 && m->div_map) {
+        zx_exp_write(m, addr, v);
+        return;
+    }
     p = m->wr[addr >> 14];
     if (p)
         p[addr & 0x3fff] = v;
@@ -644,7 +710,7 @@ uint8_t zx_peek(const zx *m, uint16_t addr)
 {
     if (m->model == ZX_NEXT)
         return m->next->slot[addr >> 13].rd[addr & 0x1fff];
-    return m->rd[addr >> 14][addr & 0x3fff];
+    return mem_read(m, addr);
 }
 
 void zx_key(zx *m, int row, int bit, int down)
@@ -659,6 +725,8 @@ void zx_mouse(zx *m, int dx, int dy, int dz, int buttons)
 {
     if (m->next)
         nx_mouse(m->next, dx, dy, dz, buttons);
+    else if (m->exp && (m->exp->features & ZX_EXP_MOUSE))
+        zx_kmouse_move(&m->exp->mouse, dx, dy, dz, buttons, 4);
 }
 
 void zx_run_frame(zx *m)
@@ -671,14 +739,15 @@ void zx_run_frame(zx *m)
     m->audio_samples = 0;
 
     while (m->t < frame_t) {
-        if (m->t < m->tm->int_len && z80_int_enabled(&m->cpu)) {
+        if (m->t < m->tm->int_len && z80_int_enabled(&m->cpu)
+            && !(m->exp && (m->exp->port_ff & 0x40))) {
             if (m->s256)
                 s256_interrupt(m->s256);
             else
                 z80_interrupt(&m->cpu, &m->bus);
             continue;
         }
-        if (m->tape && m->cpu.pc == 0x0556 && m->rd[0] == m->rom[m->model == ZX_48K ? 0 : (is_plus3(m) ? 3 : 1)])
+        if (m->tape && m->cpu.pc == 0x0556 && !m->div_map && m->rd[0] == m->rom[m->model == ZX_48K ? 0 : (is_plus3(m) ? 3 : 1)])
             if (zx_tape_trap(m->tape, m))
                 continue;
         if (m->s256)
@@ -693,6 +762,8 @@ void zx_run_frame(zx *m)
     audio_update(m, frame_t);
     if (m->tape && zx_tape_playing(m->tape))
         zx_tape_advance(m->tape, m, (m->frames + 1) * frame_t);
+    if (m->exp)
+        zx_exp_frame_end(m);
 
     m->t -= frame_t;
     m->audio_t = 0;
