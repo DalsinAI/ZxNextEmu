@@ -15,6 +15,7 @@ machine ids (`a500`, `a1200`) and its own media kinds (`adf`, `hdf`, `lha`).
 library/titles/sanxion/
   title.json        what it is and what it runs on
   about.md          optional: longer notes, controls, history, credits
+  reviews.json      optional: ratings and reviews, in English
   files/            the software, exactly as downloaded
     sanxion48v3.tap
     sanxion128v3.tap
@@ -78,7 +79,7 @@ is where the files go: `tape`, `snapshot`, `disk.a`, `beta.a`, `sd0`,
 shared with recipes: `ram:128`, `ram:256`, `ram:1024`, `ram:2048`, `ay`,
 `turbosound`, `gs`, `covox`, `beta`, `interface1`, `divmmc`, `plus3dos`,
 `kempston`, `mouse`, `ulaplus`, `timex-hires`, `spec256`, `pi`, `wifi`,
-`mb03`, `next:core>=X`. `likes` lists extras it uses when they are there; it
+`mb03`, `symbos` (a SymbOS app: the set-up must boot SymbOS), `next:core>=X`. `likes` lists extras it uses when they are there; it
 never hides a title.
 
 A set-up (an instance or a recipe) offers its machine plus what it has built
@@ -91,6 +92,58 @@ known first, with the near misses in a "would run with a change" row.
 `compat` records what is known per machine: `verified` (Cradle loaded it on a
 hidden machine and saw it run), `works` or `broken` (a person said so on the
 title page), `partial`, or `untested` (the default, not written).
+
+## Versions
+
+One title holds every version of the same game or demo: the original, a 128K
+remake, a Russian translation, a re-release. `versions` lists them and each
+run says which one it belongs to with `version`. A version's own files go
+under `files/<version id>/`. The top-level name, year and authors describe
+the main version; a title with one version leaves `versions` out.
+
+```json
+"versions": [
+  { "id": "orig", "label": "Original", "year": 1987, "language": "en", "publisher": "Hewson" },
+  { "id": "ru", "label": "Russian translation", "year": 1995, "language": "ru", "authors": ["Mr.Z"],
+    "source": "https://zxart.ee/eng/software/?id=1234", "notes": "TR-DOS disk" }
+],
+"runs": [
+  { "version": "orig", "platform": "zx-spectrum", "machines": ["zx48", "zx128"], "files": ["files/sanxion.tap"] },
+  { "version": "ru", "platform": "zx-spectrum", "machines": ["pentagon"], "files": ["files/ru/sanxion.trd"], "slot": "beta.a", "needs": ["beta"] }
+]
+```
+
+`language` is an ISO 639-1 code (`en`, `ru`, `pl`, `es`, `cs`...). A
+version that is not in English shows its language's flag in the library,
+beside the title on its card and on its own line on the title's page.
+
+A demo or intro that competed can carry `party`: `{ "name", "year",
+"compo", "place" }` (plus `zxart_party` when it came from zxart.ee). The
+title's page shows it as "3rd in the ZX Demo compo at Chaos Constructions
+2019". `ids` can also hold `pouet`, `demozoo` and `zxaaa`.
+
+## Ratings and reviews
+
+`reviews.json` sits beside `title.json`. Reviews are kept in English; one
+translated from another language keeps its original in `original`.
+
+```json
+{
+  "format": 1,
+  "title": "sanxion",
+  "updated": "2026-10-21",
+  "ratings": [
+    { "site": "zxart", "url": "https://zxart.ee/eng/software/?id=1234", "score": 4.3, "scale": 5, "votes": 38, "version": null }
+  ],
+  "reviews": [
+    { "site": "Crash", "url": "https://...", "author": "Paul Sumner", "date": "1987-02", "language": "en",
+      "score": 92, "scale": 100, "version": "orig", "title": "Crash Smash", "text": "...", "original": null, "translated": false }
+  ]
+}
+```
+
+The library shows one rating out of 10: each site's score over its scale,
+weighted by votes, or the reviews' own scores when no site rates the title.
 
 ## Filling it in
 
@@ -113,6 +166,6 @@ rest:
 
 Search matches the name, authors, publisher, genres, tags, summary and file
 names. Words of the form `machine:next`, `kind:demo`, `needs:beta`,
-`compat:verified`, `year:1984`, `decade:1990s`, `genre:platform` and
-`fit:needs` filter, the same in the search box, the shell and MCP. Filters narrow by machine ("runs on this"), kind, genre and decade.
-Results sort by name, year or date added.
+`compat:verified`, `year:1984`, `decade:1990s`, `genre:platform`,
+`lang:ru`, `rating:7` (7 or more out of 10) and `fit:needs` filter, the same in the search box, the shell and MCP. Filters narrow by machine ("runs on this"), kind, genre, decade and language.
+Results sort by name, year, date added or rating.
