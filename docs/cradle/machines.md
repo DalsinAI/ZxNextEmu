@@ -18,6 +18,7 @@ the core already has, then the large families, then the rest.
 | `plus2a`, `plus3` | +2A, +2B, +3 | done except the +3 disk drive (uPD765) |
 | `pentagon` | Pentagon 128 | done; Beta Disk to come |
 | `next` | ZX Spectrum Next (TBBlue) | timing from the official FPGA sources |
+| `spec256` | Spec256, the 256-colour Spectrum | done in the core: a 48K or 128K (the snapshot decides) with eight shadow CPUs on bit-planes; see [../spec256.md](../spec256.md) |
 | `scorpion` | Scorpion ZS-256 | Pentagon-like, extra paging |
 | `ts2068`, `tc2048` | Timex Sinclair 2068, Timex Computer 2048 | ULA hi-res and hi-colour modes, cartridge slot |
 | `zx80`, `zx81` | ZX80, ZX81 (Timex TS1000/TS1500) | the CPU generates the picture; needs the core's per-T-state bus |

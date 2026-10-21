@@ -16,8 +16,8 @@ DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
 ZXM_SRC  = src/core/zxm.c
-ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
-ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
+ZX_SRC   = src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
+ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
 .PHONY: all desktop test sst vfat esp nextpi state wasm wasmtest clean
 
@@ -77,14 +77,14 @@ $(BUILD)/zxm: tests/zxm.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zx
 
 # Save, run on, load, run again: every machine must repeat itself exactly.
 state: $(BUILD)/zxm
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256; do \
 	    $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done
 
 # ---- zxcore.wasm: the core for ZX Cradle (clang + wasi-libc headers and
 # malloc; the module imports nothing). -------------------------------------
 WASM_CC      ?= clang
 WASI_SYSROOT ?= /usr
-WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/zx/zx.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c \
+WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c \
            src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 WASM_EXPORTS = zxm_lookup zxm_machine zxm_size zxm_create zxm_destroy zxm_info_of zxm_reset \
            zxm_run_frame zxm_framebuffer zxm_audio zxm_input zxm_type zxm_typing \
@@ -99,7 +99,7 @@ $(BUILD)/zxcore.wasm: $(WASM_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 
 # The WebAssembly core must give exactly the native core's pictures and sound.
 wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256; do \
 	    a=$$($(BUILD)/zxm roms $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm roms $$mc 300 'print 2+2\n') || exit 1; \
 	    if [ "$$a" = "$$b" ]; then echo "$$b (native and wasm agree)"; \

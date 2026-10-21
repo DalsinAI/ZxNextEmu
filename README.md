@@ -59,10 +59,24 @@ files (`/ram`, `/NextPi` and so on). The emulator answers as NextPi's
 supervisor shell does, so `.pisend -q` finds the Pi and `.piput`, `.piget`
 and `.pisend` move files between the SD card and the Pi.
 
+### Spec256 (256 colours)
+
+`-g folder` runs a Spec256 game: the folder holds the game's `.sna` and its
+graphics files (`.GFX`, `.GF0`-`.GF7`, `.GFA`, `.GFB`, `.B00`-`.B99`,
+`.CFG`, `.PAL`), as the games in
+[mvvproject/Spec256-Games](https://github.com/mvvproject/Spec256-Games) come.
+Eight shadow Z80s run the game's own code on eight bit-planes of memory, so
+it draws in 256 colours with no attribute clash. See
+[docs/spec256.md](docs/spec256.md). No game files are included: most of
+the snapshots are commercial games.
+
+    zxrun -g ~/spec256/Jetpac -f 500 -t 15 -s jetpac.ppm
+
 ## The core in WebAssembly (for ZX Cradle)
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
-up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`),
+up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
+`spec256`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
 state. The core does no file I/O: ROMs, tapes and snapshots come in as
@@ -98,6 +112,7 @@ timing-sensitive loaders behave as on the hardware.
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
+| Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 30 games of the Spec256-Games collection that have a snapshot all run |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
 | WebAssembly core | `zxcore.wasm`, the zxm interface, identical output to native |
 | Front ends | headless `zxrun` and desktop (SDL2) for testing; ZX Cradle's JavaScript runtime next |
@@ -111,7 +126,7 @@ timing-sensitive loaders behave as on the hardware.
 | Folder-backed SD card: fsck.fat, then write back changes made with mtools | all pass (`make vfat`) |
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
-| Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`) |
+| Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`; `ZXM_SPEC256=game-folder` for a Spec256 game) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
