@@ -212,14 +212,16 @@ class Library:
 
     def zxart_sam(self, name):
         """The SAM title zxart.ee filed under exactly this name, if there is one."""
-        for sid in [t for t in self.used if t == slug(name) + '-sam' or t.startswith(slug(name) + '-sam-')]:
+        exact, loose = [], []
+        for sid in sorted(t for t in self.used if t == slug(name) + '-sam' or t.startswith(slug(name) + '-sam-')):
             try:
                 j = json.load(open(os.path.join(TITLES, sid, 'title.json'), encoding='utf-8'))
             except Exception:
                 continue
             if (j.get('ids') or {}).get('zxart') and 'samcoupe' in (j.get('tags') or []) and norm(j.get('name')) == norm(name):
-                return sid
-        return None
+                (exact if (j.get('name') or '').strip().casefold() == name.strip().casefold() else loose).append(sid)
+        # The same name first; a punctuation-only match counts only when it is the one candidate.
+        return exact[0] if len(exact) == 1 else None if exact else loose[0] if len(loose) == 1 else None
 
     def has_zxart_name(self, name):
         return norm(name) in self.zxart_names
@@ -1231,6 +1233,9 @@ def demos(lib):
                     break
                 new = [i for i in dict.fromkeys(re.findall(r'prod\.php\?which=(\d+)', pg)) if i not in ids]
                 if not new:
+                    if page == 1:   # an interstitial or changed markup, not the end of the list
+                        say(f'  pouet.net {plat}: no productions on the first list page')
+                        broken.append(f'{plat} page 1 (unparsable)')
                     break
                 ids.update(new)
                 page += 1
