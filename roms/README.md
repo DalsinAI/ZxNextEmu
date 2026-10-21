@@ -25,11 +25,6 @@ SimCoupé's resources, which ship it on that basis.
 The Spectrum Next's NextZXOS and TBBlue firmware are not stored here; they
 come from the official distribution SD image (see the top-level README).
 
-The Oric-1 and Oric Atmos BASIC ROMs are not stored here either: their
-copyright holders are long gone and nobody has granted redistribution, so
-supply your own `basic10.rom` (Oric-1, CRC32 `f18710b4`) and `basic11b.rom`
-(Atmos, CRC32 `c3a92bef`).
-
 ## MSX: C-BIOS
 
 The MSX machines boot [C-BIOS](https://cbios.sourceforge.net/) 0.29a, a free
@@ -68,3 +63,17 @@ into 16K pages in order:
 
     split -b 16384 -d -a 1 scorpion_2.95.rom 256s- && for i in 0 1 2 3; do mv 256s-$i 256s-$i.rom; done
     split -b 16384 -d -a 1 atm2.rom atm2- && for i in 0 1 2 3; do mv atm2-$i atm2-$i.rom; done
+
+## MB03+ Ultimate interface (not stored here)
+
+The `divmmc` and `mb03` interfaces run esxDOS, and the MB03+'s General
+Sound runs its own ROM. Neither ROM may be redistributed, so supply them
+yourself:
+
+| File | Used by | md5 |
+| --- | --- | --- |
+| `esxmmc.bin` | `divmmc` and `mb03`: the 8K esxDOS ROM (needed). Its `SYS/` and `BIN/` folders go on the SD card and must be the same version | `fa50b0258e52b8d72bd83cc2fb6e1013` (0.8.9) |
+| `gs105a.rom` | `mb03`: the 32K General Sound ROM 1.05a (optional; without it there is no General Sound) | `1801e94780ad2a914b070b7128d86c39` |
+
+The tests look for these at `tests-data/esxdos/esxmmc.bin` and
+`tests-data/gs/gs105a.rom` (see `tests/README.md`).

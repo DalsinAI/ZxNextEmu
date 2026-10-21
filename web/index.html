@@ -10,12 +10,113 @@
 </head>
 <body>
 <div class="app">
+  <!-- Cradle: the instances, recipes, library and ROMs around the machine. -->
+  <header class="cradle-top" id="cradle-top" hidden>
+    <span class="zxc-wordmark">ZX Cradle</span>
+    <nav class="cradle-nav" aria-label="Cradle sections">
+      <button data-view="instances">Instances</button>
+      <button data-view="recipes">Recipes</button>
+      <button data-view="library">Library</button>
+      <button data-view="roms">ROMs</button>
+    </nav>
+    <span class="cradle-sub">Machine manager · this browser</span>
+  </header>
+
+  <section class="cradle-view" id="instances-view" hidden aria-label="Instances">
+    <div class="cradle-tools">
+      <button class="zxc-btn zxc-btn--primary" id="inst-new">+ New instance</button>
+      <label class="lib-search">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l4 4"/></svg>
+        <input type="search" id="inst-q" placeholder="Search instances" aria-label="Search instances">
+      </label>
+      <label class="lib-sort">Sort
+        <select id="inst-sort"><option value="recent">Last run</option><option value="name">Name</option><option value="machine">Machine</option></select>
+      </label>
+    </div>
+    <div class="inst-layout">
+      <div class="inst-main">
+        <ul class="inst-grid" id="inst-grid"></ul>
+        <div class="lib-empty" id="inst-empty" hidden>
+          <i class="zxc-stripe"></i>
+          <h2>No instances yet</h2>
+          <p>An instance is a machine of your own: a name, a model and the state it was in when you left it. Make one from a recipe.</p>
+        </div>
+      </div>
+      <aside class="inst-inspector" id="inst-inspector" aria-label="Selected instance"></aside>
+    </div>
+  </section>
+
+  <section class="cradle-view" id="recipes-view" hidden aria-label="Recipes">
+    <div class="cradle-tools">
+      <label class="lib-search">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l4 4"/></svg>
+        <input type="search" id="recipe-q" placeholder="Search recipes" aria-label="Search recipes">
+      </label>
+      <p class="cradle-note">A recipe is a ready-made setup. Making an instance from one gives you a machine of your own to keep.</p>
+    </div>
+    <ul class="recipe-list" id="recipe-list"></ul>
+  </section>
+
+  <section class="cradle-view" id="roms-view" hidden aria-label="ROMs">
+    <div class="cradle-tools">
+      <p class="cradle-note">Most machines' ROMs come with ZX Cradle. For the others, add your own files: they stay in this browser.</p>
+    </div>
+    <div class="rom-wrap"><table class="rom-table">
+      <thead><tr><th>Machine</th><th>ROM files</th><th>State</th><th></th></tr></thead>
+      <tbody id="rom-rows"></tbody>
+    </table></div>
+  </section>
+  <dialog class="lib-edit" id="inst-dlg" aria-label="Instance"></dialog>
+
+  <!-- The software library: everything you own to run. -->
+  <section class="libview" id="libview" hidden aria-labelledby="lib-title">
+    <header class="lib-top">
+      <div class="lib-brand">
+        <span class="zxc-wordmark">ZX Cradle</span>
+        <div><h1 id="lib-title">Library</h1><span id="lib-count">0 titles</span></div>
+      </div>
+      <label class="lib-search">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l4 4"/></svg>
+        <input type="search" id="lib-q" placeholder="Search names, authors, genres, files" aria-label="Search the library">
+      </label>
+      <label class="lib-sort">Sort
+        <select id="lib-sort"><option value="name">Name</option><option value="year">Year</option><option value="added">Recently added</option></select>
+      </label>
+      <div class="lib-add">
+        <button class="zxc-btn zxc-btn--primary" id="lib-add-files">Add files</button>
+        <button class="zxc-btn" id="lib-add-folder">Add a folder</button>
+        <button class="zxc-btn" data-collection hidden>Add the Cradle collection</button>
+        <input type="file" id="lib-files" multiple hidden accept=".tap,.tzx,.sna,.z80,.nex,.dsk,.trd,.scl,.mdr,.mgt,.sad,.mx1,.mx2,.zip,.png,.jpg,.scr,.txt,.md,.json,.toml">
+        <input type="file" id="lib-folder" webkitdirectory multiple hidden>
+      </div>
+    </header>
+    <div class="lib-body">
+      <aside class="lib-filters" id="lib-filters" aria-label="Filters"></aside>
+      <div class="lib-main">
+        <p class="lib-status" id="lib-status" role="status" hidden></p>
+        <ul class="lib-grid" id="lib-grid"></ul>
+        <div class="lib-empty" id="lib-empty" hidden>
+          <i class="zxc-stripe"></i>
+          <h2>Your library is empty</h2>
+          <p>Add tapes, snapshots or whole folders of games. ZX Cradle works out what each one runs on, takes screenshots on a hidden machine, and keeps everything in this browser.</p>
+          <p><button class="zxc-btn zxc-btn--primary" data-collection hidden>Add the Cradle collection</button></p>
+          <p>A folder with a <code>title.toml</code> keeps the details you wrote; export any title as a <code>.zip</code> to move it to another Cradle.</p>
+        </div>
+        <p class="lib-none" id="lib-none" hidden>Nothing matches. Try fewer words or clear the filters.</p>
+      </div>
+    </div>
+  </section>
+  <dialog class="lib-detail" id="lib-detail" aria-label="Title"></dialog>
+  <dialog class="lib-edit" id="lib-edit" aria-label="Edit title"></dialog>
+  <dialog class="lib-edit rom-dlg" id="rom-dlg" aria-label="Machine ROMs"></dialog>
+
   <section class="stage" id="stage" aria-label="Machine screen">
     <canvas id="screen" width="320" height="256" tabindex="0" aria-label="The machine's screen"></canvas>
-    <p class="hint" id="hint">Click the screen to type. Drop a tape or snapshot anywhere.</p>
-    <div class="drop" id="drop" hidden><span>Drop to keep it and load it</span></div>
-    <p class="error" id="error" role="alert" hidden></p>
+    <p class="hint" id="hint">Click the screen to type. Drop software anywhere to add it to the library.</p>
   </section>
+
+  <div class="drop" id="drop" hidden><span>Drop to add it to the library</span></div>
+  <p class="error" id="error" role="alert" hidden></p>
 
   <!-- Media changer: what is in the slots, and the media you keep. -->
   <aside class="drawer" id="media-drawer" hidden aria-labelledby="media-title">
@@ -34,11 +135,10 @@
       </div>
     </div>
     <div class="library-head">
-      <h3>Kept media</h3>
-      <button class="zxc-btn small" id="add-media">Add files</button>
-      <input type="file" id="file" accept=".tap,.tzx,.sna,.z80" multiple hidden>
+      <h3>Saved states</h3>
+      <button class="zxc-btn small" id="add-media">Open the library</button>
     </div>
-    <p class="drawer-note" id="library-note">Tapes, snapshots and saved states you add stay here in this browser.</p>
+    <p class="drawer-note" id="library-note">States you save from the Power menu stay here. Games and other software live in the library.</p>
     <ul class="library" id="library"></ul>
     <label class="check"><input type="checkbox" id="autostart" checked> Start tapes automatically</label>
   </aside>
@@ -80,6 +180,11 @@
     </div>
 
     <div class="bar-controls">
+      <button class="menu-btn" id="lib-btn" aria-pressed="false">
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/><rect x="1.5" y="9.5" width="5" height="5"/><rect x="9.5" y="9.5" width="5" height="5"/></svg>
+        <span>Cradle</span><span class="readout" id="lib-readout">0</span>
+      </button>
+      <span class="bar-divider" aria-hidden="true"></span>
       <button class="icon-btn" id="run" aria-label="Pause" title="Pause">
         <svg viewBox="0 0 16 16" id="run-icon"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>
       </button>
@@ -136,6 +241,7 @@
             </div>
           </div>
           <button class="pop-item" id="border" aria-pressed="true"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11"/><rect x="4.5" y="5.5" width="7" height="5"/></svg><span>Border</span><b class="pill" id="border-state">Shown</b></button>
+          <button class="pop-item" id="take-shot" disabled><svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="9"/><path d="M5.5 4.5l1-2h3l1 2"/><circle cx="8" cy="9" r="2.5"/></svg><span>Screenshot</span><small id="take-shot-note">Run a library title first</small></button>
           <div class="pop-label">Window</div>
           <button class="pop-item" id="fullscreen"><svg viewBox="0 0 16 16"><path d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4"/></svg><span>Full screen</span><small>F11</small></button>
           <button class="pop-item" id="theme"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11"/></svg><span>Theme</span><b class="pill" id="theme-state">Case</b></button>
