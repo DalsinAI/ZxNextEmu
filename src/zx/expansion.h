@@ -119,6 +119,8 @@ static inline void zx_exp_screen(const zx_exp *e, uint32_t *pix, uint32_t *attr)
 
 size_t zx_exp_state_size(const struct zx *m);
 void zx_exp_state_save(const struct zx *m, uint8_t *out);
-void zx_exp_state_load(struct zx *m, const uint8_t *in);
+/* has_sd: whether the saved machine had each card; a card attached since
+ * keeps its own state. */
+void zx_exp_state_load(struct zx *m, const uint8_t *in, const int has_sd[2]);
 
 #endif
