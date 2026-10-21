@@ -133,5 +133,10 @@ for folder in sorted(os.listdir(root)):
         with open(os.path.join(tdir, 'about.md'), 'w') as f:
             f.write('# %s\n\nMSX demo from download.file-hunter.com, Demos/%s.\n' % (name, folder))
         index.append({'id': tid, 'name': name, 'runs': len(runs)})
+# A titles folder this builder made that no longer comes out of the archive (a game gone, or a
+# renamed slug) is stale; only folders carrying the marker are touched.
+for d in os.listdir(OUT):
+    if d not in used and os.path.exists(os.path.join(OUT, d, DMARK)):
+        shutil.rmtree(os.path.join(OUT, d))
 json.dump(index, open(os.path.join(OUT, '..', 'msx-demos-index.json'), 'w'), indent=0)
 print('demos written', len(index))

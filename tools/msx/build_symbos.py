@@ -158,7 +158,8 @@ for tid, name, remote, local, machines, slot, needs, text in systems:
     z = os.path.join(osdir, local)
     if not os.path.exists(z) or not good_zip(z):
         continue
-    tid = built[tid] = claim(tid)
+    key, tid = tid, claim(tid)
+    built[key] = tid   # by the plain id: claim() may have added -2
     fdir = os.path.join(OUT, tid, 'files')
     files = ['files/' + f for f in unzip(z, fdir)]
     runs = []
@@ -217,5 +218,10 @@ for sub in ('Apps', 'Development'):
         write(tid, meta, '# %s\n\nSymbOS %s from download.file-hunter.com, OS/SymbOS/%s.\n' % (meta['name'], 'development tool' if sub == 'Development' else 'application', sub))
         index.append(tid)
 
+# A titles folder this builder made that no longer comes out of the archive (a game gone, or a
+# renamed slug) is stale; only folders carrying the marker are touched.
+for d in os.listdir(OUT):
+    if d not in used and os.path.exists(os.path.join(OUT, d, MARK)):
+        shutil.rmtree(os.path.join(OUT, d))
 json.dump({'titles': index, 'skipped': skipped}, open(os.path.join(OUT, '..', 'symbos-index.json'), 'w'), indent=1)
 print('symbos written', len(index), 'skipped', len(skipped))

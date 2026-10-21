@@ -10,7 +10,7 @@ TODAY = datetime.date.today().isoformat()
 FH = 'https://download.file-hunter.com/'
 MSX1 = ['msx1', 'msx1eu', 'msx2', 'msx2eu']
 MSX2 = ['msx2', 'msx2eu']
-LANGS = {'ja', 'en', 'es', 'nl', 'pt', 'fr', 'de', 'it', 'ar', 'ko', 'ru', 'fi', 'el', 'sv', 'pl', 'br', 'ca', 'en-ja', 'ja-en'}
+LANGS = {'ja', 'jp', 'en', 'es', 'nl', 'pt', 'fr', 'de', 'it', 'ar', 'ko', 'ru', 'fi', 'el', 'sv', 'pl', 'br', 'ca', 'en-ja', 'ja-en', 'en-jp', 'jp-en'}
 # Not .dmk (a track container, the disk drive takes flat sectors) or .cas/.tsx (no MSX tape slot yet).
 RUNNABLE = {'.rom', '.mx1', '.mx2', '.dsk', '.di1', '.di2', '.bin', '.com', '.bas', '.ldr', '.hdd', '.img', '.vhd'}
 TYPE_RANK = {'ROM': 0, 'DSK': 1, 'HDD': 2, 'BIN': 3, 'CAS': 4}
@@ -102,6 +102,7 @@ def parse(base, typ):
     lang = next((p for p in parens if p.lower() in LANGS), None)
     part = [p for p in parens if re.match(r'(disk|tape|side|disc|part) ', p, re.I) or re.fullmatch(r'side [ab]', p, re.I)]
     others = [p for p in parens if p not in part and p != year and p != lang and p.strip() not in ('', '-')]
+    lang = lang and {'jp': 'ja', 'en-jp': 'en-ja', 'jp-en': 'ja-en'}.get(lang.lower(), lang.lower())   # the archive writes (jp)
     pub = others[0] if others else None
     # ROM style: "Title - Publisher (Year) ..." or "Title (Year) Publisher [...]"
     if typ == 'ROM':
@@ -377,6 +378,13 @@ for key, t in sorted(titles.items()):
     with open(os.path.join(tdir, 'about.md'), 'w') as f:
         f.write('\n'.join(about) + '\n')
     index.append({'id': tid, 'name': name, 'machines': sorted(t['machines']), 'runs': len(runs), 'screens': len(shots)})
+
+if only is None:   # a full build
+    # A titles folder this builder made that no longer comes out of the archive (a game gone, or a
+    # renamed slug) is stale; only folders carrying the marker are touched.
+    for d in os.listdir(OUT):
+        if d not in used and os.path.exists(os.path.join(OUT, d, MARK)):
+            shutil.rmtree(os.path.join(OUT, d))
 
 json.dump(index, open(os.path.join(OUT, '..', 'msx-index.json'), 'w'), indent=0)
 print('written', len(index))

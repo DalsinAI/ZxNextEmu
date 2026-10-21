@@ -12,6 +12,8 @@ def get(url, out=None):
     if out:
         cmd[1:1] = ['-o', out]
     r = subprocess.run(cmd, capture_output=True)
+    if r.returncode and out and os.path.exists(out):
+        os.remove(out)   # a cut-off picture is no screenshot
     return r.returncode == 0 and (out or r.stdout.decode('utf-8', 'replace'))
 
 
