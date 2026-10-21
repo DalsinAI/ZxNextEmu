@@ -563,7 +563,7 @@ def kind_of(cat):
 def zx_people(p):
     # Authors and groups are separate id spaces on zxart, so every key carries its type.
     return ({('author', str(a['authorId'])) for a in p.get('authorsInfo', []) if a.get('authorId')} |
-            {('group', str(i)) for i in p.get('publishersIds', [])})
+            {('group', str(i)) for i in p.get('publishersIds', []) + p.get('groupsIds', [])})
 
 
 def zx_names(prods):
@@ -588,6 +588,18 @@ def zx_names(prods):
 
 def zx_pubs(r):
     return [NAMES[('group', str(i))] for i in r.get('publishersIds', []) if ('group', str(i)) in NAMES]
+
+
+def zx_companies(p):
+    """Groups that made the prod (developer) and its publishers, as {name, role}."""
+    out, seen = [], set()
+    for ids, role in ((p.get('groupsIds', []), 'developer'), (p.get('publishersIds', []), 'publisher')):
+        for i in ids:
+            n = NAMES.get(('group', str(i)))
+            if n and (n, role) not in seen:
+                seen.add((n, role))
+                out.append({'name': n, 'role': role})
+    return out
 
 
 def zx_authors(r):
@@ -655,6 +667,7 @@ def zx_title(lib, p, rels, hw):
     pubs = zx_pubs(p)
     t = {'format': 2, 'name': name, 'kind': kind_of(cat), 'year': p.get('year') or None,
          'authors': zx_authors(p),
+         'companies': zx_companies(p),
          'publisher': pubs[0] if pubs else None, 'genres': [g for g in cat.split('/')[1:] if g][-2:],
          'tags': [hw], 'summary': desc.split('\n')[0][:200] or None,
          'license': LIC.get(p.get('legalStatus'), 'unknown'), 'source': url,
@@ -1426,11 +1439,42 @@ def score_of(s):
     return float(m.group(1)), float(m.group(2) or 100)
 
 
+SC_SERIES = {}
+
+
+def sc_series(page, zxdb):
+    """The ZXDB series this entry belongs to, as {name, number}, from its 'Titles in "X" Series' panels."""
+    out = []
+    for m in re.finditer(r'Titles in "(.*?)" Series</div>(.*?)(?=<div class="panel panel-primary|$)', page, re.S):
+        num = None
+        for row in m.group(2).split('<div class="row zxdb_stripes">')[1:]:
+            if re.search(rf'href="/entry/{zxdb}/', row):
+                n = re.search(r'Number: </b>\s*(\d+)', row)
+                num = int(n.group(1)) if n else None
+                break
+        out.append({'name': html.unescape(m.group(1)).strip(), 'number': num})
+    return out
+
+
+def fill_series(t, series):
+    if not series:
+        return
+    tf = os.path.join(TITLES, t, 'title.json')
+    j = json.load(open(tf, encoding='utf-8'))
+    if j.get('series') == series:
+        return
+    j['series'] = series
+    with open(tf + '.part', 'w', encoding='utf-8') as f:
+        json.dump(j, f, indent=2, ensure_ascii=False)
+    os.replace(tf + '.part', tf)
+
+
 def sc_reviews(zxdb):
     """User score and magazine reviews from Spectrum Computing for one ZXDB entry."""
     ratings, reviews = [], []
     url = f'{SC}/entry/{zxdb}'
     page = fetch(url).decode('utf-8', 'replace')
+    SC_SERIES[zxdb] = sc_series(page, zxdb)
     w = re.search(r'Score \(weighted\): </b></div><div[^>]*>([\d.]+)', page)
     v = re.search(r'Total votes: </b></div><div[^>]*>(\d+)', page)
     if w:
@@ -1581,6 +1625,7 @@ def reviews(lib):
             a, b = sc_reviews(ids['zxdb'])
             ratings += a
             revs += b
+            fill_series(t, SC_SERIES.pop(ids['zxdb'], None))
         if ids.get('pouet'):
             a, b = pouet_reviews(ids['pouet'])
             ratings += a
