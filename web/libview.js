@@ -341,10 +341,12 @@ export async function showDetail(id) {
     </li>`;
   };
   // With versions, each one heads its own runs.
+  const link = s => /^https?:/.test(s) ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a>` : esc(s);
   const runs = m.versions?.length || (m.language && m.language !== 'en')
     ? versionsOf(t).filter(v => v.runs.length || v.id).map(v => `<li class="det-ver"><h4>${v.language && v.language !== 'en' ? flagOf(v.language) : ''}${esc(v.label || v.id || 'Main version')}
         <small>${esc([v.year, v.language && langName(v.language), v.publisher, (v.authors || []).join(', ')].filter(Boolean).join(' · '))}</small></h4>
         ${v.notes ? `<small>${esc(v.notes)}</small>` : ''}
+        ${v.source && v.source !== m.source ? `<small>From ${link(v.source)}</small>` : ''}
         <ul class="det-runs">${v.runs.map(x => runItem(x.run, x.i)).join('') || '<li class="det-later">No files for this version.</li>'}</ul></li>`).join('')
     : (m.runs || []).map(runItem).join('');
   const controls = m.controls ? [m.controls.keyboard, m.controls.joystick && `Joystick: ${m.controls.joystick}`].filter(Boolean) : [];
@@ -373,7 +375,7 @@ export async function showDetail(id) {
         ${controls.length ? `<h3>Controls</h3><p>${controls.map(esc).join('<br>')}</p>` : ''}
         ${t.about ? `<h3>About</h3><div class="det-about">${esc(t.about)}</div>` : ''}
         <h3>Files</h3><ul class="det-files">${t.files.map(f => `<li><span>${esc(f.path.replace(/^files\//, ''))}</span><small>${size(f.bytes.length)}</small></li>`).join('')}</ul>
-        ${m.source ? `<p class="det-source">From ${/^https?:/.test(m.source) ? `<a href="${esc(m.source)}" target="_blank" rel="noopener">${esc(m.source)}</a>` : esc(m.source)}</p>` : ''}
+        ${m.source ? `<p class="det-source">From ${link(m.source)}</p>` : ''}
       </div>
     </div>
     <footer class="det-foot">

@@ -565,7 +565,7 @@ export async function exportTitle(t) {
   if (!meta.screens.length) delete meta.screens;
   const entries = [{ path: `${t.id}/title.json`, bytes: enc.encode(toJson(meta, t.id)) }];
   if (t.about) entries.push({ path: `${t.id}/about.md`, bytes: enc.encode(t.about) });
-  if (t.reviews) entries.push({ path: `${t.id}/reviews.json`, bytes: enc.encode(JSON.stringify(t.reviews, null, 2) + '\n') });
+  if (t.reviews) entries.push({ path: `${t.id}/reviews.json`, bytes: enc.encode(JSON.stringify({ ...t.reviews, title: t.id }, null, 2) + '\n') });
   for (const f of t.files) entries.push({ path: `${t.id}/${f.path}`, bytes: f.bytes });
   for (const s of t.screens) entries.push({ path: `${t.id}/${s.path}`, bytes: new Uint8Array(await s.blob.arrayBuffer()) });
   return makeZip(entries);
@@ -661,7 +661,11 @@ export function versionsOf(t) {
   (m.runs || []).forEach((r, i) => (out.find(v => v.id && v.id === r.version) || out[0]).runs.push({ run: r, i }));
   return out;
 }
-export const titleLangs = t => [...new Set([t.meta.language, ...(t.meta.versions || []).map(v => v.language)].filter(Boolean))];
+// A title that names no language anywhere is English, the format's default.
+export const titleLangs = t => {
+  const l = [...new Set([t.meta.language, ...(t.meta.versions || []).map(v => v.language)].filter(Boolean))];
+  return l.length ? l : ['en'];
+};
 
 // ---- ratings and reviews (reviews.json) --------------------------------------
 
