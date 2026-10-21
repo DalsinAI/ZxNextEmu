@@ -30,7 +30,7 @@ interface's slots and inputs to the instance):
 | Id | Interface | Notes |
 | --- | --- | --- |
 | `divmmc` | divMMC | esxDOS ROM, 512K, slot `sd0` |
-| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive/Czech DACs, SAA1099, SID, Kempston mouse, Timex screens, ZXi settings registers; General Sound, GigaScreen, Radastan, Timex hi-res and MBIDE to come |
+| `mb03` | MB03+ Ultimate | divMMC with `sd0` and `sd1`, TurboSound, SpecDrum/Covox/SounDrive/Czech DACs, SAA1099, SID, Kempston mouse, Timex screens and hi-res, Radastan, GigaScreen, ZXi settings registers; General Sound and MBIDE to come. With it attached the picture is 640 wide: read `zxm_fb_width` after `zxm_attach` |
 
 ## Wave 2: the big Z80 families
 

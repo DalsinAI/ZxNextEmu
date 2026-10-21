@@ -402,6 +402,10 @@ static void test_zxi(const char *romdir)
     zx_run_frame(&m);
     ch = swing(&m, 0);
     CHECK(ch > 2000, "and plays");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(swing(&m, 0) < 100, "with TurboSound back on, the machine's AY is not heard");
 
     /* register 12 bit 0 switches the Timex port off */
     out(&m, 0x00ff, 1);
@@ -415,10 +419,31 @@ static void test_zxi(const char *romdir)
     /* m_zxi_101 is column 1 on the second row (723B) */
     out(&m, 0x703b, 1);
     out(&m, 0x723b, 0x02);
-    CHECK(in(&m, 0x723b) == 0x02 && in(&m, 0x713b) == (ZXI_AUDIO_DEFAULT & ~ZXI_AY), "rows are separate");
+    CHECK(in(&m, 0x723b) == 0x02 && in(&m, 0x713b) == ZXI_AUDIO_DEFAULT, "rows are separate");
     out(&m, 0x7c3b, 8);
     out(&m, 0x7d3b, 3);
     CHECK(in(&m, 0x7d3b) == 3 && in(&m, 0x7c3b) == 8, "g_zxi registers read back");
+    zx_free(&m);
+}
+
+static void test_mutes(const char *romdir)
+{
+    static zx m;
+    if (machine(&m, ZX_PENTAGON, romdir, ZX_EXP_DAC | ZX_EXP_ZXI, NULL))
+        return;
+    out(&m, 0x5f, 0xff);                           /* a DAC level, then the DACs off */
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_DAC);
+    park(&m);
+    zx_run_frame(&m);
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1) + 1] == 0, "the DACs off are silent");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT & ~ZXI_BEEPER);
+    out(&m, 0x00fe, 0x10);                         /* EAR high */
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1)] == 0, "the beeper muted");
+    zxi(&m, 1, ZXI_AUDIO_DEFAULT);
+    zx_run_frame(&m);
+    CHECK(m.audio[2 * (m.audio_samples - 1)] > 0, "and back on");
     zx_free(&m);
 }
 
@@ -550,6 +575,7 @@ int main(int argc, char **argv)
     test_saa(romdir);
     test_sid(romdir);
     test_zxi(romdir);
+    test_mutes(romdir);
     test_hires(romdir);
     test_radastan(romdir);
     test_giga(romdir);

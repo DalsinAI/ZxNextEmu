@@ -282,9 +282,14 @@ static uint8_t floating_bus(const zx *m, uint32_t t)
 
 static void audio_accumulate(zx *m, uint32_t dt)
 {
-    int32_t level = (m->speaker ? BEEP_EAR : 0) + (m->mic ? BEEP_MIC : 0) + (m->ear_in ? BEEP_MIC : 0);
+    int32_t level = 0;
+    /* an MB03+ can mute the beeper and the tape input (m_zxi_001) */
+    if (!m->exp || zx_exp_on(m->exp, ZX_EXP_ALL, ZXI_BEEPER))
+        level += (m->speaker ? BEEP_EAR : 0) + (m->mic ? BEEP_MIC : 0);
+    if (!m->exp || zx_exp_on(m->exp, ZX_EXP_ALL, ZXI_TAPEIN))
+        level += m->ear_in ? BEEP_MIC : 0;
     m->beeper_acc += level * (int32_t)dt;
-    if (has_ay(m)) {
+    if (own_ay(m)) {
         /* The AY is clocked at CPU/2. */
         m->ay_half += dt;
         ay_run(&m->ay, m->ay_half >> 1);
@@ -315,7 +320,7 @@ static void audio_update(zx *m, uint32_t upto)
 
         beep = m->beeper_acc / (int32_t)span;
         m->beeper_acc = 0;
-        if (has_ay(m))
+        if (own_ay(m))
             ay_take(&m->ay, ay);
         /* ACB stereo, as on the Next and most 128K add-ons. */
         l = beep / 2 + (ay[0] + ay[1] / 2) / 4;
