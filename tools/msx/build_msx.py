@@ -43,12 +43,41 @@ except Exception as e:
     print('xlsx', e)
 xlimg = {norm(k): v for k, v in json.load(open(os.path.join(META, 'xlimg.json'))).items()}
 
+# openMSX's softwaredb.xml keeps everything in child elements: <software><title>, <company>, <year>,
+# <country>, <genmsxid>, then <dump> with a <rom> or <megarom> holding <type> (the mapper) and
+# <hash algo="sha1">, and maybe <original value="true">GoodMSX</original> and <remark><text>.
+def _text(e, tag):
+    x = e.find(tag)
+    return ' '.join(''.join(x.itertext()).split()) or None if x is not None else None
+
+
 sdb = {}
 for sw in ET.parse(os.path.join(META, 'softwaredb.xml')).getroot().iter('software'):
-    for rom in sw.iter('rom'):
-        sdb[rom.get('sha1')] = dict(title=sw.get('title'), company=sw.get('company'), year=sw.get('year'),
-                                    country=sw.get('country'), genmsx=sw.get('genmsxid'), mapper=rom.get('type'),
-                                    status=rom.get('status'), remark=rom.get('remark'))
+    info = dict(title=_text(sw, 'title'), company=_text(sw, 'company'), year=_text(sw, 'year'),
+                country=_text(sw, 'country'), genmsx=_text(sw, 'genmsxid'))
+    for dump in sw.iter('dump'):
+        orig = dump.find('original')
+        status = (orig.text or '').strip() or None if orig is not None and orig.get('value') == 'true' else None
+        for rom in [e for e in dump if e.tag in ('rom', 'megarom')]:
+            for h in rom.iter('hash'):
+                if h.get('algo', 'sha1') == 'sha1' and (h.text or '').strip():
+                    sdb[h.text.strip().lower()] = dict(info, mapper=_text(rom, 'type') or ('Normal' if rom.tag == 'rom' else None),
+                                                       status=status, remark=_text(rom, 'remark') or _text(dump, 'remark'))
+
+# openMSX mapper names the cartridge core knows by a marker in the file name (src/msx/cart.c).
+MAPPER_MARK = {'ascii8': '[ascii8]', 'ascii16': '[ascii16]', 'konami': '[konami]', 'konamiscc': '[konamiscc]',
+               'normal': '[plain]', 'mirrored': '[plain]', 'plain': '[plain]'}
+
+
+def mark_mapper(tdir, path, mapper):
+    """Rename a ROM so the core picks the mapper openMSX knows it by; returns its new path."""
+    m = MAPPER_MARK.get(re.sub(r'[^a-z0-9]', '', (mapper or '').lower()))
+    if not m or m in path.lower():
+        return path
+    stem, ext = os.path.splitext(path)
+    new = '%s %s%s' % (stem, m, ext)
+    os.rename(os.path.join(tdir, path), os.path.join(tdir, new))
+    return new
 
 # ---- file name parsing ---------------------------------------------------------
 
@@ -153,13 +182,13 @@ def safe(n):
 
 SRC = {  # folder -> (type, machines, slot, needs)
     'Games/MSX1/ROM': ('ROM', MSX1, 'cart1', []),
-    'Games/MSX1/DSK': ('DSK', MSX1, 'disk0', ['msx-disk']),
-    'Games/MSX1/MSX-Binaries': ('BIN', MSX1, 'ide0', ['nextor']),
-    'Games/MSX1/HDD': ('HDD', MSX1, 'ide0', ['nextor']),
+    'Games/MSX1/DSK': ('DSK', MSX1, 'disk0', []),
+    'Games/MSX1/MSX-Binaries': ('BIN', MSX1, 'ide0', []),
+    'Games/MSX1/HDD': ('HDD', MSX1, 'ide0', []),
     'Games/MSX2/ROM': ('ROM', MSX2, 'cart1', []),
-    'Games/MSX2/DSK': ('DSK', MSX2, 'disk0', ['msx-disk']),
-    'Games/MSX2/MSX-Binaries': ('BIN', MSX2, 'ide0', ['nextor']),
-    'Games/MSX2/Harddisk': ('HDD', MSX2, 'ide0', ['nextor']),
+    'Games/MSX2/DSK': ('DSK', MSX2, 'disk0', []),
+    'Games/MSX2/MSX-Binaries': ('BIN', MSX2, 'ide0', []),
+    'Games/MSX2/Harddisk': ('HDD', MSX2, 'ide0', []),
 }
 
 titles = {}      # key -> {'variants': {vkey: {...}}, ...}
@@ -262,20 +291,23 @@ for key, t in sorted(titles.items()):
         allfiles += got
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
         if v['typ'] == 'BIN':
-            runf = got     # the whole program folder goes on the host disk
+            runf = []      # loose program files go onto a disk by hand; the ide0 slot takes only an image
         run = dict(platform='msx', machines=v['machines'], files=runf, slot=v['slot'], needs=list(v['needs']))
         p = v['parse']
-        notes = []
+        notes = ['Copy files/ onto an MSX-DOS or Nextor disk and run it from there.'] if v['typ'] == 'BIN' else []
         if p['flags']:
             notes.append(' '.join('[%s]' % f for f in p['flags']))
         if p['lang']:
             notes.append('language: ' + p['lang'])
         if v['typ'] == 'ROM':
-            for g in runf:
+            for i, g in enumerate(runf):
                 h = sdb.get(sha1(os.path.join(tdir, g)))
                 if h:
                     sdbhit = sdbhit or h
                     run['mapper'] = h['mapper']
+                    new = mark_mapper(tdir, g, h['mapper'])
+                    runf[i] = new
+                    allfiles[allfiles.index(g)] = new
                     if h.get('status'):
                         notes.append('openMSX: ' + h['status'] + (' - ' + h['remark'] if h.get('remark') else ''))
                     break
@@ -300,7 +332,7 @@ for key, t in sorted(titles.items()):
     meta['sources'] = sources
     meta['added'] = TODAY
     ids = {}
-    if sdbhit and sdbhit.get('genmsx'): ids['genmsx'] = int(sdbhit['genmsx'])
+    if sdbhit and (sdbhit.get('genmsx') or '').isdigit(): ids['genmsx'] = int(sdbhit['genmsx'])
     fhids = sorted({v['parse']['fhid'] for v in vs if v['parse']['fhid']})
     if fhids: ids['filehunter'] = [int(i) for i in fhids]
     if ids: meta['ids'] = ids
