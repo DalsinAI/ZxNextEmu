@@ -35,7 +35,8 @@
  *                 high byte; any other register starts a word again. The
  *                 IDE ports come before the GS, DAC and mouse ports they
  *                 share
- *   RTC72421      read only on port 0x03 (the register in A8-A11), with
+ *   RTC72421      read only on port 0x03 (the register in A8-A11, A12-A15
+ *                 not decoded), with
  *                 m_zxi_003 bit 0 on and m_zxi_040 the time zone. It keeps
  *                 emulated time, so a machine runs the same every time: it
  *                 starts at 2026-01-01 00:00:00 when the interface is
