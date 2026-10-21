@@ -64,7 +64,7 @@ unpacked.
 
 Conventions: ids `msx-*`, `msx-demo-*`, `symbos-*`. MSX1 titles run on msx1,
 msx1eu, msx2, msx2eu; MSX2 titles on msx2, msx2eu. Slots are the core's:
-cart1, disk0, ide0, tape. Needs: msx-disk, msx-tape, nextor, v9990, turbor,
+cart1, disk0, ide0 (CAS tapes and DMK images are left out until the MSX has a tape slot and a DMK reader). Needs: msx-disk, nextor, v9990, turbor,
 msx2plus, symbos. SymbOS apps run on next (sd0) and msx2/msx2eu (ide0) with
 needs ["symbos"] and tag "symbos". ROM runs carry `mapper` from openMSX.
 Each variant (ROM, disk set, tape, hack, translation) is a run, best first;
