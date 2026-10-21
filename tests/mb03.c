@@ -712,6 +712,7 @@ static void test_rtc(const char *romdir)
         ok &= in(&m, (uint16_t)(i << 8 | 0x03)) == start[i];
     CHECK(ok, "the RTC starts at Thursday 2026-01-01 00:00:00");
     CHECK(in(&m, 0x0f03) == 4, "in 24-hour mode");
+    CHECK(in(&m, 0xab03) == 2, "A15-A12 are not decoded");
     for (i = 0; i < 60; i++)
         zx_run_frame(&m);
     CHECK(in(&m, 0x0003) == 1, "a second later");

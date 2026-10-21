@@ -323,7 +323,7 @@ static void ide_write(zx_exp *e, int r, uint8_t v)
 
 static int rtc_on(const zx_exp *e, uint16_t port)
 {
-    return (e->features & ZX_EXP_RTC) && (port & 0xf0ff) == 0x0003
+    return (e->features & ZX_EXP_RTC) && (port & 0xff) == 0x03   /* A15-A12 not decoded */
         && (!(e->features & ZX_EXP_ZXI) || (e->zxi[0][0x03] & 1));
 }
 
