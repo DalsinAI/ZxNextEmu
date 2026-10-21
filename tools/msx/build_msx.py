@@ -110,7 +110,7 @@ def parse(base, typ):
             pub = m.group(2).strip()
         if ' - ' in title and not pub and norm(title) not in xl:
             title, pub = title.rsplit(' - ', 1)
-    fid = next((f for f in flags if re.fullmatch(r'\d{3,6}', f)), None)
+    fid = next((f for f in flags if re.fullmatch(r'\d{1,6}', f)), None)   # File Hunter's own number, [1] up
     flags = [f for f in flags if f != fid]
     return dict(title=title, year=year, pub=pub, lang=lang, part=part, flags=flags, fhid=fid)
 

@@ -118,7 +118,11 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
         g = os.path.join(SYM, 'shots', '%s-%d.gif' % (aid, i))
         if os.path.exists(g):
             os.makedirs(sd, exist_ok=True)
-            Image.open(g).convert('RGB').save(os.path.join(sd, '%d.png' % (len(shots) + 1)))
+            try:
+                Image.open(g).convert('RGB').save(os.path.join(sd, '%d.png' % (len(shots) + 1)))
+            except (OSError, ValueError) as e:   # truncated, or an error page saved as .gif
+                print('  bad screenshot', g, e)
+                continue
             shots.append({'file': 'screens/%d.png' % (len(shots) + 1), 'caption': '%s screenshot' % name})
     d, m, y = date.split('.')
     meta = {'format': 2, 'id': tid, 'name': name, 'kind': KIND.get(genre, 'application'), 'year': int(y),
