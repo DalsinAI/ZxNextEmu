@@ -89,6 +89,7 @@ static const zxm_input_desc inputs_next[] = {
 };
 
 static const char *const roms_esxdos[] = { "esxmmc.bin", NULL };
+static const char *const roms_mb03[] = { "esxmmc.bin", "gs105a.rom", NULL };
 
 static const zxm_slot slots_divmmc[] = {
     { "sd0", "SD card", ZXM_SLOT_SD, ".img .mmc" },
@@ -111,8 +112,8 @@ static const zxm_input_desc inputs_mb03[] = {
 };
 
 static const zxm_interface interfaces[] = {
-    { "divmmc", "divMMC", roms_esxdos, slots_divmmc, inputs_none },
-    { "mb03", "MB03+ Ultimate", roms_esxdos, slots_mb03, inputs_mb03 },
+    { "divmmc", "divMMC", roms_esxdos, slots_divmmc, inputs_none, 0 },
+    { "mb03", "MB03+ Ultimate", roms_mb03, slots_mb03, inputs_mb03, 1u << 1 },
 };
 
 static const uint32_t interface_features[] = { ZX_EXP_DIVMMC, ZX_EXP_MB03 };
@@ -195,6 +196,11 @@ static int attach(zxm *b, const char *id, const zxm_rom_set *roms)
         return -1;
     if (zx_exp_attach(&m->m, interface_features[f - interfaces], roms->rom[0], roms->len[0]))
         return -1;
+    /* the MB03+'s General Sound, when its ROM is there */
+    if (f->roms[1] && roms->rom[1] && zx_exp_attach_gs(&m->m, roms->rom[1], roms->len[1])) {
+        zx_exp_free(&m->m);
+        return -1;
+    }
     m->iface = f;
     build_lists(m);
     zx_reset(&m->m);
