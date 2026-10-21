@@ -4,6 +4,7 @@
  *   vfattool dump  folder size-MB image   write the volume to a (sparse) image
  *   vfattool apply folder size-MB image   write the image's changed sectors
  *                                         to the volume, then write back
+ *   vfattool dump16 / apply16 ...         the same with a FAT16 volume
  *
  * tests/vfat.sh dumps a folder, changes the image with mtools and fsck.fat
  * the way a machine would, applies it and checks the folder.
@@ -21,11 +22,15 @@ int main(int argc, char **argv)
     uint8_t a[ZX_BLOCK], b[ZX_BLOCK], zero[ZX_BLOCK] = { 0 };
     uint64_t lba, changed = 0;
 
-    if (argc != 5 || (strcmp(argv[1], "dump") && strcmp(argv[1], "apply"))) {
-        fprintf(stderr, "usage: %s dump|apply folder size-MB image\n", argv[0]);
+    if (argc != 5 || (strcmp(argv[1], "dump") && strcmp(argv[1], "apply") && strcmp(argv[1], "dump16")
+                      && strcmp(argv[1], "apply16"))) {
+        fprintf(stderr, "usage: %s dump|apply|dump16|apply16 folder size-MB image\n", argv[0]);
         return 2;
     }
-    bd = zx_bd_open_folder(argv[2], (uint32_t)atoi(argv[3]));
+    if (strstr(argv[1], "16"))
+        bd = zx_bd_open_folder16(argv[2], (uint32_t)atoi(argv[3]));
+    else
+        bd = zx_bd_open_folder(argv[2], (uint32_t)atoi(argv[3]));
     if (!bd) {
         fprintf(stderr, "cannot open %s\n", argv[2]);
         return 1;

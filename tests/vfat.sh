@@ -1,9 +1,10 @@
 #!/bin/sh
 # Folder-backed FAT32 volume: lay out a folder, change it with mtools the
 # way a machine would, write it back and check the folder.
-# Needs mtools and dosfstools.
+# Needs mtools and dosfstools. The second argument, 16, checks FAT16.
 set -e
 TOOL=${1:-build/vfattool}
+FAT=${2:-}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 export MTOOLS_SKIP_CHECK=1
@@ -22,7 +23,7 @@ echo z2 > "$T/f/sub/z"                  # same name as one in a subdirectory
 echo hidden > "$T/f/.hidden"
 head -c 300000 /dev/urandom > "$T/new.bin"
 
-"$TOOL" dump "$T/f" 512 "$T/img"
+"$TOOL" dump$FAT "$T/f" 512 "$T/img"
 dd if="$T/img" of="$T/part" bs=1M skip=1 conv=sparse status=none
 fsck.fat -n "$T/part" || fail "fsck of the fresh volume"
 mtype $I "::/A long file name.text" | grep -q x || fail "long name read"
@@ -44,7 +45,7 @@ mcopy -o $I "$T/README.TXT" ::/README.TXT
 dd if="$T/img" of="$T/part" bs=1M skip=1 conv=sparse status=none
 fsck.fat -n "$T/part" > /dev/null || fail "fsck after mtools"
 
-"$TOOL" apply "$T/f" 512 "$T/img" > /dev/null
+"$TOOL" apply$FAT "$T/f" 512 "$T/img" > /dev/null
 cmp -s "$T/f/new.bin" "$T/new.bin" || fail "new file"
 [ ! -e "$T/f/lower.txt" ] || fail "deleted file still there"
 [ ! -e "$T/f/A long file name.text" ] || fail "renamed file still there"
@@ -56,4 +57,4 @@ cmp -s "$T/f/sub/big.bin" "$T/big.orig" || fail "untouched file changed"
 grep -q hidden "$T/f/.hidden" || fail "dot file touched"
 grep -q z2 "$T/f/sub/z" || fail "file named like one in a subdirectory"
 ls -a "$T/f" | grep -q zxc-sync && fail "temporary file left"
-echo "vfat: all checks passed"
+echo "vfat${FAT:+ (FAT16)}: all checks passed"

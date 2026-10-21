@@ -164,6 +164,7 @@ slot 3 expanded with the sub ROM, 64K of RAM (MSX1) or a 1 MB memory mapper
 including ASCII8, ASCII16, Konami and Konami SCC mappers, guessed or named
 in the file name as `[ascii8]` and so on), `disk0`, `disk1` (`.dsk`, with a
 16K WD2793 disk ROM as `disk.rom`) and `ide0`, `ide1` (hard disk images,
+or host folders shown as FAT16 volumes, since Nextor does not read FAT32;
 with a Sunrise IDE ROM such as Nextor as `disk.rom`).
 
 The VDP is a TMS9918 (TMS9929 at 50 Hz) on MSX1 and a V9938 with 128K of
@@ -208,7 +209,7 @@ mid-frame changes land where they do on the hardware.
 | Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |
 | ATM Turbo 2+ | 1024K, xxF7 windows, xx77 modes: EGA 320x200x16, hi-res multicolour, 80-column text, 7 MHz turbo, palette. The text font is the ROM's character set, not the real chargen |
 | Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
-| SD card | a host folder seen as a live FAT32 card, or an image file |
+| SD card | a host folder seen as a live FAT32 card (FAT16 for MSX hard disks), or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
