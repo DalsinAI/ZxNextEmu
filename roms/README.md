@@ -20,3 +20,21 @@ The Oric-1 and Oric Atmos BASIC ROMs are not stored here either: their
 copyright holders are long gone and nobody has granted redistribution, so
 supply your own `basic10.rom` (Oric-1, CRC32 `f18710b4`) and `basic11b.rom`
 (Atmos, CRC32 `c3a92bef`).
+
+## MSX: C-BIOS
+
+The MSX machines boot [C-BIOS](https://cbios.sourceforge.net/) 0.29a, a free
+MSX BIOS, by default. Its licence (BSD, two clauses) is in
+[CBIOS-LICENSE.txt](CBIOS-LICENSE.txt). C-BIOS has no BASIC and no disk
+support of its own: it starts cartridges.
+
+| File | Machine |
+| --- | --- |
+| `cbios_main_msx1.rom`, `cbios_main_msx1_eu.rom`, `cbios_logo_msx1.rom` | `msx1`, `msx1eu` |
+| `cbios_main_msx2.rom`, `cbios_main_msx2_eu.rom`, `cbios_sub.rom`, `cbios_logo_msx2.rom` | `msx2`, `msx2eu` |
+
+A real BIOS (with MSX-BASIC) replaces these with your own dumps in the same
+places: the 32K main ROM, the 16K MSX2 sub ROM, and no logo ROM. The disk
+ROM, `disk.rom`, is also yours to supply: a 16K Philips-style (WD2793) disk
+ROM for the floppy drives, or a Sunrise IDE flash ROM, such as Nextor's
+`Nextor-*.SunriseIDE.ROM`, for the hard disks.

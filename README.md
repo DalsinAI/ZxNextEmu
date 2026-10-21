@@ -64,7 +64,7 @@ and `.pisend` move files between the SD card and the Pi.
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
 up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-`oric1`, `atmos`),
+`oric1`, `atmos`, `msx1`, `msx1eu`, `msx2`, `msx2eu`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
 state. The core does no file I/O: ROMs, tapes and snapshots come in as
@@ -84,6 +84,28 @@ CRC32 `f18710b4`) and `basic11b.rom` (Atmos, BASIC 1.1, CRC32 `c3a92bef`),
 16K each. Tapes are `.tap` files. With those two ROMs, CLOAD reads a tape
 almost at once by handing bytes to the ROM's own routines; any other
 loader gets the real 2400/1200 Hz signal on the VIA's CB1.
+
+### MSX1 and MSX2
+
+`msx1` and `msx2` are 60 Hz machines, `msx1eu` and `msx2eu` their 50 Hz
+versions. They boot the free C-BIOS (in `roms/`, see
+[roms/README.md](roms/README.md)), or a real BIOS you supply. The layout is
+a Philips NMS 8250's: BIOS in slot 0, two cartridge slots (1 and 2), and
+slot 3 expanded with the sub ROM, 64K of RAM (MSX1) or a 1 MB memory mapper
+(MSX2), and the disk ROM. Media slots are `cart1`, `cart2` (`.rom`,
+including ASCII8, ASCII16, Konami and Konami SCC mappers, guessed or named
+in the file name as `[ascii8]` and so on), `disk0`, `disk1` (`.dsk`, with a
+16K WD2793 disk ROM as `disk.rom`) and `ide0`, `ide1` (hard disk images,
+with a Sunrise IDE ROM such as Nextor as `disk.rom`).
+
+The VDP is a TMS9918 (TMS9929 at 50 Hz) on MSX1 and a V9938 with 128K of
+VRAM on MSX2: every screen mode, sprites with their per-line limits and
+collisions, line and vertical-scan interrupts at their tick, and the
+command engine timed slot by slot against the VRAM access tables measured
+for openMSX. The Z80 runs at 3.58 MHz with the MSX's wait state on every M1
+cycle. `zxmrun` runs any machine headless:
+
+    build/zxmrun -m msx2 -f 600 -x cart1=game.rom -s shot.ppm
 
 ## How the timing works
 
@@ -117,6 +139,7 @@ mid-frame changes land where they do on the hardware.
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
+| MSX1 / MSX2 | boot C-BIOS; TMS9918/9929 and V9938 (all modes, sprites, timed command engine), AY, PPI keyboard, joysticks, mouse, slots and sub-slots, memory mapper, RP5C01 clock, ROM cartridges with ASCII/Konami/SCC mappers, WD2793 floppy and Sunrise IDE. Not yet: tape, MSX-MUSIC, Kanji ROM, V9958 (MSX2+), CPU waits on VRAM access |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
 | WebAssembly core | `zxcore.wasm`, the zxm interface, identical output to native |
 | Front ends | headless `zxrun` and desktop (SDL2) for testing; ZX Cradle's JavaScript runtime next |
