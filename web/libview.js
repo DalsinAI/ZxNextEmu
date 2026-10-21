@@ -577,7 +577,8 @@ async function shootOn(machine, parts, tag) {
   try {
     await s.ready;
     await s.call({ cmd: 'create', id: machine, roms: 'roms.json' }, ['created']);
-    s.call({ cmd: 'loadSet', parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id: machine, autostart: true }, ['media']).catch(() => {});
+    // A load that fails leaves the bare machine on screen, which is no picture of the title.
+    await s.call({ cmd: 'loadSet', parts: parts.map(p => ({ ...p, bytes: p.bytes.slice().buffer })), id: machine, autostart: true }, ['loadedSet']);
     loaded = (await s.call({ cmd: 'capture', tag, after: [100, 500, 1500, 3000] }, ['captured'], d => { if (d.type === 'shot') shots.push(d); })).loaded;
   } catch (err) {
     console.warn(`Screenshots of ${tag} on ${machine}: ${err.message}`);
