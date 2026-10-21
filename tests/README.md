@@ -22,6 +22,8 @@ Test programs are not kept in git; they are downloaded into `tests-data/`.
   cp /tmp/zxuno/SD/ESXMMC.BIN tests-data/esxdos/esxmmc.bin
   cp -r /tmp/zxuno/SD/SYS /tmp/zxuno/SD/BIN tests-data/esxdos/
   ```
+- **General Sound** (for the GS checks in `make mb03` and `make wasmtest`,
+  skipped without it): put the 32K GS ROM 1.05a at `tests-data/gs/gs105a.rom`.
 - **SAM Coupé**: `make sam` fetches SAMDOS 2 (`samdos2.sbt`, from SimCoupé's
   resources) into `tests-data/`, builds a boot disk with `tests/mkmgt.c`,
   boots it, saves a file from BASIC and reads it back out of the image.
