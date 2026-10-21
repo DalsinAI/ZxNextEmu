@@ -15,7 +15,7 @@ STORE_SRC = src/storage/blockdev.c src/storage/vfat.c
 DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
-ZXM_SRC  = src/core/zxm.c
+ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c
 ZX_SRC   = src/zx/zx.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
 ZX_HDR   = $(wildcard src/z80/*.h src/zx/*.h src/next/*.h src/storage/*.h src/devices/*.h src/frontend/*.h)
 
