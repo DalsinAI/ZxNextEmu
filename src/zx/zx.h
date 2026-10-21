@@ -1,5 +1,7 @@
 /*
- * Classic Spectrum family: 48K, 128K, +2, +2A, +3 and Pentagon 128.
+ * Classic Spectrum family: 48K, 128K, +2, +2A, +3, and the Russian clones
+ * with a Beta 128 disk interface: Pentagon 128, Scorpion ZS-256 and ATM
+ * Turbo 2+.
  *
  * One machine struct covers all of them; the model picks the timing table,
  * the paging rules and the contention behaviour. All timing is in CPU
@@ -13,6 +15,7 @@
 
 #include "../z80/z80.h"
 #include "ay.h"
+#include "beta.h"
 
 typedef enum {
     ZX_48K,
@@ -22,6 +25,8 @@ typedef enum {
     ZX_PLUS3,
     ZX_PENTAGON,
     ZX_NEXT,
+    ZX_SCORPION,
+    ZX_ATM2,
     ZX_MODEL_COUNT
 } zx_model;
 
@@ -58,9 +63,13 @@ typedef struct zx {
     uint32_t t;            /* T-state within the current frame */
     uint64_t frames;
 
-    /* Memory: 16K pages. ROM pages 0..3, RAM pages 0..7. */
+    /* Memory: 16K pages. ROM pages 0..3; RAM pages 0..ram_pages-1, which
+     * are ram8 below on the 128K machines and allocated by zx_create on the
+     * clones with more (256K Scorpion, 1024K ATM). */
     uint8_t rom[4][0x4000];
-    uint8_t ram[8][0x4000];
+    uint8_t (*ram)[0x4000];
+    int ram_pages;
+    uint8_t ram8[8][0x4000];
     uint8_t *rd[4];        /* read map for the four 16K slots */
     uint8_t *wr[4];        /* write map; NULL = ROM */
     uint8_t contended[4];  /* slot is contended memory */
@@ -103,12 +112,30 @@ typedef struct zx {
     int screen_w, screen_h, pitch;
 
     struct zxn *next;      /* ZX Spectrum Next state (ZX_NEXT only) */
+
+    /* Beta 128 disk interface (Pentagon with a TR-DOS ROM, Scorpion, ATM). */
+    uint8_t has_beta;
+    uint8_t dos;           /* TR-DOS ROM paged in: the Beta ports answer */
+    zx_beta beta;
+
+    /* ATM Turbo 2+ */
+    struct {
+        uint8_t p77;       /* last write to #xx77: video mode, turbo, INT gate */
+        uint8_t p77_hi;    /* its address high byte: A8 pen, A9 cpm, A14 pen2 */
+        uint8_t page[8];   /* #xxF7 for the four windows, two sets (7FFD bit 4) */
+        uint8_t pal_raw[16];
+        uint16_t pal[16];  /* the palette as RGB333 */
+        uint8_t carry;     /* half a T-state left over in turbo */
+    } atm;
+    uint16_t *wide;        /* ATM: the 640x256 picture (allocated) */
 } zx;
 
 /* Create a machine from its ROM images: roms[i] is 16K for each name
  * zx_rom_file(model, i) gives (the Next needs none). No file I/O. */
 int zx_create(zx *m, zx_model model, const uint8_t *const roms[4]);
 const char *zx_rom_file(zx_model model, int i);
+/* ROM i may be left out (the Pentagon without TR-DOS has no disk drive). */
+int zx_rom_optional(zx_model model, int i);
 /* Host side (files.c): create with the ROM files read from roms_dir
  * (see roms/README.md). */
 int zx_init(zx *m, zx_model model, const char *roms_dir);
@@ -132,6 +159,12 @@ int zx_load_z80(zx *m, const uint8_t *data, size_t len);
 /* Release memory owned by the machine (the Next allocates its RAM). */
 void zx_free(zx *m);
 
+/* Beta 128 disks, drive 0..3: a block device of .trd layout (the machine
+ * owns it from now on), or .trd / .scl bytes (copied). */
+int zx_attach_disk_dev(zx *m, int drive, struct zx_blockdev *bd);
+int zx_attach_disk_image(zx *m, int drive, const uint8_t *data, size_t len, int scl);
+void zx_eject_disk(zx *m, int drive);
+
 /* Attach an SD card (Next only), slot 0 or 1. The machine closes the
  * device when it is replaced or the machine is freed. */
 struct zx_blockdev;
@@ -146,7 +179,8 @@ size_t zx_state_size(const zx *m);
 int zx_state_save(const zx *m, void *buf, size_t len);
 int zx_state_load(zx *m, const void *buf, size_t len);
 
-/* Model by short name: 48, 128, plus2, plus2a, plus3, pentagon, next. */
+/* Model by short name: 48, 128, plus2, plus2a, plus3, pentagon, next,
+ * scorpion, atm2. */
 int zx_model_from_name(const char *name, zx_model *out);
 
 #endif

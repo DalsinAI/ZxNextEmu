@@ -22,10 +22,25 @@ static const char *const roms_128[] = { "128-0.rom", "128-1.rom", NULL };
 static const char *const roms_plus2[] = { "plus2-0.rom", "plus2-1.rom", NULL };
 static const char *const roms_plus3[] = { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom", NULL };
 static const char *const roms_none[] = { NULL };
+static const char *const roms_pentagon[] = { "128-0.rom", "128-1.rom", "trdos.rom", NULL };
+static const char *const roms_scorpion[] = { "256s-0.rom", "256s-1.rom", "256s-2.rom", "256s-3.rom", NULL };
+static const char *const roms_atm2[] = { "atm2-0.rom", "atm2-1.rom", "atm2-2.rom", "atm2-3.rom", NULL };
 
 static const zxm_slot slots_classic[] = {
     { "tape", "Tape", ZXM_SLOT_TAPE, ".tap .tzx" },
     { "snapshot", "Snapshot", ZXM_SLOT_SNAPSHOT, ".sna .z80" },
+    { NULL, NULL, 0, NULL },
+};
+
+/* The Russian clones: a Beta 128 with four drives. A blocks disk is .trd
+ * layout; bytes may be .trd or .scl (an empty .trd is a blank disk). */
+static const zxm_slot slots_beta[] = {
+    { "tape", "Tape", ZXM_SLOT_TAPE, ".tap .tzx" },
+    { "snapshot", "Snapshot", ZXM_SLOT_SNAPSHOT, ".sna .z80" },
+    { "beta.a", "Drive A", ZXM_SLOT_DISK, ".trd .scl" },
+    { "beta.b", "Drive B", ZXM_SLOT_DISK, ".trd .scl" },
+    { "beta.c", "Drive C", ZXM_SLOT_DISK, ".trd .scl" },
+    { "beta.d", "Drive D", ZXM_SLOT_DISK, ".trd .scl" },
     { NULL, NULL, 0, NULL },
 };
 
@@ -52,7 +67,9 @@ static const zxm_input_desc inputs_next[] = {
 };
 
 #define CLASSIC(id, name, model, roms) \
-    { id, name, 0, 0, ZX_SCREEN_W, ZX_SCREEN_H, ZXM_RGB333, ZX_AUDIO_RATE, roms, slots_classic, inputs_classic }
+    { id, name, 0, 0, ZX_SCREEN_W, ZX_SCREEN_H, ZXM_RGB333, ZX_AUDIO_RATE, roms, slots_classic, inputs_classic, 0 }
+#define BETA(id, name, model, roms, w, optional) \
+    { id, name, 0, 0, w, ZX_SCREEN_H, ZXM_RGB333, ZX_AUDIO_RATE, roms, slots_beta, inputs_classic, optional }
 
 /* cpu_hz and frame_t are filled from zx_timings on first lookup. */
 static zxm_info machines[] = {
@@ -61,8 +78,10 @@ static zxm_info machines[] = {
     CLASSIC("plus2", "ZX Spectrum +2", ZX_PLUS2, roms_plus2),
     CLASSIC("plus2a", "ZX Spectrum +2A", ZX_PLUS2A, roms_plus3),
     CLASSIC("plus3", "ZX Spectrum +3", ZX_PLUS3, roms_plus3),
-    CLASSIC("pentagon", "Pentagon 128", ZX_PENTAGON, roms_128),
-    { "next", "ZX Spectrum Next", 0, 0, NX_W, NX_H, ZXM_RGB333, ZX_AUDIO_RATE, roms_none, slots_next, inputs_next },
+    BETA("pentagon", "Pentagon 128", ZX_PENTAGON, roms_pentagon, ZX_SCREEN_W, 1u << 2),
+    { "next", "ZX Spectrum Next", 0, 0, NX_W, NX_H, ZXM_RGB333, ZX_AUDIO_RATE, roms_none, slots_next, inputs_next, 0 },
+    BETA("scorpion", "Scorpion ZS-256", ZX_SCORPION, roms_scorpion, ZX_SCREEN_W, 0),
+    BETA("atm2", "ATM Turbo 2+", ZX_ATM2, roms_atm2, ZX_SCREEN_W * 2, 0),
 };
 
 /* machines[i] is model i. */
@@ -106,6 +125,8 @@ int zxm_create(zxm *m, const zxm_info *info, const zxm_rom_set *roms)
     if (!info || info < machines || info >= machines + MACHINES)
         return -1;
     for (i = 0; i < 4 && info->roms[i]; i++) {
+        if ((!roms || !roms->rom[i]) && (info->roms_optional >> i & 1))
+            continue;
         if (!roms || !roms->rom[i] || roms->len[i] != 0x4000)
             return -1;
         r[i] = roms->rom[i];
@@ -135,7 +156,7 @@ void zxm_reset(zxm *m, zxm_reset_kind kind)
         if (z->model == ZX_NEXT) {
             nx_power_on(z);
         } else {
-            memset(z->ram, 0, sizeof z->ram);
+            memset(z->ram, 0, (size_t)z->ram_pages * 0x4000);
             zx_reset(z);
         }
         memset(&m->typer, 0, sizeof m->typer);
@@ -261,6 +282,12 @@ int zxm_media_insert(zxm *m, const char *slot, const zxm_media *media)
             return -1;
         nx_attach_serial(z, slot[4] - '0', media->serial);
         return 0;
+    case ZXM_SLOT_DISK:
+        if (media->kind == ZXM_MEDIA_BLOCKS)
+            return zx_attach_disk_dev(z, slot[5] - 'a', media->blocks);
+        if (media->kind == ZXM_MEDIA_BYTES)
+            return zx_attach_disk_image(z, slot[5] - 'a', media->data, media->len, has_ext(media->name, ".scl"));
+        return -1;
     }
     return -1;
 }
@@ -282,6 +309,9 @@ int zxm_media_eject(zxm *m, const char *slot)
         return 0;
     case ZXM_SLOT_SERIAL:
         nx_attach_serial(z, slot[4] - '0', NULL);
+        return 0;
+    case ZXM_SLOT_DISK:
+        zx_eject_disk(z, slot[5] - 'a');
         return 0;
     default:
         return -1;
