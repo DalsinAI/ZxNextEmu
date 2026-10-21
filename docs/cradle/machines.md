@@ -37,7 +37,7 @@ interface's slots and inputs to the instance):
 | --- | --- | --- |
 | `cpc464`, `cpc664`, `cpc6128` | Amstrad CPC | Gate Array, CRTC variants (types 0 to 4), uPD765 shared with +3 |
 | `cpcplus` | CPC 6128 Plus, 464 Plus, GX4000 | ASIC sprites, cartridge slot |
-| `msx1`, `msx2`, `msx2p` | MSX, MSX2, MSX2+ | TMS9918 / V9938 / V9958, slots and sub-slots, many machine variants as manifests |
+| `msx1`, `msx2`, `msx2p` | MSX, MSX2, MSX2+ | `msx1`, `msx1eu`, `msx2`, `msx2eu` done in the core (C-BIOS by default, floppy, Sunrise IDE for Nextor and SymbOS); MSX2+ (V9958) and more variants as manifests to come |
 | `sam` | SAM Coupé | done in the core (`src/sam`): ASIC modes 1 to 4, contention and interrupts after SimCoupé's measurements, SAA1099, two real-time VL1772 drives, tape; ROM 3.0 is distributable |
 | `ace` | Jupiter Ace | Forth in ROM, small and well documented |
 

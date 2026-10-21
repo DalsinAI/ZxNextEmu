@@ -18,9 +18,11 @@ comma := ,
 ORIC_SRC = src/m6502/m6502.c src/devices/via6522.c src/oric/oric.c src/oric/tape.c
 ORIC_ROMS = $(BUILD)/oric-roms/basic10.rom $(BUILD)/oric-roms/basic11b.rom   # built from tests/oric/testrom.s
 SAM_SRC  = src/sam/sam.c src/devices/saa1099.c src/devices/floppy.c src/devices/wd177x.c
-ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c src/core/zxm_sam.c $(ORIC_SRC) $(SAM_SRC)
+MSX_SRC  = src/msx/msx.c src/msx/vdp.c src/msx/vdpcmd.c src/msx/cart.c src/msx/scc.c src/msx/rtc.c \
+           src/msx/fdc.c src/msx/ide.c
+ZXM_SRC  = src/core/zxm.c src/core/zxm_zx.c src/core/zxm_oric.c src/core/zxm_sam.c src/core/zxm_msx.c $(ORIC_SRC) $(SAM_SRC) $(MSX_SRC)
 ZX_SRC   = src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/expansion.c src/zx/files.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c src/frontend/media.c $(NEXT_SRC)
-ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/sam/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/core/*.h)
+ZX_HDR   = $(wildcard src/spec256/*.h src/z80/*.h src/zx/*.h src/next/*.h src/sam/*.h src/storage/*.h src/devices/*.h src/frontend/*.h src/m6502/*.h src/oric/*.h src/msx/*.h src/core/*.h)
 
 .PHONY: all desktop test sst sst6502 oric sam vfat esp nextpi ulaplus mb03 esxdos state wasm wasmtest web serve clean
 
@@ -110,7 +112,7 @@ ESXDOS_ROM ?= tests-data/esxdos/esxmmc.bin
 
 # The Orics run the test ROM (their own ROMs are not in the repository).
 state: $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam msx1 msx1eu msx2 msx2eu; do \
 	    $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done
 	@if [ -f $(ESXDOS_ROM) ]; then for mc in zx48 zx128 plus3 pentagon; do \
 	    ZXM_IFACE=mb03 ZXM_IFACE_ROM=$(ESXDOS_ROM) $(BUILD)/zxm roms $$mc 300 "print 2+2\n" || exit 1; done; \
@@ -165,7 +167,7 @@ $(BUILD)/zxcore.wasm: $(WASM_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 
 # The WebAssembly core must give exactly the native core's pictures and sound.
 wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(ORIC_ROMS)
-	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam oric1 atmos; do \
+	@for mc in zx48 zx128 plus2 plus2a plus3 pentagon next spec256 sam oric1 atmos msx1 msx1eu msx2 msx2eu; do \
 	    case $$mc in oric1|atmos) rd=$(BUILD)/oric-roms;; *) rd=roms;; esac; \
 	    a=$$($(BUILD)/zxm $$rd $$mc 300 'print 2+2\n' | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm $$rd $$mc 300 'print 2+2\n') || exit 1; \

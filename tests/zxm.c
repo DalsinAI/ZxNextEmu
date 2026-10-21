@@ -102,12 +102,12 @@ static uint32_t run(zxm *m, int frames, uint32_t h)
 
 int main(int argc, char **argv)
 {
-    static uint8_t rom[4][0x10000];
+    static uint8_t rom[4][0x80000];
     const zxm_info *info;
     zxm_rom_set roms;
     zxm *m;
     void *state;
-    size_t len, n;
+    size_t len;
     int frames, half, i;
     uint32_t h1, h2, h0;
 
@@ -125,11 +125,15 @@ int main(int argc, char **argv)
     for (i = 0; info->roms[i]; i++) {
         char path[1024];
         FILE *fp;
+        size_t n;
         snprintf(path, sizeof path, "%s/%s", argv[1], info->roms[i]);
-        if (!(fp = fopen(path, "rb")) || !(n = fread(rom[i], 1, sizeof rom[i], fp))) {
+        if (!(fp = fopen(path, "rb"))) {
+            if (info->rom_optional >> i & 1)
+                continue;
             fprintf(stderr, "cannot read %s\n", path);
             return 1;
         }
+        n = fread(rom[i], 1, sizeof rom[i], fp);
         fclose(fp);
         roms.rom[i] = rom[i];
         roms.len[i] = (uint32_t)n;
