@@ -32,7 +32,10 @@ typedef enum {
     ZXM_SLOT_TAPE = 1,           /* bytes: .tap, .tzx */
     ZXM_SLOT_SNAPSHOT,           /* bytes, loaded once: .sna, .z80 */
     ZXM_SLOT_SD,                 /* blocks */
-    ZXM_SLOT_SERIAL              /* a serial device on a UART */
+    ZXM_SLOT_SERIAL,             /* a serial device on a UART */
+    ZXM_SLOT_DISK,               /* a floppy disk drive */
+    ZXM_SLOT_CARTRIDGE,          /* a ROM cartridge */
+    ZXM_SLOT_HARDDISK            /* a hard disk */
 } zxm_slot_kind;
 
 typedef struct zxm_slot {
@@ -46,7 +49,10 @@ typedef enum {
     ZXM_IN_KEYBOARD = 1,         /* 8x5 Spectrum matrix (+ Next extra keys) */
     ZXM_IN_KEMPSTON,             /* Kempston joystick */
     ZXM_IN_MOUSE,                /* Kempston mouse */
-    ZXM_IN_ORIC_KEYBOARD         /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
+    ZXM_IN_ORIC_KEYBOARD,        /* 8x8 Oric matrix: ZXM_EV_KEY a = row 0..7, b = column 0..7 */
+    ZXM_IN_MSX_KEYBOARD,         /* MSX matrix */
+    ZXM_IN_JOYSTICK,             /* a general joystick (ZXM_EV_JOYSTICK) */
+    ZXM_IN_SAM_KEYBOARD          /* SAM Coupe matrix */
 } zxm_input_kind;
 
 typedef struct zxm_input_desc {
@@ -79,7 +85,8 @@ typedef enum {
     ZXM_EV_KEY = 1,              /* a = row 0..7, b = bit 0..4, down */
     ZXM_EV_KEMPSTON,             /* a = state: bit 0 right, 1 left, 2 down, 3 up, 4 fire */
     ZXM_EV_MOUSE,                /* dx, dy (down positive), dz wheel; a = buttons 1 L, 2 R, 4 M */
-    ZXM_EV_RELEASE_ALL           /* every key up */
+    ZXM_EV_RELEASE_ALL,          /* every key up */
+    ZXM_EV_JOYSTICK              /* reserved for the MSX joystick */
 } zxm_event_kind;
 
 typedef struct zxm_input_event {
