@@ -34,6 +34,10 @@ $(BUILD)/zex: tests/zex.c $(CORE_SRC) src/z80/z80.h | $(BUILD)
 $(BUILD)/zxrun: src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ src/frontend/headless.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC)
 
+# Spec256 auto-colouring: the tracer (tools/spec256bot/README.md).
+$(BUILD)/s256trace: tools/spec256bot/trace.c $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tools/spec256bot/trace.c src/frontend/net_posix.c $(CORE_SRC) $(ZX_SRC)
+
 # Any machine through zxm (zxmrun -l lists them).
 $(BUILD)/zxmrun: src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC) $(ZX_HDR) src/core/zxm.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ src/frontend/zxmrun.c $(ZXM_SRC) $(CORE_SRC) $(ZX_SRC)

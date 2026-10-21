@@ -59,6 +59,8 @@ struct s256 {
     /* the shadow CPU's position in that record */
     int k, sr, sw, sf, sio;
     int recording;
+    s256_trace_fn trace;
+    void *trace_user;
 };
 
 /* ---- planes ----------------------------------------------------------- */
@@ -259,6 +261,21 @@ static void begin(s256 *s)
     s->recording = 1;
 }
 
+/* Report this instruction's writes to the bitmap and blank their tags. */
+static void traced(s256 *s)
+{
+    int i;
+    for (i = 0; i < s->nw; i++) {
+        uint16_t a = s->w_addr[i];
+        uint8_t *pl;
+        if (a < 0x4000 || a >= 0x5800 || !(pl = planes_of(s, s->m->wr[a >> 14])))
+            continue;
+        pl += (a & 0x3fff) * 8;
+        s->trace(s->trace_user, a, zx_peek(s->m, a), (uint16_t)(pl[0] | pl[1] << 8));
+        pl[0] = pl[1] = 0;
+    }
+}
+
 static void shadows(s256 *s, const z80 *before, int interrupt)
 {
     int k;
@@ -273,6 +290,8 @@ static void shadows(s256 *s, const z80 *before, int interrupt)
         else
             z80_step(g, &s->shadow);
     }
+    if (s->trace)
+        traced(s);
 }
 
 void s256_step(s256 *s)
@@ -731,6 +750,26 @@ void s256_start(s256 *s)
     make_bkg_rgb(s);
     for (i = 0; i < CORES; i++)
         s->core[i] = m->cpu;
+}
+
+void s256_trace(s256 *s, s256_trace_fn fn, void *user)
+{
+    int slot, i;
+    s->trace = fn;
+    s->trace_user = user;
+    if (!fn)
+        return;
+    for (slot = 0; slot < 4; slot++) {
+        uint8_t *pl = planes_of(s, s->m->rd[slot]);
+        if (!pl)
+            continue;
+        for (i = 0; i < PAGE; i++) {
+            unsigned a = (unsigned)slot * PAGE + (unsigned)i;
+            int blank = a >= 0x4000 && a < 0x5800;
+            pl[i * 8] = blank ? 0 : (uint8_t)a;
+            pl[i * 8 + 1] = blank ? 0 : (uint8_t)(a >> 8);
+        }
+    }
 }
 
 /* ---- state ------------------------------------------------------------ */

@@ -100,7 +100,13 @@ are bundled. Point the emulator at your own copy.
 The cost is about nine times the CPU work: 3 to 4 ms a frame in
 `zxcore.wasm` under Node, against 20 ms of real time.
 
-## A converter for any game (plan)
+## A converter for any game
+
+A first version is in [tools/spec256bot](../tools/spec256bot/README.md): steps 1
+and 2 below, with Claude choosing the colours per sprite. On Jetpac 97% of
+the bytes it colours are ones the hand-coloured version colours too, and it
+finds about half of those (not the aliens, which the game shifts at run
+time). What follows is the full plan.
 
 Can the emulator colour a game that nobody made Spec256 files for? Partly,
 and the shadow-CPU design is what makes it tractable: all a converter has to
