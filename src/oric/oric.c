@@ -212,7 +212,8 @@ void oric_power_on(oric *m)
     memset(m->keys, 0, sizeof m->keys);
     m6502_init(&m->cpu);
     m->via.pa_in = m->via.pb_in = 0xff;
-    m->via.ca1 = m->via.cb1 = 1;
+    m->via.ca1 = 1;
+    m->via.cb1 = 0;                       /* the tape input idles low */
     m->mode = 0x02;                       /* text, 50 Hz */
     m->t = 0;
     m->frame_t = LINES_50 * ORIC_LINE;
@@ -357,7 +358,6 @@ int oric_state_load(oric *m, const void *buf, size_t len)
         memset(&m->tape, 0, sizeof m->tape);
         m->tape.data = tmp.data;
         m->tape.len = tmp.len;
-        m->tape.level = 1;
     }
     return 0;
 }

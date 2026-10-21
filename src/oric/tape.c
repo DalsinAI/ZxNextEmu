@@ -71,7 +71,6 @@ int oric_tape_insert(oric *m, const uint8_t *data, size_t len)
     oric_tape_eject(m);
     m->tape.data = copy;
     m->tape.len = (uint32_t)len;
-    m->tape.level = 1;
     setup_header(&m->tape);
     return 0;
 }
@@ -80,7 +79,6 @@ void oric_tape_eject(oric *m)
 {
     free(m->tape.data);
     memset(&m->tape, 0, sizeof m->tape);
-    m->tape.level = 1;
 }
 
 static void byte_done(oric_tape *t)
@@ -130,7 +128,9 @@ static int next_bit(oric_tape *t)
 void oric_tape_tick(oric *m)
 {
     oric_tape *t = &m->tape;
-    if (!(via_port_b(&m->via) & 0x40))      /* motor relay off */
+    /* The motor relay: only PB6 driven high turns it on, not the pin
+     * floating while the ROM has yet to set the port up. */
+    if (!(m->via.orb & m->via.ddrb & 0x40))
         return;
     if (t->count && --t->count)
         return;
@@ -140,11 +140,13 @@ void oric_tape_tick(oric *m)
             t->count = 0;
             return;
         }
+        /* Each bit starts on a rising edge: the ROM times CB1 from one
+         * rising edge to the next. */
         t->width = b ? HALF_1 : HALF_0;
-        t->level = 0;
+        t->level = 1;
         t->half = 1;
     } else {
-        t->level = 1;
+        t->level = 0;
         t->half = 0;
     }
     t->count = t->width;
