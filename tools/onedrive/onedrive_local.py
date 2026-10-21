@@ -19,7 +19,7 @@ def http(url, headers=None, data=None, tries=6):
             req = urllib.request.Request(url, data=data, headers={'User-Agent': 'zxcradle', **(headers or {})})
             return urllib.request.urlopen(req, timeout=300)
         except urllib.error.HTTPError as e:
-            if e.code in (401, 403, 404) and k >= 1:
+            if 400 <= e.code < 500 and e.code != 429:
                 raise
             err = e
         except Exception as e:
@@ -29,9 +29,16 @@ def http(url, headers=None, data=None, tries=6):
 
 class OneDrive:
     def __init__(self, link):
-        self.link = link
-        self.renew()
-        root = self.get(f'shares/{self.sid}/driveitem')
+        # Try the link as pasted, then without its ?query part.
+        tries = [link] + ([link.split('?')[0]] if '?' in link else [])
+        for n, self.link in enumerate(tries):
+            self.renew()
+            try:
+                root = self.get(f'shares/{self.sid}/driveitem')
+                break
+            except urllib.error.HTTPError as e:
+                if n == len(tries) - 1:
+                    raise
         self.drive = root['parentReference']['driveId']
         self.root = root
 
@@ -230,15 +237,28 @@ def file_title(r, dest, lib, link):
     open(os.path.join(tdir, 'about.md'), 'w', encoding='utf-8').write('\n'.join(about) + '\n')
     return tid, 'new'
 
+def clean_link(link):
+    link = link.strip().strip('\'"<>').strip()
+    if not re.match(r'^https://(1drv\.ms|onedrive\.live\.com)/', link):
+        sys.exit('That does not look like a OneDrive share link. It should start with https://1drv.ms/ '
+                 'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.')
+    return link
+
 def main():
     if len(sys.argv) < 3:
         sys.exit('usage: onedrive_local.py LIBRARY SHARE_LINK [RECORDS.json.gz]')
-    dest, link = os.path.abspath(sys.argv[1]), sys.argv[2]
+    dest, link = os.path.abspath(sys.argv[1]), clean_link(sys.argv[2])
     recp = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'onedrive-records.json.gz')
     limit = int(os.environ.get('ZXC_LIMIT', '0')) or None
     lib = os.path.join(dest, 'titles')
     os.makedirs(lib, exist_ok=True)
-    od = OneDrive(link)
+    try:
+        od = OneDrive(link)
+    except urllib.error.HTTPError as e:
+        sys.exit(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
+                 'shared as "Anyone with the link can view", then run this again.')
+    except urllib.error.URLError as e:
+        sys.exit(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.')
     say('Listing the OneDrive folder...')
     items = [i for i in od.walk() if not i['path'].lower().endswith(SKIP_EXT)]
     want = None
