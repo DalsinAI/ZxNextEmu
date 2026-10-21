@@ -8,6 +8,7 @@
 #include "../next/next.h"
 #include "../storage/blockdev.h"
 #include "../devices/serial.h"
+#include "../spec256/spec256.h"
 
 #include <string.h>
 
@@ -15,6 +16,7 @@ struct zxm {
     const zxm_info *info;
     zx m;
     zx_typer typer;
+    s256 *s256;                  /* the Spec256 machine's shadow CPUs */
 };
 
 static const char *const roms_48[] = { "48.rom", NULL };
@@ -22,6 +24,7 @@ static const char *const roms_128[] = { "128-0.rom", "128-1.rom", NULL };
 static const char *const roms_plus2[] = { "plus2-0.rom", "plus2-1.rom", NULL };
 static const char *const roms_plus3[] = { "plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom", NULL };
 static const char *const roms_none[] = { NULL };
+static const char *const roms_spec256[] = { "48.rom", "128-0.rom", "128-1.rom", NULL };
 
 static const zxm_slot slots_classic[] = {
     { "tape", "Tape", ZXM_SLOT_TAPE, ".tap .tzx" },
@@ -35,6 +38,15 @@ static const zxm_slot slots_next[] = {
     { "tape", "Tape", ZXM_SLOT_TAPE, ".tap .tzx" },
     { "uart0", "Wifi (ESP8266)", ZXM_SLOT_SERIAL, "" },
     { "uart1", "Raspberry Pi", ZXM_SLOT_SERIAL, "" },
+    { NULL, NULL, 0, NULL },
+};
+
+/* Spec256: the companion files first (every .gfx .gf? .b?? .cfg .pal of
+ * the game), then the .sna, which picks 48K or 128K. */
+static const zxm_slot slots_spec256[] = {
+    { "gfx", "Spec256 graphics", ZXM_SLOT_COMPANION, ".gfx .gf0 .gf1 .gf2 .gf3 .gf4 .gf5 .gf6 .gf7 .gfa .gfb .b00 .cfg .pal" },
+    { "snapshot", "Snapshot", ZXM_SLOT_SNAPSHOT, ".sna .z80" },
+    { "tape", "Tape", ZXM_SLOT_TAPE, ".tap .tzx" },
     { NULL, NULL, 0, NULL },
 };
 
@@ -63,14 +75,17 @@ static zxm_info machines[] = {
     CLASSIC("plus3", "ZX Spectrum +3", ZX_PLUS3, roms_plus3),
     CLASSIC("pentagon", "Pentagon 128", ZX_PENTAGON, roms_128),
     { "next", "ZX Spectrum Next", 0, 0, NX_W, NX_H, ZXM_RGB333, ZX_AUDIO_RATE, roms_none, slots_next, inputs_next },
+    { "spec256", "Spec256 (256-colour Spectrum)", 0, 0, ZX_SCREEN_W, ZX_SCREEN_H, ZXM_RGB333, ZX_AUDIO_RATE, roms_spec256, slots_spec256, inputs_classic },
 };
 
-/* machines[i] is model i. */
+/* machines[i] is model i, then Spec256 (a 48K or 128K underneath). */
 #define MACHINES ((int)(sizeof machines / sizeof machines[0]))
+#define SPEC256 ZX_MODEL_COUNT
 
 static zx_model model_of(const zxm_info *info)
 {
-    return (zx_model)(info - machines);
+    int i = (int)(info - machines);
+    return i == SPEC256 ? ZX_48K : (zx_model)i;
 }
 
 const zxm_info *zxm_machine(int i)
@@ -78,8 +93,8 @@ const zxm_info *zxm_machine(int i)
     if (i < 0 || i >= MACHINES)
         return NULL;
     if (!machines[i].cpu_hz) {
-        machines[i].cpu_hz = zx_timings[i].cpu_hz;
-        machines[i].frame_t = zx_timings[i].frame_t;
+        machines[i].cpu_hz = zx_timings[model_of(&machines[i])].cpu_hz;
+        machines[i].frame_t = zx_timings[model_of(&machines[i])].frame_t;
     }
     return &machines[i];
 }
@@ -112,7 +127,43 @@ int zxm_create(zxm *m, const zxm_info *info, const zxm_rom_set *roms)
     }
     memset(&m->typer, 0, sizeof m->typer);
     m->info = info;
+    m->s256 = NULL;
+    if (info - machines == SPEC256) {
+        m->s256 = s256_new(r[0], r[1], r[2]);
+        if (!m->s256 || zx_create(&m->m, ZX_48K, r))
+            return -1;
+        s256_attach(m->s256, &m->m);
+        s256_start(m->s256);
+        return 0;
+    }
     return zx_create(&m->m, model_of(info), r);
+}
+
+static int has_ext(const char *name, const char *ext);
+
+/* A Spec256 snapshot: become the 48K or 128K it needs, load it, start the
+ * shadow CPUs on the graphics given so far. */
+static int spec256_load(zxm *m, const zxm_media *media)
+{
+    zx *z = &m->m;
+    const uint8_t *roms[4];
+    int is128 = has_ext(media->name, ".sna") && s256_snapshot_is_128(media->len), r;
+    zx_model want = is128 ? ZX_128K : ZX_48K;
+    if (z->model != want) {
+        zx_tape *tape = z->tape;
+        s256_roms(m->s256, is128, roms);
+        if (zx_create(z, want, roms))
+            return -1;
+        z->tape = tape;
+        s256_attach(m->s256, z);
+    }
+    r = has_ext(media->name, ".sna") ? zx_load_sna(z, media->data, media->len)
+                                     : zx_load_z80(z, media->data, media->len);
+    if (r)
+        return r;
+    s256_set_name(m->s256, media->name);
+    s256_start(m->s256);
+    return 0;
 }
 
 void zxm_destroy(zxm *m)
@@ -120,6 +171,8 @@ void zxm_destroy(zxm *m)
     zx_tape_free(m->m.tape);
     m->m.tape = NULL;
     zx_free(&m->m);
+    s256_free(m->s256);
+    m->s256 = NULL;
 }
 
 const zxm_info *zxm_info_of(const zxm *m)
@@ -137,6 +190,8 @@ void zxm_reset(zxm *m, zxm_reset_kind kind)
         } else {
             memset(z->ram, 0, sizeof z->ram);
             zx_reset(z);
+            if (m->s256)
+                s256_start(m->s256);
         }
         memset(&m->typer, 0, sizeof m->typer);
         break;
@@ -247,6 +302,8 @@ int zxm_media_insert(zxm *m, const char *slot, const zxm_media *media)
     case ZXM_SLOT_SNAPSHOT:
         if (media->kind != ZXM_MEDIA_BYTES)
             return -1;
+        if (m->s256 && (has_ext(media->name, ".sna") || has_ext(media->name, ".z80")))
+            return spec256_load(m, media);
         if (has_ext(media->name, ".sna"))
             return zx_load_sna(z, media->data, media->len);
         if (has_ext(media->name, ".z80"))
@@ -261,6 +318,10 @@ int zxm_media_insert(zxm *m, const char *slot, const zxm_media *media)
             return -1;
         nx_attach_serial(z, slot[4] - '0', media->serial);
         return 0;
+    case ZXM_SLOT_COMPANION:
+        if (media->kind != ZXM_MEDIA_BYTES || !m->s256)
+            return -1;
+        return s256_add_file(m->s256, media->name, media->data, media->len);
     }
     return -1;
 }
@@ -282,6 +343,10 @@ int zxm_media_eject(zxm *m, const char *slot)
         return 0;
     case ZXM_SLOT_SERIAL:
         nx_attach_serial(z, slot[4] - '0', NULL);
+        return 0;
+    case ZXM_SLOT_COMPANION:
+        if (m->s256)
+            s256_clear_files(m->s256);
         return 0;
     default:
         return -1;

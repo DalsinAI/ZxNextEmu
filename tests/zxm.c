@@ -6,13 +6,17 @@
  *
  * usage: zxm romdir machine frames [text]
  * ZXM_SD=folder-or-image puts an SD card in a Next.
+ * ZXM_SPEC256=folder loads a Spec256 game (machine spec256): its graphics
+ * files into the "gfx" slot, then its .sna.
  */
+#define _DEFAULT_SOURCE /* scandir */
 #include "../src/core/zxm.h"
 #include "../src/storage/blockdev.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 
 static uint32_t fnv(uint32_t h, const void *p, size_t n)
 {
@@ -20,6 +24,61 @@ static uint32_t fnv(uint32_t h, const void *p, size_t n)
     while (n--)
         h = (h ^ *b++) * 16777619u;
     return h;
+}
+
+static int insert_file(zxm *m, const char *slot, const char *dir, const char *name)
+{
+    char path[1024];
+    FILE *fp;
+    long n;
+    uint8_t *data;
+    zxm_media md;
+    int r;
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (!(fp = fopen(path, "rb")))
+        return -1;
+    fseek(fp, 0, SEEK_END);
+    n = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    data = malloc(n ? (size_t)n : 1);
+    if (!data || fread(data, 1, (size_t)n, fp) != (size_t)n) {
+        fclose(fp);
+        free(data);
+        return -1;
+    }
+    fclose(fp);
+    memset(&md, 0, sizeof md);
+    md.kind = ZXM_MEDIA_BYTES;
+    md.name = name;
+    md.data = data;
+    md.len = (uint32_t)n;
+    r = zxm_media_insert(m, slot, &md);
+    free(data);
+    return r;
+}
+
+/* Every file but the snapshot into "gfx" (in name order, so the native and
+ * WebAssembly checks agree), then the .sna. */
+static int load_spec256(zxm *m, const char *dir)
+{
+    struct dirent **list;
+    char sna[256] = "";
+    int n = scandir(dir, &list, NULL, alphasort), i;
+    if (n < 0)
+        return -1;
+    for (i = 0; i < n; i++) {
+        const char *f = list[i]->d_name;
+        size_t l = strlen(f);
+        if (f[0] != '.') {
+            if (l > 4 && (!strcmp(f + l - 4, ".sna") || !strcmp(f + l - 4, ".SNA")))
+                snprintf(sna, sizeof sna, "%s", f);
+            else
+                insert_file(m, "gfx", dir, f);   /* other files are refused */
+        }
+        free(list[i]);
+    }
+    free(list);
+    return sna[0] ? insert_file(m, "snapshot", dir, sna) : -1;
 }
 
 static uint32_t run(zxm *m, int frames, uint32_t h)
@@ -87,6 +146,10 @@ int main(int argc, char **argv)
             fprintf(stderr, "cannot insert SD card %s\n", getenv("ZXM_SD"));
             return 1;
         }
+    }
+    if (getenv("ZXM_SPEC256") && load_spec256(m, getenv("ZXM_SPEC256"))) {
+        fprintf(stderr, "cannot load Spec256 game %s\n", getenv("ZXM_SPEC256"));
+        return 1;
     }
     if (argc > 4) {
         /* "\n" in the text is Enter */
