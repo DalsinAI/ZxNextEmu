@@ -29,6 +29,12 @@ int zx_char_key(int ch, int *row, int *bit, int *caps, int *sym)
     if (isupper(ch)) {
         *caps = 1;
         ch = tolower(ch);
+    } else if (ch == '|') {   /* cursor down (Caps Shift + 6), for menus */
+        *caps = 1;
+        ch = '6';
+    } else if (ch == '~') {   /* Caps Shift + Symbol Shift: the 48K's extended mode */
+        *caps = *sym = 1;
+        return 0;
     } else if (ch && (s = strchr(sym_chars, ch)) != NULL) {
         *sym = 1;
         ch = sym_keys[s - sym_chars];
@@ -81,13 +87,13 @@ void zx_type_frame(zx_typer *ty, zx *m)
             m->keys[i] = 0x1f;
     }
     if (ty->phase == 0) {
-        if (zx_char_key((unsigned char)ty->buf[ty->pos], &row, &bit, &caps, &sym)) {
+        /* A character with no key (and not ~) presses nothing: a pause of one key's time. */
+        if (zx_char_key((unsigned char)ty->buf[ty->pos], &row, &bit, &caps, &sym))
             zx_key(m, row, bit, 1);
-            if (caps)
-                zx_key(m, 0, 0, 1);
-            if (sym)
-                zx_key(m, 7, 1, 1);
-        }
+        if (caps)
+            zx_key(m, 0, 0, 1);
+        if (sym)
+            zx_key(m, 7, 1, 1);
     }
     if (++ty->phase == 10) {
         ty->phase = 0;
