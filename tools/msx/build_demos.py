@@ -5,8 +5,8 @@ import sys, os, re, json, shutil
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build_msx.py')).read().split('# ---- collect variants')[0])
 
 # .di1/.di2 are the two halves of one disk and go in one run. No .cas: the MSX has no tape slot yet.
-SLOTS = {'.rom': ('cart1', []), '.mx1': ('cart1', []), '.mx2': ('cart1', []), '.dsk': ('disk0', ['msx-disk']),
-         '.di1': ('disk0', ['msx-disk']), '.di2': ('disk0', ['msx-disk'])}
+SLOTS = {'.rom': ('cart1', []), '.mx1': ('cart1', []), '.mx2': ('cart1', []), '.dsk': ('disk0', []),
+         '.di1': ('disk0', []), '.di2': ('disk0', [])}
 
 
 def hw(text):
@@ -95,12 +95,16 @@ for folder in sorted(os.listdir(root)):
                 for g in bykind[e]:
                     run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd + hneeds)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
-                    if h: run['mapper'] = h['mapper']
+                    if h:
+                        run['mapper'] = h['mapper']
+                        run['files'] = [mark_mapper(tdir, g, h['mapper'])]
+                        got[got.index(g)] = run['files'][0]
                     runs.append(run)
             else:   # a disk or tape set goes in together, disk 1 first
                 runs.append(dict(platform='msx', machines=machines, files=bykind[e], slot=slot, needs=nd + hneeds))
-        if not runs:   # programs (.com/.bin/.bas) and data go on the Nextor host disk
-            runs.append(dict(platform='msx', machines=machines, files=got, slot='ide0', needs=['nextor'] + hneeds))
+        if not runs:   # programs (.com/.bin/.bas) and data: copied onto a disk by hand, as ide0 takes only an image
+            runs.append(dict(platform='msx', machines=machines, files=[], slot='ide0', needs=hneeds,
+                             notes='Copy files/ onto an MSX-DOS or Nextor disk and run it from there.'))
         meta = {'format': 2, 'id': tid, 'name': name, 'kind': 'demo'}
         yrs = [int(y) for y in re.findall(r'\((19[89]\d|20[0-2]\d)\)', ' '.join(srcs) + ' ' + folder)]
         if yrs: meta['year'] = min(yrs)
@@ -116,8 +120,13 @@ for folder in sorted(os.listdir(root)):
         meta['compat'] = {}
         if p.get('fhid'): meta['ids'] = {'filehunter': [int(p['fhid'])]}
         imgs = [g for g in got if os.path.splitext(g)[1].lower() in ('.png', '.jpg', '.gif')]
-        if imgs:
-            meta['screens'] = [{'file': g, 'caption': 'From the download'} for g in imgs[:4]]
+        if imgs:   # the library takes screenshots only from screens/
+            os.makedirs(os.path.join(tdir, 'screens'), exist_ok=True)
+            meta['screens'] = []
+            for i, g in enumerate(imgs[:4], 1):
+                s = 'screens/%d%s' % (i, os.path.splitext(g)[1].lower())
+                shutil.copy(os.path.join(tdir, g), os.path.join(tdir, s))
+                meta['screens'].append({'file': s, 'caption': 'From the download'})
         json.dump(meta, open(os.path.join(tdir, 'title.json'), 'w'), indent=2, ensure_ascii=False)
         with open(os.path.join(tdir, 'about.md'), 'w') as f:
             f.write('# %s\n\nMSX demo from download.file-hunter.com, Demos/%s.\n' % (name, folder))
