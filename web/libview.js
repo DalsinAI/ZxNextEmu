@@ -6,7 +6,7 @@ import {
   importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, fillParts, attachFiles, romsAdded, hostTitles,
   normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
   versionsOf, titleLangs, titleYears, insideSymbos, langName, langFlag, ratingOf,
-  companiesOf, workOf, groupByWork, groupBySeries, slug,
+  companiesOf, workOf, groupByWork, groupBySeries, slug, versionScreens,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -17,13 +17,22 @@ const JOYSTICKS = ['', 'kempston', 'sinclair', 'cursor', 'none'];
 
 let titles = [];
 let opts = null;          // { machines(): [{id, name}], runnable(id), run(title, run, machine), current?(): machine id }
-const facets = { machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), lang: new Set(), company: new Set(), license: new Set() };
+const facets = { fav: new Set(), machine: new Set(), kind: new Set(), works: new Set(), genre: new Set(), decade: new Set(), needs: new Set(), lang: new Set(), company: new Set(), license: new Set() };
 // Instance mode: show only what runs on one set-up {machine, offers, name}.
 // null shows everything. It follows the running machine unless the user
 // chose Show everything.
 let setup = null, everything = false, needsOpen = false;
 const urls = new Map();   // blob -> object URL
 let openId = null;
+// Favourites live in this browser, so they cover the host's titles too; a
+// title.json with "favourite": true starts as one. id -> true/false.
+let favs = new Map();
+const isFav = t => favs.has(t.id) ? favs.get(t.id) : t.meta.favourite === true;
+function toggleFav(t) {
+  favs.set(t.id, !isFav(t));
+  try { localStorage.setItem('zxc-lib-favs', JSON.stringify(Object.fromEntries(favs))); } catch { /* storage off */ }
+}
+const favButton = (t, on) => `<button class="lib-fav${on ? ' on' : ''}" data-fav="${esc(t.id)}" aria-pressed="${on}" aria-label="${on ? 'Remove from favourites' : 'Add to favourites'}" title="${on ? 'Remove from favourites' : 'Add to favourites'}">${on ? '★' : '☆'}</button>`;
 
 const url = blob => { if (!urls.has(blob)) urls.set(blob, URL.createObjectURL(blob)); return urls.get(blob); };
 // A screenshot's picture: kept in the browser, or on the host.
@@ -66,6 +75,7 @@ export async function reload() {
   titles = [...fromHost.filter(t => !mine.has(t.id)), ...kept];
   for (const t of titles) { delete t._hay; t.meta = normalize(t.meta); }
   try { everything = localStorage.getItem('zxc-lib-everything') === '1'; } catch { /* storage off */ }
+  try { favs = new Map(Object.entries(JSON.parse(localStorage.getItem('zxc-lib-favs') || '{}'))); } catch { /* storage off */ }
   if (!setup && opts.current) setup = setupFor(opts.current());
   render();
   if (openId) showDetail(openId);
@@ -168,6 +178,7 @@ async function addCollection() {
 function facetValues(t) {
   const machines = instanceMode() ? [setup.machine] : facets.machine.size ? titleMachines(t).filter(m => facets.machine.has(m)) : titleMachines(t);
   return {
+    fav: isFav(t) ? ['yes'] : [],
     machine: titleMachines(t),
     kind: [t.meta.kind || 'game'],
     works: [...new Set(machines.map(m => compatOf(t, m)))],
@@ -253,6 +264,10 @@ function drawCards(grid, games, from, fits) {
         ${fits.has(t.id) ? fitChip(fits.get(t.id)) : `<span class="badges">${machines.slice(0, 4).map(m => `<span class="badge${opts.runnable(m) ? '' : ' off'}">${esc(label(m))}</span>`).join('')}${machines.length > 4 ? `<span class="badge more">${machines.length - 4} more</span>` : ''}</span>`}
       </span></button>`;
     li.firstElementChild.addEventListener('click', () => showDetail(same[0].id));
+    // A game is a favourite when any of its titles is; the star marks them all.
+    const fav = same.some(isFav);
+    li.insertAdjacentHTML('beforeend', favButton(same[0], fav));
+    li.lastElementChild.addEventListener('click', () => { for (const x of same) if (isFav(x) === fav) toggleFav(x); render(); });
     grid.append(li);
   }
   if (shown >= games.length) return;
@@ -325,8 +340,8 @@ function renderFilters() {
   const inMode = instanceMode() ? t => fitFor(t, setup).fit === 'runs' : () => true;
   for (const k of Object.keys(counts))
     for (const t of visible(k)) if (inMode(t)) for (const v of facetValues(t)[k]) counts[k].set(v, counts[k].get(v) + 1);
-  const heads = { machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', lang: 'Language', company: 'Company', license: 'Licence' };
-  const names = { machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, lang: c => `${langFlag(c)} ${langName(c)}`.trim(), company: c => c, license: l => l.replace('-', ' ') };
+  const heads = { fav: 'Favourites', machine: 'Runs on', works: 'Known to work', kind: 'Kind', genre: 'Genre', decade: 'Decade', needs: 'Uses', lang: 'Language', company: 'Company', license: 'Licence' };
+  const names = { fav: () => '★ Only favourites', machine: label, works: w => w, kind: kindWord, genre: g => g, decade: d => d, needs: needWord, lang: c => `${langFlag(c)} ${langName(c)}`.trim(), company: c => c, license: l => l.replace('-', ' ') };
   box.textContent = '';
   if (instanceMode()) {
     const sec = document.createElement('section');
@@ -448,12 +463,16 @@ export async function showDetail(id) {
         : `<small class="det-later">${machines.includes('next') ? 'The Next is not in the browser yet' : 'Not in the browser yet'}</small>`}
     </li>`;
   };
+  // Each version's own rating and screenshots; a thumbnail opens it in the big picture.
+  const verRating = id => { const r = ratingOf(t, id); return r ? ` <small class="lib-rating ver-rating" title="${esc(`${r.score} out of 10 for this version`)}">★ ${r.score.toFixed(1)}</small>` : ''; };
+  const verShots = id => { const own = versionScreens(t, id); return own.length ? `<div class="det-thumbs ver-thumbs">${own.map(sc => `<button class="det-thumb" data-shot="${t.screens.indexOf(sc)}" aria-label="${esc(sc.caption || 'Screenshot')}"><img alt="" loading="lazy" src="${esc(src(sc))}"></button>`).join('')}</div>` : ''; };
   // With versions, each one heads its own runs.
   const link = s => /^https?:/.test(s) ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a>` : esc(s);
   const runs = m.versions?.length || (m.language && m.language !== 'en')
-    ? versionsOf(t).filter(v => v.runs.length || v.id).map(v => `<li class="det-ver"><h4>${v.language && v.language !== 'en' ? flagOf(v.language) : ''}${esc(v.label || v.id || 'Main version')}
+    ? versionsOf(t).filter(v => v.runs.length || v.id).map(v => `<li class="det-ver"><h4>${v.language && v.language !== 'en' ? flagOf(v.language) : ''}${esc(v.label || v.id || 'Main version')}${verRating(v.id)}
         <small>${esc([v.year, v.language && langName(v.language), v.publisher, (v.authors || []).join(', ')].filter(Boolean).join(' · '))}</small></h4>
         ${v.notes ? `<small>${esc(v.notes)}</small>` : ''}
+        ${verShots(v.id)}
         ${v.source && v.source !== m.source ? `<small>From ${link(v.source)}</small>` : ''}
         <ul class="det-runs">${v.runs.map(x => runItem(x.run, x.i)).join('') || '<li class="det-later">No files for this version.</li>'}</ul></li>`).join('')
     : (m.runs || []).map(runItem).join('');
@@ -461,6 +480,7 @@ export async function showDetail(id) {
   d.innerHTML = `<article class="det">
     <header class="det-head">
       <div><h2>${esc(m.name)}</h2>${line ? `<p class="det-line">${esc(line)}</p>` : ''}</div>
+      ${favButton(t, isFav(t))}
       <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg></button>
     </header>
     <div class="det-body">
@@ -500,10 +520,12 @@ export async function showDetail(id) {
     shot = i;
     const s = t.screens[i];
     d.querySelector('.det-cover').src = src(s);
-    d.querySelector('figcaption').textContent = s.caption || '';
-    d.querySelectorAll('.det-thumb').forEach((b, j) => b.classList.toggle('on', j === i));
+    const ver = s.version && (m.versions || []).find(v => v.id === s.version);
+    d.querySelector('figcaption').textContent = [s.caption, ver && (ver.label || ver.id)].filter(Boolean).join(' · ');
+    d.querySelectorAll('.det-thumb').forEach(b => b.classList.toggle('on', Number(b.dataset.shot) === i));
   };
   d.querySelector('[data-close]').addEventListener('click', closeDetail);
+  d.querySelector('[data-fav]').addEventListener('click', () => { toggleFav(t); render(); showDetail(t.id); });
   d.querySelectorAll('.det-rel [data-id]').forEach(b => b.addEventListener('click', () => showDetail(b.dataset.id)));
   d.querySelectorAll('[data-series]').forEach(b => b.addEventListener('click', () => showSeries(b.dataset.series)));
   d.querySelectorAll('[data-company]').forEach(b => b.addEventListener('click', () => searchFor(`company:${slug(b.dataset.company)}`)));
@@ -548,7 +570,7 @@ export async function showDetail(id) {
     await save(t);
   });
   d.querySelector('[data-edit]').addEventListener('click', () => edit(t));
-  d.querySelector('[data-export]').addEventListener('click', async () => download(await exportTitle(t), `${t.id}.zip`));
+  d.querySelector('[data-export]').addEventListener('click', async () => download(await exportTitle({ ...t, favourite: isFav(t) }), `${t.id}.zip`));
   d.querySelector('[data-toml]').addEventListener('click', () => {
     const meta = { ...m, screens: t.screens.map(s => ({ file: s.path, ...(s.caption ? { caption: s.caption } : {}) })) };
     if (!meta.screens.length) delete meta.screens;
@@ -690,39 +712,56 @@ export async function queueShots() {
 // 48K), try the next kind of machine, and list the one that worked first.
 async function takeShots(t) {
   // A run that needs SymbOS cannot start on a bare machine, so it gets no automatic shots.
-  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !insideSymbos(r)
-    && !runParts(t, r).missing.length && runParts(t, r).parts.length);
-  if (!run) {
+  const shootable = r => (r.machines || []).some(m => opts.runnable(m)) && !insideSymbos(r)
+    && !runParts(t, r).missing.length && runParts(t, r).parts.length;
+  // One run for each version that has no screenshots of its own yet (just one
+  // run for a title without versions).
+  const versions = (t.meta.versions || []).length > 0;
+  const byVersion = new Map();
+  for (const r of t.meta.runs) {
+    const v = versions ? r.version || '' : '';
+    if (!byVersion.has(v) && shootable(r) && !(versions && versionScreens(t, v).length)) byVersion.set(v, r);
+  }
+  const runs = [...byVersion.values()].slice(0, 4);
+  if (!runs.length) {
     // Nothing to shoot: drop it from the queue here too, or queueShots would pick it again at once.
     t.needsShots = false;
     const f = await titleGet(t.id);
     if (f) { f.needsShots = false; await titlePut(f); }
     return;
   }
-  const { parts } = runParts(t, run);
-  try { await fillParts(parts); } catch (err) { console.warn(`Screenshots of ${t.id}: ${err.message}`); t.needsShots = false; return; }
-  const tried = [];
-  let keep = [], worked = null;
-  for (const machine of run.machines.filter(m => opts.runnable(m))) {
-    if (tried.length >= 3 || tried.some(m => family(m) === family(machine))) continue;
-    tried.push(machine);
-    const r = await shootOn(machine, parts, t.id);
-    if (r.loaded && r.keep.length) { keep = r.keep; worked = machine; break; }
+  const shot = [];
+  for (const run of runs) {
+    const { parts } = runParts(t, run);
+    try { await fillParts(parts); } catch (err) { console.warn(`Screenshots of ${t.id}: ${err.message}`); continue; }
+    const tried = [];
+    let keep = [], worked = null;
+    for (const machine of run.machines.filter(m => opts.runnable(m))) {
+      if (tried.length >= 3 || tried.some(m => family(m) === family(machine))) continue;
+      tried.push(machine);
+      const r = await shootOn(machine, parts, t.id);
+      if (r.loaded && r.keep.length) { keep = r.keep; worked = machine; break; }
+    }
+    shot.push({ run, keep, worked, tried });
   }
   t.needsShots = false;
   const fresh = (await titleGet(t.id)) || (t.host ? { ...t, meta: structuredClone(t.meta), screens: [...t.screens] } : null);
   if (!fresh) return;
-  if (worked && worked !== run.machines[0]) {
-    const fr = fresh.meta.runs.find(r => String(r.files) === String(run.files));
-    if (fr) fr.machines = [worked, ...fr.machines.filter(m => m !== worked)];
+  for (const { run, keep, worked } of shot) {
+    if (worked && worked !== run.machines[0]) {
+      const fr = fresh.meta.runs.find(r => String(r.files) === String(run.files));
+      if (fr) fr.machines = [worked, ...fr.machines.filter(m => m !== worked)];
+    }
+    const dir = versions && run.version ? `screens/${run.version}` : 'screens';
+    for (const [i, sh] of keep.slice(0, 3).entries())
+      fresh.screens.push({ path: `${dir}/auto-${Date.now().toString(36)}-${i + 1}.png`, blob: await rgbaToPng(sh.pixels, sh.w, sh.h), caption: '', auto: true, version: versions ? run.version || '' : '' });
   }
-  for (const [i, sh] of keep.slice(0, 3).entries())
-    fresh.screens.push({ path: `screens/auto-${Date.now().toString(36)}-${i + 1}.png`, blob: await rgbaToPng(sh.pixels, sh.w, sh.h), caption: '', auto: true });
   fresh.needsShots = false;
   fresh.meta = normalize(fresh.meta);
-  if (worked && compatOf(fresh, worked) === 'untested') setCompat(fresh, worked, 'verified', 'cradle');
+  for (const { worked } of shot) if (worked && compatOf(fresh, worked) === 'untested') setCompat(fresh, worked, 'verified', 'cradle');
   // Pictures of a tape that never finished loading are no use; say so instead.
-  fresh.loadFailed = !worked ? tried : undefined;
+  const failed = shot.filter(x => !x.worked);
+  fresh.loadFailed = shot.length > 0 && failed.length === shot.length ? failed[0].tried : undefined;
   await titlePut(fresh);
   const i = titles.findIndex(x => x.id === t.id);
   if (i >= 0) titles[i] = fresh;
