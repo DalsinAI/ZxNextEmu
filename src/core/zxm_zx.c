@@ -455,6 +455,14 @@ static int media_active(const zxm *b, const zxm_slot *s)
     return 0;
 }
 
+static int media_progress(const zxm *b, const zxm_slot *s)
+{
+    const zxm_zx *m = CZX(b);
+    if (s->kind == ZXM_SLOT_TAPE)
+        return m->m.tape ? zx_tape_progress(m->m.tape) : -1;
+    return -1;
+}
+
 /* ---- state ---------------------------------------------------------------- */
 
 static size_t state_size(const zxm *b)
@@ -547,5 +555,6 @@ static const zxm_debug *debugger(zxm *m)
 const zxm_family zxm_family_zx = {
     machines, MACHINES, init_info, size, create, destroy, reset, run_frame,
     framebuffer, audio, input, type, typing, media_insert, media_eject,
-    state_size, state_save, state_load, debugger, attach, slots, inputs, media_active
+    state_size, state_save, state_load, debugger, attach, slots, inputs, media_active,
+    media_progress
 };

@@ -146,3 +146,9 @@ int zxm_media_active(const zxm *m, const char *slot)
     const zxm_slot *s = find_slot(m, slot);
     return s && m->fam->media_active ? m->fam->media_active(m, s) : 0;
 }
+
+int zxm_media_progress(const zxm *m, const char *slot)
+{
+    const zxm_slot *s = find_slot(m, slot);
+    return s && m->fam->media_progress ? m->fam->media_progress(m, s) : -1;
+}
