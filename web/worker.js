@@ -280,6 +280,11 @@ const handlers = {
         handlers.load({ name: p.name, bytes: p.bytes, id: msg.id, autostart: msg.autostart });
         starts = true;
       } else if (p.slot === 'gfx' || !filled.has(p.slot)) {   // Spec256 takes every companion file
+        if (p.slot === 'gfx' && !filled.has('gfx')) {   // drop an earlier title's companions first
+          const s = cstr('gfx');
+          x.zxm_media_eject(m, s);
+          x.free(s);
+        }
         if (!insert(p.slot, p.name, new Uint8Array(p.bytes))) throw new Error(`${p.name} could not go into the ${p.slot} slot.`);
         filled.add(p.slot);
         if (/^(disk|cart)/.test(p.slot)) boots = true;

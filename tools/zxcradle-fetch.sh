@@ -293,10 +293,13 @@ def zip_unpack(path, dest, charset):
                             n = n.encode('cp437').decode('cp866' if charset == 'ru' else 'cp437')
                         except Exception:
                             pass
-                    parts = [safe_name(p) for p in n.replace('\\', '/').split('/') if p not in ('', '.', '..')]
+                    # Clean each part first: cleaning can turn ".. " into "..".
+                    parts = [x for x in (safe_name(p) for p in n.replace('\\', '/').split('/') if p) if x not in ('.', '..')]
                     if not parts:
                         continue
                     out = os.path.join(dest, *parts)
+                    if os.path.commonpath([os.path.realpath(dest), os.path.realpath(out)]) != os.path.realpath(dest):
+                        continue
                     os.makedirs(os.path.dirname(out), exist_ok=True)
                     with z.open(m) as s, open(out, 'wb') as o:
                         shutil.copyfileobj(s, o)
@@ -447,25 +450,36 @@ def kind_of(cat):
 
 
 def zx_people(p):
-    return {str(a['authorId']) for a in p.get('authorsInfo', []) if a.get('authorId')} | {str(i) for i in p.get('publishersIds', [])}
+    # Authors and groups are separate id spaces on zxart, so every key carries its type.
+    return ({('author', str(a['authorId'])) for a in p.get('authorsInfo', []) if a.get('authorId')} |
+            {('group', str(i)) for i in p.get('publishersIds', [])})
 
 
 def zx_names(prods):
-    """Fill NAMES; returns the ids whose lookup failed, so their titles can wait for the next run."""
-    want = sorted(i for p in prods for i in zx_people(p) if i not in NAMES)
-    want = list(dict.fromkeys(want))
+    """Fill NAMES; returns the (type, id) keys whose lookup failed, so their titles can wait for the next run."""
+    want = sorted({k for p in prods for k in zx_people(p) if k not in NAMES})
     lost = set()
-    for i in range(0, len(want), 50):
-        ch = ','.join(want[i:i + 50])
-        for typ, f in (('author', 'authorId'), ('group', 'groupId')):
+    for typ, f in (('author', 'authorId'), ('group', 'groupId')):
+        ids = [i for t, i in want if t == typ]
+        for i in range(0, len(ids), 50):
+            ch = ','.join(ids[i:i + 50])
             try:
                 j = fetch_json(f'{ZX}/types:{typ}/export:{typ}/start:0/limit:50/filter:{f}={ch};')
                 for a in j['responseData'].get(typ, []):
-                    NAMES[str(a['id'])] = html.unescape(a['title'])
+                    NAMES[(typ, str(a['id']))] = html.unescape(a['title'])
             except Exception as e:
                 log('zxart names', e)
-                lost.update(want[i:i + 50])
+                lost.update((typ, x) for x in ids[i:i + 50])
     return lost
+
+
+def zx_pubs(r):
+    return [NAMES[('group', str(i))] for i in r.get('publishersIds', []) if ('group', str(i)) in NAMES]
+
+
+def zx_authors(r):
+    return list(dict.fromkeys(NAMES[('author', str(a['authorId']))] for a in r.get('authorsInfo', [])
+                              if ('author', str(a.get('authorId'))) in NAMES))
 
 
 def zx_title(lib, p, rels, hw):
@@ -490,12 +504,11 @@ def zx_title(lib, p, rels, hw):
         while vid in vids:
             vid, n = f'{base}-{n}', n + 1
         vids.add(vid)
-        rpubs = [NAMES[str(i)] for i in r.get('publishersIds', []) if str(i) in NAMES]
+        rpubs = zx_pubs(r)
         versions.append({'id': vid, 'label': ', '.join(x for x in (r.get('releaseType') or 'release', r.get('version'),
                                                                   '/'.join(r.get('releaseFormat') or []), str(r.get('year') or '')) if x),
                          'year': r.get('year') or None, 'language': lang or None,
-                         'authors': list(dict.fromkeys(NAMES[str(a['authorId'])] for a in r.get('authorsInfo', [])
-                                                       if str(a.get('authorId')) in NAMES)),
+                         'authors': zx_authors(r),
                          'publisher': rpubs[0] if rpubs else None,
                          'source': f'https://zxart.ee/eng/software/?id={p["id"]}', 'ids': {'zxart_release': r['id']},
                          'notes': safe_name(r['fileName'])})
@@ -526,9 +539,9 @@ def zx_title(lib, p, rels, hw):
     for k, key in (('zxdb', 'zxdb'), ('pouet', 'pouet'), ('dzoo', 'demozoo'), ('3a', 'zxaaa')):
         if str(imp.get(k) or '').isdigit() and int(imp[k]):
             ids[key] = int(imp[k])
-    pubs = [NAMES[str(i)] for i in p.get('publishersIds', []) if str(i) in NAMES]
+    pubs = zx_pubs(p)
     t = {'format': 2, 'name': name, 'kind': kind_of(cat), 'year': p.get('year') or None,
-         'authors': list(dict.fromkeys(NAMES[str(a['authorId'])] for a in p.get('authorsInfo', []) if str(a.get('authorId')) in NAMES)),
+         'authors': zx_authors(p),
          'publisher': pubs[0] if pubs else None, 'genres': [g for g in cat.split('/')[1:] if g][-2:],
          'tags': [hw], 'summary': desc.split('\n')[0][:200] or None,
          'license': LIC.get(p.get('legalStatus'), 'unknown'), 'source': url,
@@ -653,7 +666,7 @@ def wos_field(p, label):
 
 
 def worldofsam(lib, made=0):
-    links = {}
+    links, broken = {}, []
     for cat, kind in ((3, 'game'), (4, 'demo')):
         page = 0
         while True:
@@ -661,6 +674,7 @@ def worldofsam(lib, made=0):
                 p = fetch(f'{WOS}/products?field_category_target_id={cat}&page={page}').decode('utf-8', 'replace')
             except Exception as e:
                 say(f'  worldofsam.org: {e}')
+                broken.append(f'{kind}s page {page + 1}')
                 break
             new = [h for h in re.findall(r'<td[^>]*>\s*<a href="(/products/[^"?#]+)"', p) if h not in links]
             for h in new:
@@ -702,22 +716,24 @@ def worldofsam(lib, made=0):
         return f'{name} ({n} files)'
     if not LIMIT:
         batch(todo, one, 'worldofsam')
-        return
-    # A trial run goes one title at a time, so titles already filed from zxart.ee do not use up the limit.
-    left = max(0, LIMIT - made)
-    for item in todo:
-        if left <= 0:
-            break
-        try:
-            msg = one(item)
-        except Exception as e:
-            msg = None
-            log('worldofsam', 'failed', e)
-        if msg is False:
-            continue
-        left -= 1
-        if msg:
-            say(f'[worldofsam] {msg}')
+    else:
+        # A trial run goes one title at a time, so titles already filed from zxart.ee do not use up the limit.
+        left = max(0, LIMIT - made)
+        for item in todo:
+            if left <= 0:
+                break
+            try:
+                msg = one(item)
+            except Exception as e:
+                msg = None
+                log('worldofsam', 'failed', e)
+            if msg is False:
+                continue
+            left -= 1
+            if msg:
+                say(f'[worldofsam] {msg}')
+    if broken:  # the pages that came were done; this marks the section as stopped so a rerun fills the gap
+        raise RuntimeError(f'worldofsam.org {", ".join(broken)} could not be fetched')
 
 
 # ---------------------------------------------------------------- vtrd.in
@@ -877,7 +893,7 @@ def symbos(lib):
         got = {}
         for f in ('SymbOS-MSX40.zip', 'SymbOS-ZNX40.zip', 'SymbOS-40-MassStorageCompletion.zip', 'SymbOS-40-Manual.pdf'):
             got[f] = get_files(tdir, SY + 'download/20250131-V40/' + f, f)
-        if got['SymbOS-MSX40.zip'] and got['SymbOS-ZNX40.zip']:  # otherwise the next run tries again
+        if all(got.values()):  # otherwise the next run tries all four again
             made += 1
             # Both packages are files to install onto a NextZXOS SD card or an MSX hard disk (the SymbOS
             # recipe does that), and the player cannot mount either medium from bytes yet, so no runs.
@@ -963,10 +979,10 @@ def spec256(lib):
                 files.append('files/' + safe_name(f))
             # Just what the Spec256 machine loads: its companion files and the snapshot.
             game = [f for f in files if re.search(r'\.(gfx|gf[0-7ab]|b\d\d|cfg|pal|sna|z80)$', f, re.I)]
-            if not game:
-                continue
+            if not any(re.search(r'\.(sna|z80)$', f, re.I) for f in game):
+                game = []   # graphics with no snapshot: nothing to start, so the files are kept without a run
             runs = [{'platform': 'zx-spectrum', 'machines': ['spec256'], 'files': game, 'slot': 'gfx', 'needs': [],
-                     'notes': '256 colours (Spec256). Load every file into the gfx slot, then the .sna into snapshot.'}]
+                     'notes': '256 colours (Spec256). Load every file into the gfx slot, then the .sna into snapshot.'}] if game else []
             # A 128K snapshot (longer than the 49179-byte 48K one) will not load on a 48K machine.
             runs += [run_table(f, (['zx48'] if os.path.getsize(os.path.join(tdir, f)) <= 49179 else []) +
                                ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'], notes='The original game in Spectrum colours.')
@@ -1004,8 +1020,7 @@ def onedrive(lib):
         except Exception as e:
             log('onedrive tool', ref, e)
     else:
-        say('  Could not get the OneDrive importer from GitHub; skipping it.')
-        return
+        raise RuntimeError('could not get the OneDrive importer from GitHub; run again to retry')
     env = dict(os.environ)
     if LIMIT:
         env['ZXC_LIMIT'] = str(LIMIT)
@@ -1071,9 +1086,9 @@ def pouet_runs(files, plat):
 
 def demos(lib):
     """One title per pouet prod, with runs for every platform of ours it is listed under."""
-    made, seen = 0, {}
+    seen = {}   # prod id -> the platform list it was found in
     for plat in POUET_PLATFORMS:
-        if LIMIT and made >= LIMIT:
+        if LIMIT and len(seen) >= LIMIT * 4:   # a trial run collects a few spares for prods it cannot use
             break
         ids, page = [], 1
         while True:
@@ -1088,13 +1103,10 @@ def demos(lib):
             ids += new
             page += 1
             # Count only productions not yet in the library, so trial runs page on past ones already done.
-            if LIMIT and sum(1 for i in ids if not lib.has('pouet', i) and i not in seen) >= (LIMIT - made) * 4:
+            if LIMIT and len(seen) + sum(1 for i in ids if not lib.has('pouet', i) and i not in seen) >= LIMIT * 4:
                 break
         todo = [i for i in ids if not lib.has('pouet', i) and i not in seen]
         say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
-        if LIMIT:
-            todo = todo[:LIMIT - made]
-        made += len(todo)
         for i in todo:
             seen[i] = plat
 
@@ -1137,7 +1149,22 @@ def demos(lib):
               'screens': get_screens(tdir, [p['screenshot']] if p.get('screenshot') else [], None, 1)}
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [], '')} | {'runs': runs})
         return f'{name} ({len(files)} files)'
-    batch(list(seen), one, 'pouet')
+    if not LIMIT:
+        batch(list(seen), one, 'pouet')
+        return
+    # A trial run counts only titles actually filed, so a prod with nothing to download does not use up the limit.
+    left = LIMIT
+    for pid in seen:
+        if left <= 0:
+            break
+        try:
+            msg = one(pid)
+        except Exception as e:
+            msg = None
+            log('pouet', pid, 'failed', e)
+        if msg:
+            left -= 1
+            say(f'[pouet] {msg}')
 
 
 # ---------------------------------------------------------------- ratings and reviews
