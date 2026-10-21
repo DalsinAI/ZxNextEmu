@@ -254,6 +254,19 @@ class Library:
             self.names.setdefault(norm(t.get('name')), sid)
 
 
+    def link(self, sid, key, val):
+        """Note another source's id on a title already filed, so later runs know it is done."""
+        path = os.path.join(TITLES, sid, 'title.json')
+        with LOCK:
+            j = json.load(open(path, encoding='utf-8'))
+            j.setdefault('ids', {})[key] = val
+            tmp = path + '.part'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(j, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+            self.ids[(key, str(val))] = sid
+
+
 def unpack(path, dest, charset=None):
     """Unpack an archive into dest. Returns True on success."""
     low = path.lower()
@@ -365,10 +378,11 @@ def run_table(f, machines, platform='zx-spectrum', needs=(), likes=(), notes=Non
             m = list(BETA)
     if ext in ('.dsk', '.mgt', '.sad') and platform != 'sam-coupe':
         return None
-    if slot == 'snapshot':
-        m = [x for x in m if x != 'next']  # the Next has no snapshot slot
-        if not m:
-            return None
+    # The Next has no snapshot slot, and a tape needs NextZXOS from an SD card the player cannot mount
+    # from bytes yet; zxart's 16K Spectrum is no machine here (a 48K runs those).
+    m = [x for x in m if x not in ('next', 'zx16')]
+    if not m:
+        return None
     r = {'platform': platform, 'machines': list(dict.fromkeys(m)), 'files': [f], 'slot': slot, 'needs': sorted(set(nd))}
     if likes:
         r['likes'] = sorted(set(likes))
@@ -427,7 +441,7 @@ ZX_HW = {
     'sam': ['samcoupe'],
     'mb03': ['gs', 'tsfm', 'saa', 'ulaplus', 'soundrive', 'specdrum', 'divmmc', 'divide', 'zxuno'],
 }
-HW_MACH = {'zx16': ['zx16'] + FAM48, 'zx48': FAM48, 'zx128': FAM128, 'zx+2': FAM128, 'zx+2a': ['plus2a', 'plus3'],
+HW_MACH = {'zx16': FAM48, 'zx48': FAM48, 'zx128': FAM128, 'zx+2': FAM128, 'zx+2a': ['plus2a', 'plus3'],
            'zx+3': ['plus3', 'plus2a'], 'zx+2b': ['plus2a', 'plus3'], 'pentagon128': BETA,
            'scorpion': ['scorpion'], 'atm': ['atm2'], 'atm2': ['atm2'], 'zxnext': ['next'],
            'samcoupe': ['sam']}
@@ -599,6 +613,7 @@ def zxart(lib, section):
                     except Exception as e:
                         log('zxart releases', e)
                         lost.update(ids[i:i + 50])
+                        broken.append(f'{hw} release details near title {start}')
                 # A title whose release details did not arrive waits for the next run instead of being filed short.
                 todo = [p for p in todo if not lost & set(p.get('releasesIds', []))]
                 gone = zx_names(todo + list(rels.values()))
@@ -658,7 +673,6 @@ def mb03_site(lib, made=0):
             continue
         if LIMIT and made >= LIMIT:
             break
-        made += 1
         sid = lib.claim(name, '-mb03', 'mb03site', fn)
         tdir = os.path.join(TITLES, sid)
         files = get_files(tdir, f'https://drive.usercontent.google.com/download?id={ids[fn]}&export=download&confirm=t', fn)
@@ -667,6 +681,7 @@ def mb03_site(lib, made=0):
         runs = group_runs([run_table(f, FAM128, needs=['mb03']) for f in files])
         lib.finish(sid, {'name': name, 'kind': kind, 'year': year, 'tags': ['mb03+'], 'summary': summary,
                          'license': 'freeware', 'source': MB03_SITE, 'sources': [MB03_SITE], 'ids': {'mb03site': fn}, 'runs': runs})
+        made += 1   # counted once filed, so a download that fails does not use up a trial run
         say(f'[mb03 site] {name} ({len(files)} files)')
 
 
@@ -706,8 +721,11 @@ def worldofsam(lib, made=0):
         p = fetch(u, timeout=60).decode('utf-8', 'replace')
         name = html.unescape(re.search(r'<h1[^>]*>(?:\s*<span[^>]*>)?\s*([^<]+)', p).group(1)).strip()
         urls = sorted(set(re.findall(r'href="(https://www\.worldofsam\.org/system/files/[^"]+)"', p)))
-        if not urls or os.path.exists(os.path.join(TITLES, slug(name) + '-sam', 'title.json')):
-            return False  # already filed from zxart.ee; an unfinished folder from an earlier run is picked up by claim()
+        if not urls:
+            return False
+        if os.path.exists(os.path.join(TITLES, slug(name) + '-sam', 'title.json')):
+            lib.link(slug(name) + '-sam', 'worldofsam', h)   # already filed from zxart.ee; noted so it is not fetched again
+            return False
         sid = lib.claim(name, '-sam', 'worldofsam', h)
         tdir = os.path.join(TITLES, sid)
         runs, n = [], 0
@@ -742,10 +760,8 @@ def worldofsam(lib, made=0):
             except Exception as e:
                 msg = None
                 log('worldofsam', 'failed', e)
-            if msg is False:
-                continue
-            left -= 1
-            if msg:
+            if msg:   # only a title filed counts; a failed download is tried again next run
+                left -= 1
                 say(f'[worldofsam] {msg}')
     if broken:  # the pages that came were done; this marks the section as stopped so a rerun fills the gap
         raise RuntimeError(f'worldofsam.org {", ".join(broken)} could not be fetched')
@@ -961,13 +977,14 @@ def z80_is_48k(path):
 
 def spec256(lib):
     work = os.path.join(LIB, '.spec256')
-    made = 0
+    made, broken = 0, []
     for n, u in enumerate(SPEC256):
         if LIMIT and made >= LIMIT:
             break
         z = os.path.join(work, f'{n}.zip')
         if not save(u, z) or not unpack(z, os.path.join(work, str(n))):
             say(f'  Spec256: could not get {u}')
+            broken.append(u)
             continue
         root = os.path.join(work, str(n))
         tops = os.listdir(root)
@@ -1011,15 +1028,18 @@ def spec256(lib):
             runs = [{'platform': 'zx-spectrum', 'machines': ['spec256'], 'files': game, 'slot': 'gfx', 'needs': [],
                      'notes': '256 colours (Spec256). Load every file into the gfx slot, then the .sna into snapshot.'}] if game else []
             # A 128K snapshot (longer than the 49179-byte 48K one) will not load on a 48K machine.
-            runs += [run_table(f, (['zx48'] if os.path.getsize(os.path.join(tdir, f)) <= 49179 else []) +
-                               ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'], notes='The original game in Spectrum colours.')
-                     for f in snaps if f.lower().endswith('.sna')]
+            small = lambda f: (os.path.getsize(os.path.join(tdir, f)) <= 49179 if f.lower().endswith('.sna')
+                               else z80_is_48k(os.path.join(tdir, f)))
+            runs += [run_table(f, (['zx48'] if small(f) else []) + ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon'],
+                               notes='The original game in Spectrum colours.') for f in snaps]
             name = re.sub(r'\s+', ' ', g).strip()
             lib.finish(sid, {'name': name, 'kind': 'game', 'tags': ['spec256', '256 colours'], 'license': 'unknown',
                              'source': u.replace('codeload.github.com', 'github.com').rsplit('/zip/', 1)[0],
                              'ids': {'spec256': key}, 'runs': runs, 'screens': shots}, about and f'# {name}\n\n{about}')
             say(f'[spec256] {name} ({len(files)} files)')
     shutil.rmtree(work, ignore_errors=True)
+    if broken:  # the other repository was done; this marks the section as stopped so a rerun fills the gap
+        raise RuntimeError(f'Spec256 {", ".join(broken)} could not be fetched')
 
 
 # ---------------------------------------------------------------- OneDrive
