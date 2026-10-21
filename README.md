@@ -211,7 +211,7 @@ mid-frame changes land where they do on the hardware.
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
-| Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 30 games of the Spec256-Games collection that have a snapshot all run |
+| Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
 | ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
 | MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen and hi-colour. Still to come: General Sound, SAA1099, SID, GigaScreen, Radastan, Timex hi-res, MBIDE/CF, RTC, the board's config registers |
 | Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
