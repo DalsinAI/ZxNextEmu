@@ -74,7 +74,19 @@ def cmd_trace(a):
     subprocess.check_call([exe, "-r", a.roms, "-f", str(a.frames), "-k", str(a.seed),
                            "-s", str(a.frames // 3), a.snapshot, a.work])
     with open(os.path.join(a.work, "snapshot.sha256"), "w") as f:
-        f.write(sha256_of(a.snapshot) + "\n")
+        f.write(sha256_of(a.snapshot) + "\n" + roms_sha256(a.roms) + "\n")
+
+
+ROM_NAMES = ("48.rom", "128-0.rom", "128-1.rom")  # what s256trace loads (trace.c)
+
+
+def roms_sha256(romdir):
+    """One hash over the Spectrum ROMs: mem.bin (and so a .GFB) holds the traced ROM."""
+    h = hashlib.sha256()
+    for n in ROM_NAMES:
+        p = os.path.join(romdir, n)
+        h.update(n.encode() + b"\0" + (open(p, "rb").read() if os.path.exists(p) else b""))
+    return h.hexdigest()
 
 
 def sha256_of(path):
@@ -405,8 +417,12 @@ def colour_sprite(mem, s, p):
 def cmd_emit(a):
     # The graphics planes are built from the traced memory, so they must go with that same snapshot.
     stamp = os.path.join(a.work, "snapshot.sha256")
-    if not os.path.exists(stamp) or open(stamp).read().strip() != sha256_of(a.snapshot):
+    lines = open(stamp).read().split() if os.path.exists(stamp) else []
+    if not lines or lines[0] != sha256_of(a.snapshot):
         sys.exit(f"{a.snapshot} is not the snapshot traced into {a.work}; run trace on it again first.")
+    # The ROM is in the traced memory too, and goes into a .GFB, so the replay ROMs must be the traced ones.
+    if len(lines) < 2 or lines[1] != roms_sha256(a.roms):
+        sys.exit(f"The ROMs in {a.roms} are not the ones traced into {a.work}; pass the same --roms, or trace again.")
     mem, trace = load(a.work)
     sprites = json.load(open(os.path.join(a.work, "sprites.json")))
     path = os.path.join(a.work, "plan.json")
@@ -471,6 +487,7 @@ def main():
     e.add_argument("work")
     e.add_argument("snapshot")
     e.add_argument("out")
+    e.add_argument("--roms", default=os.path.join(ROOT, "roms"), help="the ROMs the package will run with (as given to trace)")
     e.add_argument("--default", action="store_true", help="ignore plan.json")
     e.add_argument("--fill", action="store_true",
                    help="also colour bytes inside a sprite that were never seen drawn")
