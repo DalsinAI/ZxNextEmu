@@ -665,3 +665,4 @@ dialog::backdrop { background: rgb(0 0 0 / 0.6); }
 .det-review details { margin-top: 4px; color: var(--zxc-muted); font-size: var(--zxc-size-xs); }
 .det-review summary { cursor: pointer; }
 .det-ver h4 .lang-flag, .det-review summary .lang-flag { margin: 0 6px 0 0; }
+.det-party { color: var(--zxc-muted); font-size: var(--zxc-size-sm); }

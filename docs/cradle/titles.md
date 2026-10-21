@@ -117,6 +117,11 @@ the main version; a title with one version leaves `versions` out.
 version that is not in English shows its language's flag in the library,
 beside the title on its card and on its own line on the title's page.
 
+A demo or intro that competed can carry `party`: `{ "name", "year",
+"compo", "place" }` (plus `zxart_party` when it came from zxart.ee). The
+title's page shows it as "3rd in the ZX Demo compo at Chaos Constructions
+2019". `ids` can also hold `pouet`, `demozoo` and `zxaaa`.
+
 ## Ratings and reviews
 
 `reviews.json` sits beside `title.json`. Reviews are kept in English; one
