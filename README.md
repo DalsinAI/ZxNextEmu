@@ -232,7 +232,7 @@ mid-frame changes land where they do on the hardware.
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 29 games of the Spec256-Games collection that have a snapshot all run |
 | ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
-| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen, hi-colour and hi-res, Radastan, GigaScreen, SAA1099, SID, the ZXi settings registers. Still to come: General Sound, MBIDE/CF, RTC |
+| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen, hi-colour and hi-res, Radastan, GigaScreen, SAA1099, SID, the ZXi settings registers, and General Sound when its ROM (`gs105a.rom`) is given as the second interface ROM. Still to come: MBIDE/CF, RTC |
 | Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
 | MSX1 / MSX2 | boot C-BIOS; TMS9918/9929 and V9938 (all modes, sprites, timed command engine), AY, PPI keyboard, joysticks, mouse, slots and sub-slots, memory mapper, RP5C01 clock, ROM cartridges with ASCII/Konami/SCC mappers, WD2793 floppy and Sunrise IDE. Not yet: tape, MSX-MUSIC, Kanji ROM, V9958 (MSX2+), CPU waits on VRAM access |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |

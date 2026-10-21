@@ -23,6 +23,8 @@
  *                 last, 3 that only while the program flips screens
  *   SAA1099       register select on 6F3B or 1FF, data on 6E3B or FF (FF
  *                 is shared with the Timex port, as on the hardware)
+ *   General Sound the GS card with its own Z80 (devices/gs.h) on B3/BB,
+ *                 when its ROM is given (zx_exp_attach_gs)
  *   SID           6581/8580 on 6C3B (register) and 6D3B (data); register
  *                 1F picks the model and the PAL or NTSC clock
  *   ZXi registers the MB03+'s settings (its Programmer's Reference): 703B
@@ -51,6 +53,7 @@
 #include "kmouse.h"
 #include "../devices/saa1099.h"
 #include "../devices/sid.h"
+#include "../devices/gs.h"
 
 struct zx;
 struct nx_sd;
@@ -66,7 +69,8 @@ enum {
     ZX_EXP_SID        = 64,
     ZX_EXP_ZXI        = 128,
     ZX_EXP_RADASTAN   = 256,
-    ZX_EXP_GIGA       = 512
+    ZX_EXP_GIGA       = 512,
+    ZX_EXP_GS         = 1024     /* set by zx_exp_attach_gs */
 };
 
 #define ZX_EXP_ALL 0xffffffffu
@@ -133,6 +137,9 @@ typedef struct zx_exp {
     /* GigaScreen: the last frame as drawn, and how the program flips */
     uint16_t *giga_prev;
     uint8_t giga_buf, giga_flips;
+
+    gs *gs;                      /* General Sound, or NULL */
+    uint64_t gs_frac;
 } zx_exp;
 
 /* A device is fitted and, where the ZXi registers are, switched on
@@ -152,6 +159,8 @@ static inline int zx_exp_turbosound(const zx_exp *e)
  * 8K esxDOS ROM when the features include the divMMC. 0 on success. */
 int zx_exp_attach(struct zx *m, uint32_t features, const uint8_t *div_rom, size_t rom_len);
 void zx_exp_free(struct zx *m);
+/* Fit the General Sound, with its 32K ROM, to an attached MB03+. */
+int zx_exp_attach_gs(struct zx *m, const uint8_t *rom, size_t rom_len);
 void zx_exp_power_on(struct zx *m);   /* MAPRAM clears only at power-on */
 void zx_exp_reset(struct zx *m);
 void zx_exp_frame_end(struct zx *m);

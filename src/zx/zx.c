@@ -578,8 +578,11 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
         return (m->ulaplus_reg & 0xc0) == 0x40 ? m->ulaplus_mode
                                                 : m->ulaplus_pal[m->ulaplus_reg & 63];
     }
-    if (m->exp && zx_exp_io_read(m, port, &v))
-        return v;
+    if (m->exp) {
+        audio_update(m, m->t);   /* the General Sound catches up first */
+        if (zx_exp_io_read(m, port, &v))
+            return v;
+    }
     if ((port & 0xe0) == 0) { /* Kempston on port 0x1F */
         v = m->kempston;
         /* The Scorpion's joystick port also shows the Beta's INTRQ and

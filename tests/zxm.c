@@ -7,7 +7,8 @@
  * usage: zxm romdir machine frames [text]
  * ZXM_SD=folder-or-image puts an SD card in the machine (the Next, or an
  * interface's divMMC). ZXM_IFACE=divmmc|mb03 plugs an interface into a
- * classic machine, with its 8K esxDOS ROM from ZXM_IFACE_ROM.
+ * classic machine, with its 8K esxDOS ROM from ZXM_IFACE_ROM (and the MB03+'s
+ * General Sound ROM from ZXM_GS_ROM).
  * ZXM_SPEC256=folder loads a Spec256 game (machine spec256): its graphics
  * files into the "gfx" slot, then its .sna.
  * ZXM_SNAP=file loads a snapshot after any interface is plugged in.
@@ -168,6 +169,16 @@ int main(int argc, char **argv)
         memset(&ir, 0, sizeof ir);
         ir.rom[0] = esx;
         ir.len[0] = sizeof esx;
+        if (getenv("ZXM_GS_ROM")) {
+            static uint8_t gsrom[0x8000];
+            if (!(fp = fopen(getenv("ZXM_GS_ROM"), "rb")) || fread(gsrom, 1, sizeof gsrom, fp) != sizeof gsrom) {
+                fprintf(stderr, "cannot read the General Sound ROM (ZXM_GS_ROM)\n");
+                return 1;
+            }
+            fclose(fp);
+            ir.rom[1] = gsrom;
+            ir.len[1] = sizeof gsrom;
+        }
         if (zxm_attach(m, getenv("ZXM_IFACE"), &ir)) {
             fprintf(stderr, "cannot plug in %s\n", getenv("ZXM_IFACE"));
             return 1;

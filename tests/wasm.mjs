@@ -3,7 +3,7 @@
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
 // ZXM_SPEC256=folder loads a Spec256 game, as tests/zxm.c does.
-// ZXM_IFACE / ZXM_IFACE_ROM plug in an interface, as for tests/zxm.c.
+// ZXM_IFACE / ZXM_IFACE_ROM (/ ZXM_GS_ROM) plug in an interface, as for tests/zxm.c.
 // ZXM_SNAP=file loads a snapshot, as tests/zxm.c does.
 // ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
 // waits before typing.
@@ -85,6 +85,12 @@ if (process.env.ZXM_IFACE) {
   u8().set(data, p);
   dv().setUint32(ir, p, true);
   dv().setUint32(ir + 16, data.length, true);
+  if (process.env.ZXM_GS_ROM) {
+    const g = readFileSync(process.env.ZXM_GS_ROM), q = x.malloc(g.length);
+    u8().set(g, q);
+    dv().setUint32(ir + 4, q, true);
+    dv().setUint32(ir + 20, g.length, true);
+  }
   if (x.zxm_attach(m, cstr(process.env.ZXM_IFACE), ir)) { console.error('cannot plug in'); process.exit(1); }
 }
 if (process.env.ZXM_SNAP) {

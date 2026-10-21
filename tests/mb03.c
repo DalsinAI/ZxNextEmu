@@ -563,6 +563,64 @@ static void test_giga(const char *romdir)
     zx_free(&m);
 }
 
+/* General Sound commands: send a command, wait until the GS has taken it. */
+static int gs_wait(zx *m, uint8_t bit, int set)
+{
+    int i;
+    for (i = 0; i < 400; i++) {
+        if (!(in(m, 0x00bb) & bit) == !set)
+            return 1;
+        zx_run_frame(m);
+    }
+    return 0;
+}
+
+static int gs_cmd(zx *m, uint8_t cmd)
+{
+    out(m, 0x00bb, cmd);
+    return gs_wait(m, 1, 0);
+}
+
+static void test_gs(const char *romdir)
+{
+    static zx m;
+    static uint8_t rom[GS_ROM];
+    char path[1024];
+    FILE *fp;
+    int32_t l = 0, r = 0;
+    int i;
+    snprintf(path, sizeof path, "%s/../tests-data/gs/gs105a.rom", romdir);
+    if (!(fp = fopen(path, "rb")) || fread(rom, 1, sizeof rom, fp) != sizeof rom) {
+        if (fp)
+            fclose(fp);
+        printf("skipped: General Sound (no tests-data/gs/gs105a.rom)\n");
+        return;
+    }
+    fclose(fp);
+    if (machine(&m, ZX_48K, romdir, ZX_EXP_MB03 & ~ZX_EXP_DIVMMC, NULL))
+        return;
+    CHECK(zx_exp_attach_gs(&m, rom, sizeof rom) == 0, "the General Sound fits");
+    park(&m);
+    CHECK(gs_cmd(&m, 0x00), "the GS takes a command");
+    CHECK(gs_cmd(&m, 0x23), "the GS answers 'number of RAM pages'");
+    CHECK(gs_wait(&m, 0x80, 1), "and sends data");
+    CHECK(in(&m, 0x00b3) == GS_PAGES - 1, "512K: 15 pages besides the ROM");
+    CHECK(!(in(&m, 0x00bb) & 0x80), "reading the data clears the flag");
+
+    /* channel 0 (left) at full volume, its DAC at FF */
+    out(&m, 0x00b3, 0); CHECK(gs_cmd(&m, 0x04), "set E");
+    out(&m, 0x00b3, 0x3f); CHECK(gs_cmd(&m, 0x05), "volume");
+    out(&m, 0x00b3, 0xff); CHECK(gs_cmd(&m, 0x06), "DAC");
+    zx_run_frame(&m);
+    for (i = 0; i < m.audio_samples; i++) {
+        l += m.audio[2 * i];
+        r += m.audio[2 * i + 1];
+    }
+    CHECK(m.audio_samples && l / m.audio_samples > 3000 && r / m.audio_samples < 100,
+          "the left DAC moves the left side only");
+    zx_free(&m);
+}
+
 int main(int argc, char **argv)
 {
     const char *romdir = argc > 1 ? argv[1] : "roms";
@@ -579,6 +637,7 @@ int main(int argc, char **argv)
     test_hires(romdir);
     test_radastan(romdir);
     test_giga(romdir);
+    test_gs(romdir);
     printf("%s\n", fails ? "mb03: FAILED" : "mb03: all passed");
     return fails != 0;
 }

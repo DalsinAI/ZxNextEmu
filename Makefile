@@ -12,7 +12,7 @@ BUILD   ?= build
 
 CORE_SRC = src/z80/z80.c
 STORE_SRC = src/storage/blockdev.c src/storage/vfat.c
-DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c src/devices/saa1099.c src/devices/sid.c
+DEV_SRC  = src/devices/esp8266.c src/devices/nextpi.c src/devices/saa1099.c src/devices/sid.c src/devices/gs.c
 NEXT_SRC = $(STORE_SRC) $(DEV_SRC) src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 comma := ,
 ORIC_SRC = src/m6502/m6502.c src/devices/via6522.c src/oric/oric.c src/oric/tape.c
@@ -110,6 +110,7 @@ ulaplus: $(BUILD)/ulaplus
 
 # Save, run on, load, run again: every machine must repeat itself exactly.
 ESXDOS_ROM ?= tests-data/esxdos/esxmmc.bin
+GS_ROM     ?= tests-data/gs/gs105a.rom
 
 # The clones' ROMs are not in the repository: put them in CLONE_ROMS (with
 # the others) to include them; without, they are skipped. The Orics run the
@@ -160,7 +161,7 @@ WASM_CC      ?= clang
 WASI_SYSROOT ?= /usr
 WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/spec256/spec256.c src/spec256/palette.c src/zx/zx.c src/zx/beta.c src/zx/expansion.c src/zx/keys.c src/zx/ay.c src/zx/tape.c src/zx/snap.c \
            src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c \
-           src/devices/saa1099.c src/devices/sid.c
+           src/devices/saa1099.c src/devices/sid.c src/devices/gs.c
 WASM_EXPORTS = zxm_lookup zxm_machine zxm_size zxm_create zxm_destroy zxm_info_of zxm_reset \
            zxm_run_frame zxm_framebuffer zxm_fb_width zxm_audio zxm_input zxm_type zxm_typing \
            zxm_media_insert zxm_media_eject zxm_media_active zxm_media_progress zxm_interface_lookup zxm_interface_at zxm_attach zxm_slots zxm_inputs \
@@ -193,9 +194,10 @@ wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(BUILD)/mb03tune $(ORIC_ROMS)
 	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; done; \
 	    $(BUILD)/mb03tune $(BUILD)/mb03tune.sna || exit 1; \
 	    export ZXM_SNAP=$(BUILD)/mb03tune.sna; \
+	    if [ -f $(GS_ROM) ]; then export ZXM_GS_ROM=$(GS_ROM); fi; \
 	    a=$$($(BUILD)/zxm roms zx48 100 | cut -d' ' -f1-4) || exit 1; \
 	    b=$$(node tests/wasm.mjs $(BUILD)/zxcore.wasm roms zx48 100) || exit 1; \
-	    if [ "$$a" = "$$b" ]; then echo "$$b, MB03+ SID and SAA1099 (native and wasm agree)"; \
+	    if [ "$$a" = "$$b" ]; then echo "$$b, MB03+ SID, SAA1099$${ZXM_GS_ROM:+ and General Sound} (native and wasm agree)"; \
 	    else echo "MISMATCH: native '$$a' wasm '$$b'"; exit 1; fi; fi
 
 # ---- The browser runtime: build/web is a static site (open it through any

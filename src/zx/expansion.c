@@ -77,9 +77,22 @@ void zx_exp_free(zx *m)
     nx_sd_close(e->sd[1]);
     free_wide(m, e);
     free(e->giga_prev);
+    free(e->gs);
     free(e);
     m->exp = NULL;
     m->div_map = 0;
+}
+
+int zx_exp_attach_gs(zx *m, const uint8_t *rom, size_t rom_len)
+{
+    zx_exp *e = m->exp;
+    if (!e || !(e->features & ZX_EXP_ZXI) || e->gs || !rom || rom_len != GS_ROM)
+        return -1;
+    if (!(e->gs = malloc(sizeof *e->gs)))
+        return -1;
+    gs_init(e->gs, rom);
+    e->features |= ZX_EXP_GS;
+    return 0;
 }
 
 void zx_exp_power_on(zx *m)
@@ -100,6 +113,8 @@ void zx_exp_power_on(zx *m)
     e->zxi[0][0x0c] = 1;         /* Timex modes */
     e->zxi[0][0x0d] = 1;         /* ULAplus */
     sid_set_model(&e->sid, 0, 0);
+    if (e->gs)
+        memset(e->gs->ram, 0, sizeof e->gs->ram);
     zx_exp_reset(m);
 }
 
@@ -123,6 +138,8 @@ void zx_exp_reset(zx *m)
     saa_reset(&e->saa);
     sid_reset(&e->sid);
     e->saa_frac = e->sid_frac = 0;
+    if (e->gs)
+        gs_reset(e->gs);
     e->sid_sel = 0;
     e->zxi_sel = e->gzxi_sel = 0;
     memset(e->uno, 0, sizeof e->uno);
@@ -319,6 +336,10 @@ int zx_exp_io_read(zx *m, uint16_t port, uint8_t *v)
         *v = port == 0xfc3b ? e->uno_sel : uno_read(e);
         return 1;
     }
+    if (zx_exp_on(e, ZX_EXP_GS, ZXI_GS) && (lsb == 0xb3 || lsb == 0xbb)) {
+        *v = gs_read(e->gs, lsb);
+        return 1;
+    }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && port == 0x6d3b) {
         *v = e->sid_sel == 0x1f ? (uint8_t)(e->sid.model | e->sid.ntsc << 1) : sid_read(&e->sid, e->sid_sel);
         return 1;
@@ -373,6 +394,10 @@ void zx_exp_io_write(zx *m, uint16_t port, uint8_t v)
         } else {
             uno_write(e, v);
         }
+        return;
+    }
+    if (zx_exp_on(e, ZX_EXP_GS, ZXI_GS) && (lsb == 0xb3 || lsb == 0xbb)) {
+        gs_write(e->gs, lsb, v);
         return;
     }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID) && (port == 0x6c3b || port == 0x6d3b)) {
@@ -442,6 +467,11 @@ void zx_exp_audio_run(zx *m, uint32_t dt)
         saa_run(&e->saa, (uint32_t)(e->saa_frac / m->tm->cpu_hz));
         e->saa_frac %= m->tm->cpu_hz;
     }
+    if (e->gs) {                 /* runs even when not heard, as the card would */
+        e->gs_frac += (uint64_t)dt * GS_HZ;
+        gs_run(e->gs, e->gs_frac / m->tm->cpu_hz);
+        e->gs_frac %= m->tm->cpu_hz;
+    }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID)) {
         e->sid_frac += (uint64_t)dt * sid_hz(&e->sid);
         sid_run(&e->sid, (uint32_t)(e->sid_frac / m->tm->cpu_hz));
@@ -478,6 +508,14 @@ void zx_exp_audio_take(zx *m, uint32_t span, int32_t *l, int32_t *r)
         saa_take(&e->saa, &sl, &sr);
         *l += sl * 8;           /* as on the SAM */
         *r += sr * 8;
+    }
+    if (e->gs) {
+        int32_t gl, gr;
+        gs_take(e->gs, &gl, &gr);
+        if (zx_exp_on(e, ZX_EXP_GS, ZXI_GS)) {
+            *l += gl / 2;
+            *r += gr / 2;
+        }
     }
     if (zx_exp_on(e, ZX_EXP_SID, ZXI_SID)) {
         int32_t s = sid_take(&e->sid);
@@ -614,7 +652,8 @@ static size_t giga_size(const zx *m)
 
 size_t zx_exp_state_size(const zx *m)
 {
-    return m->exp ? sizeof(zx_exp) + 2 * nx_sd_state_size() + giga_size(m) : 0;
+    return m->exp ? sizeof(zx_exp) + 2 * nx_sd_state_size() + giga_size(m)
+                    + (m->exp->gs ? sizeof(gs) : 0) : 0;
 }
 
 void zx_exp_state_save(const zx *m, uint8_t *out)
@@ -631,6 +670,9 @@ void zx_exp_state_save(const zx *m, uint8_t *out)
     }
     if (e->giga_prev)
         memcpy(out, e->giga_prev, giga_size(m));
+    out += giga_size(m);
+    if (e->gs)
+        memcpy(out, e->gs, sizeof *e->gs);
 }
 
 void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
@@ -638,11 +680,13 @@ void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
     zx_exp *e = m->exp;
     struct nx_sd *sd[2];
     uint16_t *giga_prev = e->giga_prev;
+    gs *g = e->gs;
     int i;
     sd[0] = e->sd[0];
     sd[1] = e->sd[1];
     memcpy(e, in, sizeof *e);
     e->giga_prev = giga_prev;
+    e->gs = g;
     in += sizeof *e;
     for (i = 0; i < 2; i++, in += nx_sd_state_size()) {
         e->sd[i] = sd[i];
@@ -651,5 +695,8 @@ void zx_exp_state_load(zx *m, const uint8_t *in, const int has_sd[2])
     }
     if (giga_prev)
         memcpy(giga_prev, in, giga_size(m));
+    in += giga_size(m);
+    if (g)
+        memcpy(g, in, sizeof *g);
     update_map(m);
 }

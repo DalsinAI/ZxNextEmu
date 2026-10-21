@@ -1,7 +1,9 @@
 /*
  * Writes a 48K .sna that plays the MB03+'s SID and SAA1099 (switched on in
- * the ZXi registers), for the native/WebAssembly check in "make wasmtest":
- * di; then OUT each (port, value) of the table; then jr $.
+ * the ZXi registers) and sets two General Sound DACs, for the
+ * native/WebAssembly check in "make wasmtest": di; OUT each (port, value)
+ * of the table; send each GS (data, command) pair, waiting for the GS to
+ * take it; then jr $.
  *
  * usage: mb03tune out.sna
  */
@@ -24,6 +26,11 @@ static const unsigned short tune[][2] = {
     { 0x6f3b, 0x14 }, { 0x6e3b, 0x01 },
 };
 
+/* General Sound: channel 0 (left) and 2 (right) at full volume, DACs set */
+static const unsigned char gs_cmds[][2] = {
+    { 0, 0x04 }, { 0x3f, 0x05 }, { 0xc0, 0x06 }, { 2, 0x04 }, { 0x3f, 0x05 }, { 0x40, 0x06 },
+};
+
 int main(int argc, char **argv)
 {
     static unsigned char sna[27 + 49152];
@@ -37,6 +44,13 @@ int main(int argc, char **argv)
         0xed, 0x79,             /* out (c),a */
         0xc1,                   /* pop bc */
         0x10, 0xf4,             /* djnz loop */
+        0x21, 0x00, 0x82,       /* ld hl,0x8200 */
+        0x06, 0x00,             /* ld b,n */
+        0x7e, 0xd3, 0xb3, 0x23, /* gs: ld a,(hl): out (0xb3),a: inc hl */
+        0x7e, 0xd3, 0xbb, 0x23, /* ld a,(hl): out (0xbb),a: inc hl */
+        0xdb, 0xbb, 0x0f,       /* wait: in a,(0xbb): rrca */
+        0x38, 0xfb,             /* jr c,wait */
+        0x10, 0xf1,             /* djnz gs */
         0x18, 0xfe              /* jr $ */
     };
     unsigned char *ram = sna + 27;
@@ -48,6 +62,8 @@ int main(int argc, char **argv)
     }
     memcpy(ram + 0x8000 - 0x4000, code, sizeof code);
     ram[0x8000 - 0x4000 + 5] = (unsigned char)n;
+    ram[0x8000 - 0x4000 + 22] = (unsigned char)(sizeof gs_cmds / sizeof gs_cmds[0]);
+    memcpy(ram + 0x8200 - 0x4000, gs_cmds, sizeof gs_cmds);
     for (i = 0; i < n; i++) {
         ram[0x8100 - 0x4000 + i * 3] = (unsigned char)tune[i][0];
         ram[0x8100 - 0x4000 + i * 3 + 1] = (unsigned char)(tune[i][0] >> 8);
