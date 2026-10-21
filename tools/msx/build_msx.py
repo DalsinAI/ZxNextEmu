@@ -110,6 +110,13 @@ def mapper_ok(mapper, path):
     plain ROM it places by its header (Mirrored, 16kB, ...), or one openMSX puts at a fixed address
     (Page12, 0x4000, ...) only where cart.c would put it there too."""
     k = re.sub(r'[^a-z0-9]', '', (mapper or 'normal').lower())
+    if k in ('ascii8', 'ascii16', 'konami', 'konamiscc'):
+        return True
+    try:
+        if os.path.getsize(path) > 0x10000:   # a plain cartridge sees 64K at most (cart.c banks no further)
+            return False
+    except OSError:
+        return False
     if k in MAPPER_MARK or re.fullmatch(r'mirrored|(8|16|32)kb|rom', k):
         return True
     m = re.fullmatch(r'page(\d)\d*|0x([0-9a-f]+)', k)
@@ -150,7 +157,9 @@ def mark_mapper(tdir, path, mapper):
     if not m or m in path.lower():
         return path
     stem, ext = os.path.splitext(path)
-    new = '%s %s%s' % (stem, m, ext)
+    new, k = '%s %s%s' % (stem, m, ext), 2
+    while os.path.exists(os.path.join(tdir, new)):   # another variant's ROM of the same name
+        new, k = '%s (%d) %s%s' % (stem, k, m, ext), k + 1
     os.rename(os.path.join(tdir, path), os.path.join(tdir, new))
     return new
 
@@ -167,7 +176,8 @@ def parse(base, typ):
     year = next((p for p in parens if re.fullmatch(r'(19|20)[0-9x]{2}', p)), None)
     lang = next((p for p in parens if p.lower() in LANGS), None)
     if not lang:   # ROM names also write it in brackets: [English], [Jp], [Portuguese Only], [English Version]
-        word = lambda f: re.sub(r'\s+(only|version|translation|translated)$', '', f.strip().lower())
+        word = lambda f: re.sub(r'\s+(only|version|translation|translated)$', '',
+                                re.sub(r'^(translated|translation) (in)?to (\w+).*$', r'\3', f.strip().lower()))
         lang = next((LANG_WORDS[word(f)] for f in flags if word(f) in LANG_WORDS), None)
         flags = [f for f in flags if word(f) not in LANG_WORDS]
     part = [p for p in parens if re.match(r'(disk|tape|side|disc|part) ', p, re.I) or re.fullmatch(r'side [ab]', p, re.I)]
@@ -308,7 +318,8 @@ for folder, (typ, machines, slot, needs) in SRC.items():
             continue
         if typ == 'BIN':   # binaries are named by 8.3 file names; use them as-is
             p['title'] = re.sub(r'\.(lzh|lha|pma|arj|gz|zip)$', '', fn, flags=re.I)
-        key = norm(p['title']) or norm(fn)
+        # One title for every release of a game: "AlienMSX v1.1", "v1.2" and "v1.3" are variants of it.
+        key = norm(re.sub(r'[\s_-]+v?\d+(\.\d+)+[a-z]?$|[\s_-]+v\d+[a-z]?$', '', p['title'], flags=re.I)) or norm(p['title']) or norm(fn)
         x = xl.get(key)
         t = titles.setdefault(key, {'names': [], 'variants': {}, 'machines': set(), 'years': [], 'pubs': [], 'langs': set()})
         t['names'].append(p['title'])
@@ -406,7 +417,11 @@ for key, t in sorted(titles.items()):
             continue
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
         # "[MSX1 Only]" in the name: not on the MSX2s the MSX1 folder otherwise lists
-        mach = [m for m in v['machines'] if m.startswith('msx1')] if any(re.fullmatch(r'msx ?1 only', f, re.I) for f in v['parse']['flags']) else v['machines']
+        mach = [m for m in v['machines'] if m.startswith('msx1')] if any(re.search(r'\bmsx ?1 only\b', f, re.I) for f in v['parse']['flags']) else v['machines']
+        # "[Needs 2 ARC games disks]": the companion disks cannot be mounted yet, so files only
+        if any(re.search(r'\bneeds?\b.*\bdisks?\b', f, re.I) for f in v['parse']['flags']):
+            unrun.append('%s (needs its disks)' % os.path.basename(runf[0]))
+            continue
         run = dict(platform='msx', machines=mach, files=runf, slot=v['slot'], needs=list(v['needs']))
         p = v['parse']
         notes = []
