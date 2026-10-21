@@ -289,12 +289,15 @@ for key, t in sorted(titles.items()):
         if not got:
             continue
         allfiles += got
+        # Only cartridges get runs. The player inserts media as plain bytes, and the MSX floppy and
+        # IDE slots take block media only (src/core/zxm_msx.c), so disks, hard disks and loose
+        # binaries stay in files/ without a run until it can build them.
+        if v['typ'] != 'ROM':
+            continue
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
-        if v['typ'] == 'BIN':
-            runf = []      # loose program files go onto a disk by hand; the ide0 slot takes only an image
         run = dict(platform='msx', machines=v['machines'], files=runf, slot=v['slot'], needs=list(v['needs']))
         p = v['parse']
-        notes = ['Copy files/ onto an MSX-DOS or Nextor disk and run it from there.'] if v['typ'] == 'BIN' else []
+        notes = []
         if p['flags']:
             notes.append(' '.join('[%s]' % f for f in p['flags']))
         if p['lang']:
@@ -314,7 +317,7 @@ for key, t in sorted(titles.items()):
         if notes:
             run['notes'] = '; '.join(notes)
         runs.append(run)
-    if not runs:
+    if not allfiles:
         shutil.rmtree(tdir, ignore_errors=True)
         continue
     year = (x and x.get('year') and str(x['year']).isdigit() and int(x['year'])) or (sdbhit and sdbhit['year'] and sdbhit['year'].isdigit() and int(sdbhit['year'])) or (t['years'] and min(t['years'])) or None

@@ -100,11 +100,8 @@ for folder in sorted(os.listdir(root)):
                         run['files'] = [mark_mapper(tdir, g, h['mapper'])]
                         got[got.index(g)] = run['files'][0]
                     runs.append(run)
-            else:   # a disk or tape set goes in together, disk 1 first
-                runs.append(dict(platform='msx', machines=machines, files=bykind[e], slot=slot, needs=nd + hneeds))
-        if not runs:   # programs (.com/.bin/.bas) and data: copied onto a disk by hand, as ide0 takes only an image
-            runs.append(dict(platform='msx', machines=machines, files=[], slot='ide0', needs=hneeds,
-                             notes='Copy files/ onto an MSX-DOS or Nextor disk and run it from there.'))
+            # Disks get no run: the MSX floppy slot takes block media only, which the player
+            # cannot build from bytes yet. They stay in files/, as do programs and data.
         meta = {'format': 2, 'id': tid, 'name': name, 'kind': 'demo'}
         yrs = [int(y) for y in re.findall(r'\((19[89]\d|20[0-2]\d)\)', ' '.join(srcs) + ' ' + folder)]
         if yrs: meta['year'] = min(yrs)
