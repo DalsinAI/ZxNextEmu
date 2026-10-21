@@ -1,7 +1,7 @@
 # build_demos.py DL_DIR META_DIR OUT_TITLES
 # File-hunter.com MSX Demos/ into library titles (format 2). Reuses the
 # helpers in build_msx.py (everything above its "collect variants" section).
-import sys, os, re, json, shutil
+import sys, os, re, json, shutil, urllib.parse
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build_msx.py')).read().split('# ---- collect variants')[0])
 
 # .di1/.di2 are the two halves of one disk and go in one run. No .cas: the MSX has no tape slot yet.
@@ -34,15 +34,18 @@ def ours_demo(tdir):
         return False
 
 
+PART = re.compile(r'[\s_-]*[(\[]?\b(disk|disc|side|part)\s*[0-9a-d]+(\s*of\s*\d+)?[)\]]?', re.I)
 used = set()     # ids given out in this run; an earlier run's folders are rebuilt, not doubled
 index = []
 for folder in sorted(os.listdir(root)):
     fdirp = os.path.join(root, folder)
     files = sorted(f for f in os.listdir(fdirp) if not f.endswith('.part'))
     sets = {}
-    split = len(files) > 4 and not any(re.search(r'disk \d', f, re.I) for f in files)
+    # A folder of many archives holds separate demos; the disks of one demo share a name
+    # once the part marker ("(Disk 1 of 2)", "[Disk 2]", "Disk 3") is taken out.
+    split = len(files) > 4
     for f in files:
-        k = re.sub(r'\.\w+$', '', f) if split else folder
+        k = PART.sub('', re.sub(r'\.\w+$', '', f)).strip() if split else folder
         sets.setdefault(k, []).append(f)
     for name0, srcs in sets.items():
         p = parse(srcs[0], 'ROM') if split else parse(folder, 'ROM')
@@ -110,8 +113,9 @@ for folder in sorted(os.listdir(root)):
         else: meta['tags'] = ['msx', 'demo']
         meta['tags'] += [n for n in hneeds]
         meta['license'] = 'unknown'
-        meta['source'] = FH + 'Demos/' + folder + '/' + srcs[0]
-        meta['sources'] = [FH + 'Demos/' + folder + '/' + s for s in srcs]
+        url = lambda f: FH + 'Demos/' + urllib.parse.quote(folder) + '/' + urllib.parse.quote(f)   # names hold # and spaces
+        meta['source'] = url(srcs[0])
+        meta['sources'] = [url(s) for s in srcs]
         meta['added'] = TODAY
         meta['runs'] = runs
         meta['compat'] = {}

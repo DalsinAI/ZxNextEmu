@@ -36,7 +36,7 @@ python3 -c "import json,urllib.parse
 for k in sorted(json.load(open('meta/sizes.json'))):
   if k.startswith(('Games/MSX1/ROM/','Games/MSX1/DSK/','Games/MSX1/CAS/','Games/MSX1/MSX-Binaries/','Games/MSX1/HDD/','Games/MSX2/ROM/','Games/MSX2/DSK/','Games/MSX2/CAS/','Games/MSX2/MSX-Binaries/','Games/MSX2/Harddisk/','Demos/','OS/SymbOS/')):
     print('https://download.file-hunter.com/'+urllib.parse.quote(k)); print(k)" \
- | xargs -d '\n' -n 2 -P 12 ./get.sh
+ | xargs -d '\n' -n 2 ./get.sh     # one at a time: File Hunter bans download managers
 ```
 
 ## 3. SymbOS (into `sym/`)
