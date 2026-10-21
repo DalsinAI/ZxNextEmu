@@ -72,6 +72,16 @@ the snapshots are commercial games.
 
     zxrun -g ~/spec256/Jetpac -f 500 -t 15 -s jetpac.ppm
 
+## Running it in the browser
+
+`make serve` builds the ZX Cradle page into `build/web` and serves it on
+http://localhost:7081/ (ZX Cradle's development port). Open it in Chromium,
+pick a machine, click the screen and type; drop a `.tap`, `.tzx`, `.sna` or
+`.z80` file on the page to load it. The machine runs in a Web Worker from
+`zxcore.wasm`; the page (`web/`) uses the Cradle style tokens from
+`docs/cradle/tokens`. The Next needs its SD card in the browser, which comes
+next.
+
 ## The core in WebAssembly (for ZX Cradle)
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
@@ -113,6 +123,8 @@ timing-sensitive loaders behave as on the hardware.
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 30 games of the Spec256-Games collection that have a snapshot all run |
+| ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
+| Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
 | WebAssembly core | `zxcore.wasm`, the zxm interface, identical output to native |
 | Front ends | headless `zxrun` and desktop (SDL2) for testing; ZX Cradle's JavaScript runtime next |

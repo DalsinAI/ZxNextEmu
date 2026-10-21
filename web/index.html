@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZX Cradle</title>
+<link rel="stylesheet" href="cradle/zxcradle.css">
+<link rel="stylesheet" href="cradle/components.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <section class="stage" id="stage" aria-label="Machine screen">
+    <canvas id="screen" width="320" height="256" tabindex="0" aria-label="The machine's screen"></canvas>
+    <p class="hint" id="hint">Click the screen to type. Drop a tape or snapshot anywhere.</p>
+    <div class="drop" id="drop" hidden><span>Drop to keep it and load it</span></div>
+    <p class="error" id="error" role="alert" hidden></p>
+  </section>
+
+  <!-- Media changer: what is in the slots, and the media you keep. -->
+  <aside class="drawer" id="media-drawer" hidden aria-labelledby="media-title">
+    <header class="drawer-head">
+      <div><h2 id="media-title">Media changer</h2><span class="drawer-sub" id="media-machine">ZX Spectrum 48K</span></div>
+      <button class="icon-btn" id="media-close" aria-label="Close the media changer">
+        <svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+    </header>
+    <div class="slots">
+      <div class="zxc-slot zxc-slot--empty" id="slot-tape">
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/></svg>
+        <span class="zxc-slot__id">tape</span>
+        <span class="zxc-slot__file">Empty</span>
+        <button class="zxc-btn small" id="eject-tape" disabled>Eject</button>
+      </div>
+    </div>
+    <div class="library-head">
+      <h3>Kept media</h3>
+      <button class="zxc-btn small" id="add-media">Add files</button>
+      <input type="file" id="file" accept=".tap,.tzx,.sna,.z80" multiple hidden>
+    </div>
+    <p class="drawer-note" id="library-note">Tapes, snapshots and saved states you add stay here in this browser.</p>
+    <ul class="library" id="library"></ul>
+    <label class="check"><input type="checkbox" id="autostart" checked> Start tapes automatically</label>
+  </aside>
+
+  <!-- Status: what the machine is and how it is running. -->
+  <aside class="drawer" id="status-drawer" hidden aria-labelledby="status-title">
+    <header class="drawer-head">
+      <div><h2 id="status-title">Status</h2><span class="drawer-sub">This machine</span></div>
+      <button class="icon-btn" id="status-close" aria-label="Close status">
+        <svg viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+    </header>
+    <dl class="status-list">
+      <dt>Machine</dt><dd id="st-machine">—</dd>
+      <dt>CPU</dt><dd id="st-cpu">—</dd>
+      <dt>Frame rate</dt><dd id="st-fps">—</dd>
+      <dt>Frames run</dt><dd id="st-frames">—</dd>
+      <dt>ROMs</dt><dd id="st-roms">—</dd>
+      <dt>Sound</dt><dd id="st-sound">Starts when you click the screen</dd>
+      <dt>Core</dt><dd>zxcore.wasm in a Web Worker</dd>
+    </dl>
+    <h3>Keys</h3>
+    <dl class="keys">
+      <dt><kbd class="zxc-kbd">Shift</kbd></dt><dd>CAPS SHIFT</dd>
+      <dt><kbd class="zxc-kbd">Ctrl</kbd> <kbd class="zxc-kbd">Alt</kbd></dt><dd>SYMBOL SHIFT</dd>
+      <dt><kbd class="zxc-kbd">Backspace</kbd></dt><dd>DELETE</dd>
+      <dt><kbd class="zxc-kbd">Esc</kbd></dt><dd>BREAK</dd>
+      <dt><kbd class="zxc-kbd">←</kbd><kbd class="zxc-kbd">↓</kbd><kbd class="zxc-kbd">↑</kbd><kbd class="zxc-kbd">→</kbd></dt><dd>Cursor keys, or the joystick (Input menu)</dd>
+    </dl>
+  </aside>
+
+  <nav class="bar" id="bar" aria-label="Machine controls">
+    <div class="bar-state">
+      <span id="chip" class="zxc-chip zxc-chip--starting"><b>S</b>Starting</span>
+      <div class="bar-name">
+        <strong id="machine-name">ZX Spectrum 48K</strong>
+        <span>ZX Cradle · this browser</span>
+      </div>
+    </div>
+
+    <div class="bar-controls">
+      <button class="icon-btn" id="run" aria-label="Pause" title="Pause">
+        <svg viewBox="0 0 16 16" id="run-icon"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>
+      </button>
+      <div class="menu">
+        <button class="icon-btn" id="volume-btn" aria-label="Volume" title="Volume" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><path d="M2.5 6v4h3l4 3V3l-4 3z"/><path d="M11.5 5.5c1 1.5 1 3.5 0 5" id="vol-wave"/></svg>
+        </button>
+        <div class="pop pop-volume" id="volume-pop" hidden>
+          <div class="pop-row"><span>Volume</span><strong id="volume-value">80%</strong></div>
+          <input type="range" id="volume" min="0" max="100" value="80" aria-label="Volume">
+        </div>
+      </div>
+      <button class="icon-btn" id="media-btn" aria-label="Media changer" title="Media changer" aria-pressed="false">
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/><path d="M5 12.5l1-2h4l1 2"/></svg>
+      </button>
+      <span class="bar-divider" aria-hidden="true"></span>
+
+      <div class="menu">
+        <button class="menu-btn" id="machine-btn" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7"/><path d="M4 7.5h1M6.5 7.5h1M9 7.5h1M11.5 7.5h.5M4.5 9.5h7"/></svg>
+          <span>Machine</span><svg class="caret" viewBox="0 0 16 16"><path d="M4.5 10l3.5-3.5 3.5 3.5"/></svg>
+        </button>
+        <div class="pop" id="machine-pop" hidden>
+          <div class="pop-label">Switch machine</div>
+          <div id="machine-list" role="group" aria-label="Machines"></div>
+        </div>
+      </div>
+
+      <div class="menu">
+        <button class="menu-btn" id="power-btn" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><path d="M8 2v6"/><path d="M4.5 4.5a5 5 0 1 0 7 0"/></svg>
+          <span>Power</span><svg class="caret" viewBox="0 0 16 16"><path d="M4.5 10l3.5-3.5 3.5 3.5"/></svg>
+        </button>
+        <div class="pop" id="power-pop" hidden>
+          <button class="pop-item" id="reset"><svg viewBox="0 0 16 16"><path d="M3.5 8a4.5 4.5 0 1 0 1.5-3.4"/><path d="M4.5 1.5v3h3"/></svg><span>Reset</span><small>The reset button</small></button>
+          <button class="pop-item" id="power"><svg viewBox="0 0 16 16"><path d="M8 2v6"/><path d="M4.5 4.5a5 5 0 1 0 7 0"/></svg><span>Power cycle</span><small>Memory cleared</small></button>
+          <div class="pop-label">Snapshots</div>
+          <button class="pop-item" id="save"><svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="9"/><path d="M5.5 4.5l1-2h3l1 2"/><circle cx="8" cy="9" r="2.5"/></svg><span>Save snapshot</span><small>Kept in the media changer</small></button>
+          <button class="pop-item" id="quick-restore" disabled><svg viewBox="0 0 16 16"><path d="M12.5 8a4.5 4.5 0 1 1-1.5-3.4"/><path d="M11.5 1.5v3h-3"/></svg><span>Restore last snapshot</span><small id="last-snap">None yet</small></button>
+        </div>
+      </div>
+
+      <div class="menu">
+        <button class="menu-btn" id="screen-btn" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="9"/><path d="M5.5 14.5h5M8 11.5v3"/></svg>
+          <span>Screen</span><span class="readout" id="scale-readout">2×</span><svg class="caret" viewBox="0 0 16 16"><path d="M4.5 10l3.5-3.5 3.5 3.5"/></svg>
+        </button>
+        <div class="pop" id="screen-pop" hidden>
+          <div class="pop-label">View</div>
+          <div class="pop-row">
+            <span>Scale</span>
+            <div class="seg" id="scale-seg" role="group" aria-label="Scale">
+              <button data-scale="0" aria-pressed="true">Fit</button><button data-scale="1">1×</button><button data-scale="2">2×</button><button data-scale="3">3×</button><button data-scale="4">4×</button>
+            </div>
+          </div>
+          <button class="pop-item" id="border" aria-pressed="true"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11"/><rect x="4.5" y="5.5" width="7" height="5"/></svg><span>Border</span><b class="pill" id="border-state">Shown</b></button>
+          <div class="pop-label">Window</div>
+          <button class="pop-item" id="fullscreen"><svg viewBox="0 0 16 16"><path d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4"/></svg><span>Full screen</span><small>F11</small></button>
+          <button class="pop-item" id="theme"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11"/></svg><span>Theme</span><b class="pill" id="theme-state">Case</b></button>
+        </div>
+      </div>
+
+      <div class="menu">
+        <button class="menu-btn" id="input-btn" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><rect x="1.5" y="5.5" width="13" height="7"/><path d="M5 7.5v3M3.5 9h3M10.5 8.5h.5M12 10h.5"/><path d="M8 5.5v-3"/></svg>
+          <span>Input</span><svg class="caret" viewBox="0 0 16 16"><path d="M4.5 10l3.5-3.5 3.5 3.5"/></svg>
+        </button>
+        <div class="pop" id="input-pop" hidden>
+          <div class="pop-label">Joystick</div>
+          <button class="pop-item" id="joystick" aria-pressed="false"><svg viewBox="0 0 16 16"><path d="M8 9.5v-5"/><circle cx="8" cy="3.5" r="1.5"/><rect x="3.5" y="9.5" width="9" height="4"/></svg><span>Arrow keys and Tab</span><b class="pill" id="joystick-state">Cursor keys</b></button>
+          <div class="pop-label">Keyboard</div>
+          <button class="pop-item" id="type-btn"><svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7"/><path d="M4 9.5h8"/></svg><span>Type LOAD ""</span><small>Starts a tape by hand</small></button>
+        </div>
+      </div>
+
+      <div class="menu">
+        <button class="menu-btn" id="debug-btn" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 16 16"><rect x="4.5" y="5.5" width="7" height="8"/><path d="M8 5.5v8M4.5 8.5h-3M11.5 8.5h3M4.5 11.5l-2 2M11.5 11.5l2 2M6 5.5l-1-3M10 5.5l1-3"/></svg>
+          <span>Debug</span><svg class="caret" viewBox="0 0 16 16"><path d="M4.5 10l3.5-3.5 3.5 3.5"/></svg>
+        </button>
+        <div class="pop" id="debug-pop" hidden>
+          <button class="pop-item" id="status-btn"><svg viewBox="0 0 16 16"><rect x="2.5" y="1.5" width="11" height="13"/><path d="M5 5.5h6M5 8h6M5 10.5h4"/></svg><span>Status</span><small>Machine, frame rate, keys</small></button>
+          <button class="pop-item" id="step" disabled><svg viewBox="0 0 16 16"><path d="M3.5 3.5l6 4.5-6 4.5zM11.5 3.5v9"/></svg><span>Run one frame</span><small>While paused</small></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="leds" aria-label="Activity">
+      <span class="led" id="led-tape"><i></i>TAPE</span>
+      <span class="led" id="led-run"><i></i>RUN</span>
+      <i class="zxc-stripe" aria-hidden="true"></i>
+    </div>
+  </nav>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

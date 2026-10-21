@@ -76,6 +76,11 @@ typedef struct zx {
     uint8_t ear_in;        /* EAR input level from the tape (0/1) */
     uint8_t kempston;      /* Kempston joystick state (active high) */
 
+    /* ULA+ (ports 0xBF3B / 0xFF3B): 64-colour palette, GGGRRRBB. */
+    uint8_t ulaplus_reg;   /* selected register: 00pppppp palette, 01000000 mode */
+    uint8_t ulaplus_mode;  /* bit 0: palette on */
+    uint8_t ulaplus_pal[64];
+
     /* Video: rendered lazily up to the current T-state. */
     uint16_t screen[ZX_SCREEN_H][ZX_SCREEN_W]; /* RGB333 */
     uint32_t video_chunk;  /* next 8-pixel chunk to draw */
