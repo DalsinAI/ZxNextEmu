@@ -5,7 +5,7 @@ import {
   titleAll, titleGet, titlePut, titleDelete, importFiles, exportTitle, matches, titleMachines,
   importCollection, label, machineLabels, rgbaToPng, pictureScore, runParts, attachFiles, romsAdded,
   normalize, toJson, fitFor, titlesFor, offersOf, needWord, NEEDS, COMPAT, compatOf, setCompat,
-  versionsOf, titleLangs, langName, langFlag, ratingOf,
+  versionsOf, titleLangs, titleYears, insideSymbos, langName, langFlag, ratingOf,
 } from './library.js';
 
 const $ = id => document.getElementById(id);
@@ -154,7 +154,7 @@ function facetValues(t) {
     kind: [t.meta.kind || 'game'],
     works: [...new Set(machines.map(m => compatOf(t, m)))],
     genre: t.meta.genres || [],
-    decade: [decade(t.meta.year)].filter(Boolean),
+    decade: [...new Set(titleYears(t).map(decade))],
     needs: [...new Set((t.meta.runs || []).flatMap(r => r.needs || []))],
     lang: titleLangs(t),
     license: [t.meta.license || 'unknown'],
@@ -299,10 +299,11 @@ function reviewsHtml(t) {
   const all = ratingOf(t);
   const link = (x, text) => /^https?:/i.test(x.url || '') ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
   const score = x => x.score != null && x.scale ? `${+x.score}/${x.scale}` : '';
+  const ver = id => { const v = (t.meta.versions || []).find(v => v.id === id); return v ? v.label || v.id : id; };
   return `<h3>Ratings and reviews${all ? ` <small class="lib-rating">★ ${all.score.toFixed(1)} out of 10</small>` : ''}</h3>
     ${r.ratings.length ? `<ul class="det-ratings">${r.ratings.map(x => `<li>${link(x, x.site || 'Rating')} <b>${esc(score(x))}</b>${x.votes ? ` <small>${esc(String(x.votes))} vote${x.votes === 1 ? '' : 's'}</small>` : ''}${x.version ? ` <small>${esc(x.version)}</small>` : ''}</li>`).join('')}</ul>` : ''}
     ${r.reviews.map(x => `<article class="det-review">
-      <header>${x.title ? `<b>${esc(x.title)}</b> ` : ''}<small>${[x.author && esc(x.author), x.site && link(x, x.site), x.date && esc(x.date), score(x) && `<b>${esc(score(x))}</b>`].filter(Boolean).join(' · ')}</small></header>
+      <header>${x.title ? `<b>${esc(x.title)}</b> ` : ''}<small>${[x.author && esc(x.author), x.site && link(x, x.site), x.date && esc(x.date), x.version && esc(ver(x.version)), score(x) && `<b>${esc(score(x))}</b>`].filter(Boolean).join(' · ')}</small></header>
       <div class="det-review-text">${esc(x.text)}</div>
       ${x.translated ? `<details><summary>Translated from ${x.language ? `${flagOf(x.language)} ${esc(langName(x.language))}` : 'another language'}</summary><div class="det-review-text">${esc(x.original || '')}</div></details>` : ''}
     </article>`).join('')}`;
@@ -333,7 +334,8 @@ export async function showDetail(id) {
       <small>${esc(file)}${r.notes ? ` · ${esc(r.notes)}` : ''}</small>
       ${(r.needs || []).length ? `<small>Needs ${esc(r.needs.map(needWord).join(', '))}</small>` : ''}
       ${known.length ? `<small class="det-known">${esc(known.join(' · '))}</small>` : ''}</div>
-      ${missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
+      ${insideSymbos(r) ? '<small class="det-later">Runs inside SymbOS: copy it onto a set-up that boots SymbOS</small>'
+        : missing.length ? `<div class="det-need"><small>Needs your copy of ${esc(need.join(', '))}</small><button class="zxc-btn small" data-need="${i}">Add the file${need.length > 1 ? 's' : ''}</button></div>`
         : ok.length ? `<div class="det-go"><select data-run="${i}" aria-label="Machine">${ok.map(x => `<option value="${esc(x)}">${esc(opts.machineName(x))}</option>`).join('')}</select>
         <button class="zxc-btn zxc-btn--primary small" data-play="${i}">Run</button>
         <span class="det-say"><button class="zxc-btn small" data-works="${i}">Works here</button><button class="zxc-btn small" data-broken="${i}">Doesn't work here</button></span></div>`
@@ -578,7 +580,7 @@ export async function queueShots() {
 // 48K), try the next kind of machine, and list the one that worked first.
 async function takeShots(t) {
   // A run that needs SymbOS cannot start on a bare machine, so it gets no automatic shots.
-  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !(r.needs || []).includes('symbos') && !runParts(t, r).missing.length);
+  const run = t.meta.runs.find(r => (r.machines || []).some(m => opts.runnable(m)) && !insideSymbos(r) && !runParts(t, r).missing.length);
   const fresh0 = () => titleGet(t.id);
   if (!run) {
     const f = await fresh0();
