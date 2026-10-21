@@ -297,11 +297,15 @@ def file_title(r, dest, lib, link):
         ZXDB_INDEX[str(r['zxdb'])] = tid
     return tid, 'new'
 
+BAD_LINK = 5   # the exit status that means the share link itself is wrong; any other failure keeps it
+
+
 def clean_link(link):
     link = link.strip().strip('\'"<>').strip()
     if not re.match(r'^https://(1drv\.ms|onedrive\.live\.com)/', link):
-        sys.exit('That does not look like a OneDrive share link. It should start with https://1drv.ms/ '
-                 'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.')
+        print('That does not look like a OneDrive share link. It should start with https://1drv.ms/ '
+              'or https://onedrive.live.com/. In OneDrive, right-click the folder, choose Share, then Copy link.', file=sys.stderr)
+        sys.exit(BAD_LINK)
     return link
 
 class TokenError(Exception):
@@ -325,8 +329,9 @@ def main():
         if e.code >= 500 or e.code == 429:   # OneDrive itself is having trouble: the link may be fine
             print(f'OneDrive is not answering properly (HTTP {e.code}). Run this again later.', file=sys.stderr)
             sys.exit(4)
-        sys.exit(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
-                 'shared as "Anyone with the link can view", then run this again.')
+        print(f'OneDrive refused the link (HTTP {e.code}). Check it is the whole link and that the folder is '
+              'shared as "Anyone with the link can view", then run this again.', file=sys.stderr)
+        sys.exit(BAD_LINK)
     except urllib.error.URLError as e:
         # 4, not 1: a network failure says nothing about the link, so a caller keeps it.
         print(f'Could not reach OneDrive ({e.reason}). Check the internet connection and run this again.', file=sys.stderr)

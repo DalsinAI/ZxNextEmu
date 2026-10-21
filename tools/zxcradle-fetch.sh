@@ -160,6 +160,9 @@ def save(url, path):
     except Exception as e:
         log('download failed', e)
         return False
+    if not data:   # an empty answer is a failed download, not a file
+        log('download failed', url, 'empty')
+        return False
     tmp = path + '.part'
     with open(tmp, 'wb') as f:
         f.write(data)
@@ -213,7 +216,9 @@ class Library:
     def zxart_sam(self, name):
         """The SAM title zxart.ee filed under exactly this name, if there is one."""
         exact, loose = [], []
-        for sid in sorted(t for t in self.used if t == slug(name) + '-sam' or t.startswith(slug(name) + '-sam-')):
+        with LOCK:   # other workers claim folders meanwhile
+            cands = sorted(t for t in self.used if t == slug(name) + '-sam' or t.startswith(slug(name) + '-sam-'))
+        for sid in cands:
             try:
                 j = json.load(open(os.path.join(TITLES, sid, 'title.json'), encoding='utf-8'))
             except Exception:
@@ -810,7 +815,9 @@ def worldofsam(lib, made=0):
         u = WOS + h
         p = fetch(u, timeout=60).decode('utf-8', 'replace')
         name = html.unescape(re.search(r'<h1[^>]*>(?:\s*<span[^>]*>)?\s*([^<]+)', p).group(1)).strip()
-        urls = sorted(set(re.findall(r'href="(https://www\.worldofsam\.org/system/files/[^"]+)"', p)))
+        # downloads sit under /system/files/ (older) or /sites/default/files/ (newer); pictures are screenshots
+        urls = sorted(u for u in set(re.findall(r'href="(https://www\.worldofsam\.org/(?:system|sites/default)/files/[^"]+)"', p))
+                      if not re.search(r'\.(png|jpe?g|gif|webp|bmp)$', u, re.I))
         if not urls:
             return False
         same = lib.zxart_sam(name)
@@ -819,15 +826,17 @@ def worldofsam(lib, made=0):
             return False
         sid = lib.claim(name, '-sam', 'worldofsam', h)
         tdir = os.path.join(TITLES, sid)
-        runs, n = [], 0
+        allgot = []
         for f in urls:
             got = get_files(tdir, f, urllib.parse.unquote(f.rsplit('/', 1)[-1]))
             if not got:
                 # Leave the title unfinished so the next run tries every download again.
                 log('worldofsam', h, f, 'gave no files')
                 return None
-            n += len(got)
-            runs += group_runs([run_table(x, ['sam'], 'sam-coupe') for x in got])
+            allgot += got
+        n = len(allgot)
+        # grouped together, so disks published as separate downloads (a boot and a system disk) make one run
+        runs = group_runs([run_table(x, ['sam'], 'sam-coupe') for x in allgot])
         imgs = list(dict.fromkeys(re.findall(r'href="(https://www\.worldofsam\.org/sites/default/files/[^"]+\.(?:png|jpg|gif))"', p, re.I)))
         yr = wos_field(p, 'Release Year')
         desc = re.sub(r'\s+', ' ', ' '.join(wos_field(p, 'Description'))).strip()
@@ -1170,7 +1179,10 @@ def onedrive(lib):
     if rc in (3, 4):  # 3: some downloads failed, 4: OneDrive could not be reached; the link is fine either way
         lib.__init__()
         raise RuntimeError('OneDrive could not be reached or some files did not download; run again to retry them')
-    if rc:
+    if rc and rc != 5:   # the importer failed for some other reason (a full disk, a bad records file)
+        lib.__init__()
+        raise RuntimeError(f'the OneDrive importer stopped with code {rc}; the saved link is kept, run again to retry')
+    if rc:   # 5: OneDrive rejected the link, or it is not a share link
         os.replace(lf, lf + '.failed')
         say(f'  OneDrive importer stopped (code {rc}). The saved link may be wrong, so it has been set aside;\n'
             f'  run the "onedrive" section again and paste the share link (it starts https://1drv.ms/) when asked.')
