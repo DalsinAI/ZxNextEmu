@@ -4,6 +4,7 @@
 # (ROM, disk set, tape, binary, alternate dump, hack, translation) is a run.
 import sys, os, re, json, zipfile, gzip, shutil, subprocess, hashlib, unicodedata, datetime
 import xml.etree.ElementTree as ET
+import urllib.parse
 
 DL, META, OUT = sys.argv[1:4]
 TODAY = datetime.date.today().isoformat()
@@ -304,9 +305,11 @@ SRC = {  # folder -> (type, machines, slot, needs)
 }
 
 titles = {}      # key -> {'variants': {vkey: {...}}, ...}
+missing = []     # source folders not downloaded (yet); their titles are not stale
 for folder, (typ, machines, slot, needs) in SRC.items():
     d = os.path.join(DL, folder)
     if not os.path.isdir(d):
+        missing.append(folder)
         continue
     for fn in sorted(os.listdir(d)):
         if fn.endswith('.part'):
@@ -381,7 +384,7 @@ for key, t in sorted(titles.items()):
         got = []
         for src in sorted(v['srcs'], key=lambda s: [int(c) if c.isdigit() else c for c in re.split(r'(\d+)', s)]):
             sp = os.path.join(DL, v['folder'], src)
-            sources.append(FH + v['folder'] + '/' + src)
+            sources.append(FH + urllib.parse.quote(v['folder'] + '/' + src))
             tmp = os.path.join(tdir, '.x')
             shutil.rmtree(tmp, ignore_errors=True)
             if not unpack(sp, tmp):
@@ -418,6 +421,15 @@ for key, t in sorted(titles.items()):
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
         # "[MSX1 Only]" in the name: not on the MSX2s the MSX1 folder otherwise lists
         mach = [m for m in v['machines'] if m.startswith('msx1')] if any(re.search(r'\bmsx ?1 only\b', f, re.I) for f in v['parse']['flags']) else v['machines']
+        # "[60Hz]", "[NTSC]", "[Only works on 60Hz]": the Japanese/US machines; "[50Hz]", "[PAL]": the European ones
+        hz = ' '.join(v['parse']['flags'])
+        if re.search(r'\b60 ?hz\b|\bntsc\b', hz, re.I) and not re.search(r'\b50 ?hz\b|\bpal\b', hz, re.I):
+            mach = [m for m in mach if not m.endswith('eu')]
+        elif re.search(r'\b50 ?hz\b|\bpal\b', hz, re.I) and not re.search(r'\b60 ?hz\b|\bntsc\b', hz, re.I):
+            mach = [m for m in mach if m.endswith('eu')]
+        if not mach:
+            unrun.append('%s (no matching machine)' % os.path.basename(runf[0]))
+            continue
         # "[Needs 2 ARC games disks]": the companion disks cannot be mounted yet, so files only
         if any(re.search(r'\bneeds?\b.*\bdisks?\b', f, re.I) for f in v['parse']['flags']):
             unrun.append('%s (needs its disks)' % os.path.basename(runf[0]))
@@ -507,7 +519,17 @@ for key, t in sorted(titles.items()):
         f.write('\n'.join(about) + '\n')
     index.append({'id': tid, 'name': name, 'machines': sorted(t['machines']), 'runs': len(runs), 'screens': len(shots)})
 
-if only is None:   # a full build
+if only is None and missing:
+    # A source folder is not downloaded, so its titles did not come out of this build; keep their
+    # folders and index entries from the earlier one rather than sweeping them.
+    print('not downloaded, keeping earlier titles:', ', '.join(missing))
+    try:
+        prev = json.load(open(os.path.join(OUT, '..', 'msx-index.json')))
+    except (OSError, ValueError):
+        prev = []
+    seen = {e['id'] for e in index}
+    index += [e for e in prev if e.get('id') not in seen and os.path.exists(os.path.join(OUT, e['id'], MARK))]
+elif only is None:   # a full build
     # A titles folder this builder made that no longer comes out of the archive (a game gone, or a
     # renamed slug) is stale; only folders carrying the marker are touched.
     for d in os.listdir(OUT):
