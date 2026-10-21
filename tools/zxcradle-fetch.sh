@@ -86,8 +86,9 @@ LOG = open(os.path.join(LIB, 'fetch.log'), 'a', encoding='utf-8')
 FAM48 = ['zx48', 'zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 FAM128 = ['zx128', 'plus2', 'plus2a', 'plus3', 'pentagon', 'next']
 BETA = ['pentagon', 'scorpion', 'atm2']
-RUN_EXT = {'.nex': 'sd0', '.snx': 'sd0', '.tap': 'tape', '.tzx': 'tape', '.pzx': 'tape', '.csw': 'tape',
-           '.sna': 'snapshot', '.z80': 'snapshot', '.szx': 'snapshot', '.slt': 'snapshot',
+# Only formats the core loads (src/core/zxm_zx.c); .szx, .slt, .pzx and .csw stay in files/ without a run.
+RUN_EXT = {'.nex': 'sd0', '.snx': 'sd0', '.tap': 'tape', '.tzx': 'tape',
+           '.sna': 'snapshot', '.z80': 'snapshot',
            '.trd': 'beta.a', '.scl': 'beta.a', '.fdi': 'beta.a', '.dsk': 'disk.a', '.mgt': 'disk.1', '.sad': 'disk.1',
            '.mdr': 'md.1', '.dck': 'cart', '.rom': 'cart', '.img': 'sd0'}
 ARCHIVES = ('.zip', '.rar', '.7z', '.lzh', '.lha', '.arj')
@@ -552,7 +553,7 @@ def zxart(lib, section):
                 todo = todo[:max(0, LIMIT - made)]
             if todo:
                 ids = [r for p in todo for r in p.get('releasesIds', [])]
-                rels = {}
+                rels, lost = {}, set()
                 for i in range(0, len(ids), 50):
                     try:
                         jr = fetch_json(f'{ZX}/types:zxRelease/export:zxRelease/start:0/limit:50/filter:zxReleaseId={",".join(map(str, ids[i:i + 50]))};')
@@ -560,6 +561,9 @@ def zxart(lib, section):
                             rels[r['id']] = r
                     except Exception as e:
                         log('zxart releases', e)
+                        lost.update(ids[i:i + 50])
+                # A title whose release details did not arrive waits for the next run instead of being filed short.
+                todo = [p for p in todo if not lost & set(p.get('releasesIds', []))]
                 zx_names(todo + list(rels.values()))
                 batch(todo, lambda p: zx_title(lib, p, [rels[i] for i in p.get('releasesIds', []) if i in rels], hw),
                       f'{hw} {start}/{total}', len(todo))
@@ -650,8 +654,8 @@ def worldofsam(lib, made=0):
         p = fetch(u, timeout=60).decode('utf-8', 'replace')
         name = html.unescape(re.search(r'<h1[^>]*>(?:\s*<span[^>]*>)?\s*([^<]+)', p).group(1)).strip()
         urls = sorted(set(re.findall(r'href="(https://www\.worldofsam\.org/system/files/[^"]+)"', p)))
-        if not urls or slug(name) + '-sam' in lib.used:
-            return None
+        if not urls or os.path.exists(os.path.join(TITLES, slug(name) + '-sam', 'title.json')):
+            return None  # an unfinished folder from an earlier run is picked up again by claim()
         sid = lib.claim(name, '-sam', 'worldofsam', h)
         tdir = os.path.join(TITLES, sid)
         runs, n = [], 0
@@ -736,9 +740,10 @@ def vtrd(lib):
 # ---------------------------------------------------------------- MSX (file-hunter.com)
 
 FH = 'https://download.file-hunter.com/'
-FH_DIRS = {'Games/MSX1/ROM': ('cart1', []), 'Games/MSX1/DSK': ('disk0', ['msx-disk']), 'Games/MSX1/CAS': ('tape', ['msx-tape']),
+# No CAS folders: the MSX machines have no tape slot yet.
+FH_DIRS = {'Games/MSX1/ROM': ('cart1', []), 'Games/MSX1/DSK': ('disk0', ['msx-disk']),
            'Games/MSX1/MSX-Binaries': ('disk0', ['msx-disk']), 'Games/MSX1/HDD': ('ide0', ['nextor']),
-           'Games/MSX2/ROM': ('cart1', []), 'Games/MSX2/DSK': ('disk0', ['msx-disk']), 'Games/MSX2/CAS': ('tape', ['msx-tape']),
+           'Games/MSX2/ROM': ('cart1', []), 'Games/MSX2/DSK': ('disk0', ['msx-disk']),
            'Games/MSX2/MSX-Binaries': ('disk0', ['msx-disk']), 'Games/MSX2/Harddisk': ('ide0', ['nextor']),
            'Demos': ('disk0', ['msx-disk'])}
 
@@ -829,7 +834,7 @@ def symbos(lib):
         got = {}
         for f in ('SymbOS-MSX40.zip', 'SymbOS-ZNX40.zip', 'SymbOS-40-MassStorageCompletion.zip', 'SymbOS-40-Manual.pdf'):
             got[f] = get_files(tdir, SY + 'download/20250131-V40/' + f, f)
-        if any(got.values()):
+        if got['SymbOS-MSX40.zip'] and got['SymbOS-ZNX40.zip']:  # otherwise the next run tries again
             runs = [{'platform': 'zx-spectrum', 'machines': ['next'], 'files': got['SymbOS-ZNX40.zip'], 'slot': 'sd0', 'needs': []},
                     {'platform': 'msx', 'machines': ['msx2', 'msx2eu'], 'files': got['SymbOS-MSX40.zip'], 'slot': 'ide0', 'needs': []}]
             lib.finish(sid, {'name': 'SymbOS', 'kind': 'system', 'year': 2025, 'authors': ['Prodatron'], 'tags': ['symbos'],
@@ -884,12 +889,11 @@ def spec256(lib):
             root = os.path.join(root, tops[0])
         games = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)) and not d.startswith('.'))
         say(f'Spec256 {u.split("/")[3]}: {len(games)} titles')
+        games = [g for g in games if not lib.has('spec256', slug(g))]
         if LIMIT:
             games = games[:LIMIT]
         for g in games:
             key = slug(g)
-            if lib.has('spec256', key):
-                continue
             sid = lib.claim(g, '-spec256', 'spec256', key)
             tdir = os.path.join(TITLES, sid)
             src = os.path.join(root, g)
@@ -1008,7 +1012,10 @@ def pouet_reviews(pid):
 
 
 def demos(lib):
+    made = 0
     for plat, (platform, mach) in POUET_PLATFORMS.items():
+        if LIMIT and made >= LIMIT:
+            break
         ids, page = [], 1
         while True:
             try:
@@ -1026,7 +1033,8 @@ def demos(lib):
         todo = [i for i in ids if not lib.has('pouet', i)]
         say(f'pouet.net {plat}: {len(ids)} productions, {len(todo)} not in the library yet')
         if LIMIT:
-            todo = todo[:LIMIT]
+            todo = todo[:LIMIT - made]
+        made += len(todo)
 
         def one(pid, platform=platform, mach=mach, plat=plat):
             p = pouet_prod(pid)
@@ -1045,8 +1053,8 @@ def demos(lib):
             if not files:
                 return None
             if platform == 'msx':
-                keep = [f for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.dsk', '.cas', '.mx1', '.mx2')]
-                slot = lambda f: {'.rom': 'cart1', '.mx1': 'cart1', '.mx2': 'cart1', '.cas': 'tape'}.get(os.path.splitext(f)[1].lower(), 'disk0')
+                keep = [f for f in files if os.path.splitext(f)[1].lower() in ('.rom', '.dsk', '.mx1', '.mx2')]
+                slot = lambda f: {'.rom': 'cart1', '.mx1': 'cart1', '.mx2': 'cart1'}.get(os.path.splitext(f)[1].lower(), 'disk0')
                 runs = [{'platform': 'msx', 'machines': mach, 'files': [f], 'slot': slot(f),
                          'needs': {'disk0': ['msx-disk'], 'tape': ['msx-tape']}.get(slot(f), [])} for f in keep]
             else:
@@ -1254,7 +1262,7 @@ def reviews(lib):
     say(f'Ratings and reviews: {len(todo)} titles to check')
     if LIMIT:
         todo = todo[:LIMIT]
-    prods = {}
+    prods, lost = {}, set()
     zids = [str(i['zxart']) for _, i in todo if i.get('zxart')]
     for k in range(0, len(zids), 50):
         try:
@@ -1263,6 +1271,9 @@ def reviews(lib):
                 prods[str(p['id'])] = p
         except Exception as e:
             log('zxart votes', e)
+            lost.update(zids[k:k + 50])
+    # Titles whose zxart rating did not arrive keep their old reviews.json until the next run.
+    todo = [x for x in todo if str(x[1].get('zxart')) not in lost]
 
     def one(item):
         t, ids = item
@@ -1310,6 +1321,7 @@ def main():
                 globals()[s](lib)
             else:
                 say(f'  unknown section {s}')
+                failed.append(s)
         except KeyboardInterrupt:
             raise
         except Exception as e:
