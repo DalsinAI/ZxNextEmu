@@ -1,7 +1,9 @@
 # ZxNextEmu
 
 A ZX Spectrum Next (TBBlue) emulator that is timed to the T-state, with the
-classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3 and Pentagon 128.
+classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3, and the Russian
+clones Pentagon 128, Scorpion ZS-256 and ATM Turbo 2+ with their Beta 128
+disk drives.
 
 Written in portable C99 and built with GCC 16.2.0-open3
 ([DalsinAI/openamigagcc](https://github.com/DalsinAI/openamigagcc)) for
@@ -17,10 +19,11 @@ build/zxrun -m 128 -f 500 -s shot.ppm game.tap
 ```
 
 `zxrun` options: `-m` model (`next`, `48`, `128`, `plus2`, `plus2a`, `plus3`,
-`pentagon`), `-c` SD card for the Next (a folder or an image file), `-p`
+`pentagon`, `scorpion`, `atm2`), `-c` SD card for the Next (a folder or an image file), `-p`
 a folder for the Next's Raspberry Pi, `-f` frames to run, `-t` text to type (after `-d` frames),
 `-s` screenshot (PPM), `-w` audio (WAV), and a `.sna`, `.z80`, `.tap` or
-`.tzx` file to load. Tapes load instantly through the ROM when they use the
+`.tzx` file to load, or a `.trd` or `.scl` disk for drive A of the Beta 128
+machines (their ROMs are not in the repository: see `roms/README.md`). Tapes load instantly through the ROM when they use the
 standard loader, and play in real time for custom loaders.
 
 ### The Spectrum Next and its SD card
@@ -72,7 +75,8 @@ next.
 ## The core in WebAssembly (for ZX Cradle)
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
-up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`),
+up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`, `scorpion`,
+`atm2`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
 state. The core does no file I/O: ROMs, tapes and snapshots come in as
@@ -104,6 +108,9 @@ timing-sensitive loaders behave as on the hardware.
 | Tape | TAP and TZX (all common blocks), instant ROM load + real-time pulses |
 | Snapshots | SNA (48K/128K), Z80 (v1-v3) |
 | +3 disk drive | not yet |
+| Beta 128 (TR-DOS) | WD1793 on raw tracks, timed to the byte (seeks, rotation, DRQ per byte); .trd images written back, .scl read; Pentagon, Scorpion, ATM |
+| Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |
+| ATM Turbo 2+ | 1024K, xxF7 windows, xx77 modes: EGA 320x200x16, hi-res multicolour, 80-column text, 7 MHz turbo, palette. The text font is the ROM's character set, not the real chargen |
 | Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
@@ -125,6 +132,7 @@ timing-sensitive loaders behave as on the hardware.
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
 | Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
+| TR-DOS on Pentagon, Scorpion and ATM: load, save, catalogue, format (needs the clones' ROMs) | all pass (`make beta`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
 The test programs are downloaded into `tests-data/`, see

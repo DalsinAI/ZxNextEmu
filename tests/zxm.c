@@ -5,7 +5,9 @@
  * WebAssembly build (tests/wasm.mjs) must reproduce exactly.
  *
  * usage: zxm romdir machine frames [text]
- * ZXM_SD=folder-or-image puts an SD card in a Next.
+ * ZXM_SD=folder-or-image puts an SD card in a Next; ZXM_DISK=file.trd|.scl
+ * a disk in a Beta 128's drive A; ZXM_DELAY=frames waits before typing. A machine whose ROMs are missing is
+ * skipped (exit 77).
  */
 #include "../src/core/zxm.h"
 #include "../src/storage/blockdev.h"
@@ -65,7 +67,14 @@ int main(int argc, char **argv)
         char path[1024];
         FILE *fp;
         snprintf(path, sizeof path, "%s/%s", argv[1], info->roms[i]);
-        if (!(fp = fopen(path, "rb")) || fread(rom[i], 1, 0x4000, fp) != 0x4000) {
+        if (!(fp = fopen(path, "rb"))) {
+            if (info->roms_optional >> i & 1)
+                continue;
+            /* The clones' ROMs are not in the repository: skip. */
+            printf("%s: skipped, no %s\n", info->id, path);
+            return 77;
+        }
+        if (fread(rom[i], 1, 0x4000, fp) != 0x4000) {
             fprintf(stderr, "cannot read %s\n", path);
             return 1;
         }
@@ -88,13 +97,28 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    if (getenv("ZXM_DISK")) {
+        zxm_media disk;
+        FILE *fp = fopen(getenv("ZXM_DISK"), "rb");
+        static uint8_t buf[1 << 20];
+        memset(&disk, 0, sizeof disk);
+        disk.kind = ZXM_MEDIA_BYTES;
+        disk.name = getenv("ZXM_DISK");
+        disk.data = buf;
+        disk.len = fp ? (uint32_t)fread(buf, 1, sizeof buf, fp) : 0;
+        if (!fp || zxm_media_insert(m, "beta.a", &disk)) {
+            fprintf(stderr, "cannot insert disk %s\n", getenv("ZXM_DISK"));
+            return 1;
+        }
+        fclose(fp);
+    }
     if (argc > 4) {
         /* "\n" in the text is Enter */
         char *t = argv[4], *r = t, *w = t;
         for (; *r; r++)
             *w++ = r[0] == '\\' && r[1] == 'n' ? (r++, '\n') : *r;
         *w = 0;
-        zxm_type(m, t, 0);
+        zxm_type(m, t, getenv("ZXM_DELAY") ? atoi(getenv("ZXM_DELAY")) : 0);
     }
 
     h0 = run(m, half, 2166136261u);

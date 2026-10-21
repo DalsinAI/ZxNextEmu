@@ -2,7 +2,9 @@
 // prints the same line, so the two builds can be compared byte for byte.
 //
 // usage: node tests/wasm.mjs zxcore.wasm romdir machine frames [text]
-import { readFileSync } from 'node:fs';
+// ZXM_DISK=file.trd|.scl puts a disk in a Beta 128's drive A; ZXM_DELAY=frames
+// waits before typing.
+import { readFileSync, existsSync } from 'node:fs';
 
 const [wasmPath, romDir, id, framesArg, text] = process.argv.slice(2);
 const { instance } = await WebAssembly.instantiate(readFileSync(wasmPath), {});
@@ -28,6 +30,7 @@ const info = x.zxm_lookup(cstr(id));
 if (!info) { console.error(`unknown machine ${id}`); process.exit(2); }
 const fbW = dv().getUint16(info + 16, true), fbH = dv().getUint16(info + 18, true);
 const romNames = dv().getUint32(info + 28, true);
+const romsOptional = dv().getUint32(info + 40, true);
 
 // zxm_rom_set: four pointers, then four lengths.
 const roms = x.malloc(32);
@@ -35,7 +38,13 @@ u8().fill(0, roms, roms + 32);
 for (let i = 0; ; i++) {
   const np = dv().getUint32(romNames + 4 * i, true);
   if (!np) break;
-  const data = readFileSync(`${romDir}/${readCstr(np)}`);
+  const path = `${romDir}/${readCstr(np)}`;
+  if (!existsSync(path)) {
+    if (romsOptional >> i & 1) continue;
+    console.log(`${id}: skipped, no ${path}`);
+    process.exit(77);
+  }
+  const data = readFileSync(path);
   const p = x.malloc(data.length);
   u8().set(data, p);
   dv().setUint32(roms + 4 * i, p, true);
@@ -44,7 +53,20 @@ for (let i = 0; ; i++) {
 
 const m = x.malloc(x.zxm_size(info));
 if (x.zxm_create(m, info, roms)) { console.error('cannot create'); process.exit(1); }
-if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), 0);
+if (process.env.ZXM_DISK) {
+  // zxm_media: kind, name, data, len, blocks, serial
+  const data = readFileSync(process.env.ZXM_DISK);
+  const p = x.malloc(data.length || 1);
+  u8().set(data, p);
+  const media = x.malloc(24);
+  u8().fill(0, media, media + 24);
+  dv().setUint32(media, 1, true);
+  dv().setUint32(media + 4, cstr(process.env.ZXM_DISK), true);
+  dv().setUint32(media + 8, p, true);
+  dv().setUint32(media + 12, data.length, true);
+  if (x.zxm_media_insert(m, cstr('beta.a'), media)) { console.error('cannot insert disk'); process.exit(1); }
+}
+if (text !== undefined) x.zxm_type(m, cstr(text.replace(/\\n/g, '\n')), Number(process.env.ZXM_DELAY || 0));
 
 const out = x.malloc(4);
 function fnv(h, bytes) {

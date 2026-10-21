@@ -32,7 +32,8 @@ typedef enum {
     ZXM_SLOT_TAPE = 1,           /* bytes: .tap, .tzx */
     ZXM_SLOT_SNAPSHOT,           /* bytes, loaded once: .sna, .z80 */
     ZXM_SLOT_SD,                 /* blocks */
-    ZXM_SLOT_SERIAL              /* a serial device on a UART */
+    ZXM_SLOT_SERIAL,             /* a serial device on a UART */
+    ZXM_SLOT_DISK                /* a floppy drive: bytes or blocks (.trd .scl on a Beta 128) */
 } zxm_slot_kind;
 
 typedef struct zxm_slot {
@@ -54,7 +55,7 @@ typedef struct zxm_input_desc {
 } zxm_input_desc;
 
 typedef struct zxm_info {
-    const char *id;              /* "zx48", "zx128", "next" */
+    const char *id;              /* "zx48", "zx128", "next", "scorpion", "atm2" */
     const char *name;            /* "ZX Spectrum 128K" */
     uint32_t cpu_hz, frame_t;    /* nominal clock, T-states per frame */
     uint16_t fb_w, fb_h;         /* framebuffer size in pixels */
@@ -63,6 +64,7 @@ typedef struct zxm_info {
     const char *const *roms;     /* ROM file names in order, NULL-terminated */
     const zxm_slot *slots;       /* media slots, ending with a NULL id */
     const zxm_input_desc *inputs;     /* inputs, ending with a NULL id */
+    uint32_t roms_optional;      /* bit i: roms[i] may be left out (Pentagon's TR-DOS) */
 } zxm_info;
 
 /* ROM images in the order zxm_info.roms names them, 16K each. */

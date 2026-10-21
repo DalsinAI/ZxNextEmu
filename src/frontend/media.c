@@ -58,6 +58,8 @@ int media_load(zx *m, const char *path)
             m->tape = t;
             r = 0;
         }
+    } else if (has_ext(path, ".trd") || has_ext(path, ".scl")) {
+        r = zx_attach_disk_image(m, 0, d, len, has_ext(path, ".scl"));
     } else {
         fprintf(stderr, "%s: unknown file type\n", path);
     }
