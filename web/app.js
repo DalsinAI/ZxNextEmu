@@ -3,9 +3,8 @@
 // saved states live in IndexedDB.
 
 import { tx, runParts, romsAdded, romAdd } from './library.js';
-import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged } from './libview.js';
-import * as libview from './libview.js';
-import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, RECIPES } from './cradle.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor } from './libview.js';
+import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, recipeFor, RECIPES } from './cradle.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -58,7 +57,7 @@ worker.onmessage = async e => {
       start: inst => { userPaused = false; resumeOnReturn = true; startInstance(inst); showView('machine'); },
       romDialog,
       show: showView,
-      library: inst => { showView('library'); libview.setInstance?.(inst); },
+      library: inst => { libraryFor(inst); showView('library'); },
       renamed: async id => { if (instance?.id === id) { instance = await instanceGet(id); showName(); } },
       error: showError,
       onCount: n => { $('lib-readout').textContent = n; },
@@ -68,8 +67,9 @@ worker.onmessage = async e => {
       runnable: usable,
       machineName: id => machines.find(mc => mc.id === id)?.name || id,
       run: runTitle,
+      current: () => machineId,
       onCount: () => {},
-    }).then(() => showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'));
+    }).then(() => { libraryReady = true; libraryFor(instance); showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'); });
     break;
   case 'machines':   // the user added ROMs
     machines = msg.machines;
@@ -189,6 +189,12 @@ function startInstance(inst) {
   instanceUpdate(inst.id, { lastRun: Date.now() }).catch(() => {});
 }
 
+// The library shows what suits an instance: its machine and what its recipe offers.
+let libraryReady = false;
+function libraryFor(inst) {
+  if (libraryReady && inst) showFor(inst.machine, recipeFor(inst.recipe)?.offers || [], inst.name);
+}
+
 function showName() {
   $('machine-name').textContent = instance?.name || nameOf(machineId);
   $('machine-name').title = `${instance?.name || ''} · ${nameOf(machineId)}`;
@@ -218,6 +224,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sho
 
 function create(id) {
   machineId = id;
+  libraryFor(instance);
   prefs.machine = id;
   savePrefs();
   setChip('starting');
