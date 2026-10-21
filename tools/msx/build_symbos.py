@@ -1,9 +1,10 @@
 # build_symbos.py SYM_DIR FH_DL_DIR OUT_TITLES
 # SymbOS apps from symbos.de (apps.json from apps.js, dl/<id>.zip, shots/<id>-<n>.gif)
 # plus SymbOS itself and file-hunter's extra SymbOS files, as library titles.
-# Apps list the machines that run SymbOS, with needs ["symbos"]. Their files are
-# copied onto a SymbOS drive, not mounted, so those runs carry no files: the
-# player gives them no Run button and the files stay in files/.
+# Apps are copied onto a SymbOS drive, not mounted, so they get no runs; their
+# about.md says which machines they are for. The SD and IDE slots take block
+# media only, which the player cannot build from bytes yet, so the SymbOS
+# packages and disk images have no runs either.
 import sys, os, re, json, zipfile, shutil, datetime
 from PIL import Image
 
@@ -38,14 +39,9 @@ def unzip(path, dest):
 INSIDE = 'Copy files/ onto the drive of a set-up that boots SymbOS, then start it from there.'
 
 
-def runs_for(platforms, files):
+def platforms_of(platforms):
     pl = [p for p in platforms.split(',') if p]
-    runs = []
-    if platforms == '0' or '7' in pl:
-        runs.append({'platform': 'zx-spectrum', 'machines': ['next'], 'files': [], 'slot': 'sd0', 'needs': ['symbos'], 'notes': INSIDE})
-    if platforms == '0' or '2' in pl:
-        runs.append({'platform': 'msx', 'machines': MSX, 'files': [], 'slot': 'ide0', 'needs': ['symbos'], 'notes': INSIDE})
-    return runs
+    return [n for n, k in (('ZX Spectrum Next', '7'), ('MSX2', '2')) if platforms == '0' or k in pl]
 
 
 MARK = '.build_symbos'
@@ -76,14 +72,6 @@ def claim(base):
     return tid
 
 
-def app_files(files):
-    """What goes on the SymbOS drive: the program and its data, not sources, readmes or disk images."""
-    keep = [f for f in files if not f.startswith('files/sources/') and not f.lower().endswith(('.dsk', '#readme.txt', '.asm'))]
-    if any(f.lower().endswith(('.exe', '.com')) for f in keep):
-        return keep
-    return [f for f in files if f.lower().endswith('-fat.dsk')] or [f for f in files if f.lower().endswith('.dsk')] or files
-
-
 def write(tid, meta, about):
     tdir = os.path.join(OUT, tid)
     with open(os.path.join(tdir, 'title.json'), 'w') as f:
@@ -106,8 +94,9 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
     tdir = os.path.join(OUT, tid)
     fdir = os.path.join(tdir, 'files')
     files = ['files/' + f for f in unzip(z, fdir)]
-    runs = runs_for(platforms, app_files(files))
-    if not runs:
+    on = platforms_of(platforms)
+    runs = []
+    if not on:
         shutil.rmtree(tdir)
         skipped.append('%s (Amstrad CPC/PCW/EP only)' % name)
         continue
@@ -129,7 +118,7 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
             'added': TODAY, 'ids': {'symbos': aid}, 'runs': runs, 'compat': {}}
     if shots:
         meta['screens'] = shots
-    req = 'Needs SymbOS %s or newer, %s KB of memory%s.' % (osver, mem, (' and ' + add) if add else '')
+    req = 'Needs SymbOS %s or newer, %s KB of memory%s. For %s: %s' % (osver, mem, (' and ' + add) if add else '', ' and '.join(on), INSIDE)
     about = '# %s %s\n\n%s\n\n%s\n\n%s\n\nBy %s, released %s-%s-%s. From symbos.de.\n' % (
         name, ver, short, re.sub(r'<br>', '\n', long_), req, author, y, m, d)
     write(tid, meta, about)
@@ -156,13 +145,7 @@ for tid, name, remote, local, machines, slot, needs, text in systems:
     tid = built[tid] = claim(tid)
     fdir = os.path.join(OUT, tid, 'files')
     files = ['files/' + f for f in unzip(z, fdir)]
-    # Only a ready disk image is mounted; loose files are installed onto a drive by hand or by a recipe.
-    imgs = [f for f in files if f.lower().endswith(('.dsk', '.hdd', '.img'))]
-    runs = [{'platform': 'msx' if m != ['next'] else 'zx-spectrum', 'machines': m, 'files': imgs[:1] if s and imgs and m != ['next'] else [],
-             'slot': s, 'needs': needs} for m, s in ([(machines, slot)] if machines else [(['next'], 'sd0'), (MSX, 'ide0')])]
-    for r in runs:
-        if not r['files']:
-            r['notes'] = INSIDE if 'symbos' in needs else 'Install files/ onto a drive first; there is no ready disk image to mount.'
+    runs = []
     meta = {'format': 2, 'id': tid, 'name': name, 'kind': 'system' if 'Kit' not in name else 'utility', 'year': 2025,
             'authors': ['Prodatron', 'SymbiosiS'], 'tags': ['symbos', 'operating system'], 'summary': text,
             'license': 'freeware', 'source': 'http://www.symbos.de/download/20250131-V40/' + remote,
@@ -188,14 +171,10 @@ for tid, name, src, machines, slot, needs, text in extras:
     tid = claim(tid)
     fdir = os.path.join(OUT, tid, 'files')
     files = ['files/' + f for f in unzip(z, fdir)]
-    run = {'platform': 'msx', 'machines': machines, 'files': [], 'slot': slot, 'needs': needs, 'notes': INSIDE}
-    if 'symbos' not in needs:
-        run = {'platform': 'msx', 'machines': machines, 'files': [f for f in files if f.lower().endswith(('.dsk', '.hdd', '.img'))][:1],
-               'slot': slot, 'needs': needs}
     meta = {'format': 2, 'id': tid, 'name': name, 'kind': 'system', 'authors': ['Prodatron', 'SymbiosiS'],
             'tags': ['symbos', 'operating system'], 'summary': text, 'license': 'freeware',
             'source': 'https://download.file-hunter.com/OS/SymbOS/' + src, 'added': TODAY,
-            'runs': [run], 'compat': {}}
+            'runs': [], 'compat': {}}
     write(tid, meta, '# %s\n\n%s\n\nFrom download.file-hunter.com, OS/SymbOS.\n' % (name, text))
     index.append(tid)
 # file-hunter apps and development tools not on symbos.de's list
@@ -215,7 +194,7 @@ for sub in ('Apps', 'Development'):
         meta = {'format': 2, 'id': tid, 'name': base.replace('_', ' '), 'kind': 'utility' if sub == 'Development' else 'application',
                 'tags': ['symbos', 'symbos-app'] + (['development'] if sub == 'Development' else []), 'license': 'freeware',
                 'source': 'https://download.file-hunter.com/OS/SymbOS/%s/%s' % (sub, f), 'added': TODAY,
-                'runs': runs_for('0', app_files(files)), 'compat': {}}
+                'runs': [], 'compat': {}}
         write(tid, meta, '# %s\n\nSymbOS %s from download.file-hunter.com, OS/SymbOS/%s.\n' % (meta['name'], 'development tool' if sub == 'Development' else 'application', sub))
         index.append(tid)
 
