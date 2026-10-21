@@ -27,14 +27,14 @@ file from `tools/msx`.
 
 ## 2. Game and demo files (into `msx-dl/`)
 
-Take these folders from `sizes.json` (about 2.1 GB): Games/MSX1/{ROM, DSK,
-CAS, MSX-Binaries, HDD}, Games/MSX2/{ROM, DSK, CAS, MSX-Binaries, Harddisk},
-Demos/, OS/SymbOS/. WAV tapes, MSX2+ and turbo R are left out.
+Take these folders from `sizes.json`: Games/MSX1/{ROM, DSK, MSX-Binaries,
+HDD}, Games/MSX2/{ROM, DSK, MSX-Binaries, Harddisk}, Demos/, OS/SymbOS/.
+Tapes (CAS and WAV), MSX2+ and turbo R are left out.
 
 ```sh
 python3 -c "import json,urllib.parse
 for k in sorted(json.load(open('meta/sizes.json'))):
-  if k.startswith(('Games/MSX1/ROM/','Games/MSX1/DSK/','Games/MSX1/CAS/','Games/MSX1/MSX-Binaries/','Games/MSX1/HDD/','Games/MSX2/ROM/','Games/MSX2/DSK/','Games/MSX2/CAS/','Games/MSX2/MSX-Binaries/','Games/MSX2/Harddisk/','Demos/','OS/SymbOS/')):
+  if k.startswith(('Games/MSX1/ROM/','Games/MSX1/DSK/','Games/MSX1/MSX-Binaries/','Games/MSX1/HDD/','Games/MSX2/ROM/','Games/MSX2/DSK/','Games/MSX2/MSX-Binaries/','Games/MSX2/Harddisk/','Demos/','OS/SymbOS/')):
     print('https://download.file-hunter.com/'+urllib.parse.quote(k)); print(k)" \
  | xargs -d '\n' -n 2 ./get.sh     # one at a time: File Hunter bans download managers
 ```

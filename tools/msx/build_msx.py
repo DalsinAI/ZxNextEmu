@@ -195,6 +195,17 @@ def safe(n):
             n = b.decode('latin-1')
     return re.sub(r'[\x00-\x1f/\\:*?"<>|]', '_', n)
 
+def hw_needs(text):
+    """Hardware the emulated MSX1/MSX2 machines lack, named in a file or folder name."""
+    t = text.lower()
+    needs = []
+    if 'v9990' in t or 'gfx9000' in t: needs.append('v9990')
+    if 'v9968' in t: needs.append('v9968')
+    if re.search(r'turbo[ -]?r', t): needs.append('turbor')
+    if 'msx2+' in t or 'msx2plus' in t: needs.append('msx2plus')
+    return needs
+
+
 # ---- collect variants ----------------------------------------------------------
 
 SRC = {  # folder -> (type, machines, slot, needs)
@@ -311,6 +322,11 @@ for key, t in sorted(titles.items()):
         # binaries stay in files/ without a run until it can build them.
         if v['typ'] != 'ROM':
             continue
+        # A ROM that names hardware we do not emulate (V9990, MSX2+, turbo R) is tagged, not run.
+        hn = hw_needs(' '.join(v['srcs']) + ' ' + ' '.join(got))
+        if hn:
+            t.setdefault('hneeds', set()).update(hn)
+            continue
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
         run = dict(platform='msx', machines=v['machines'], files=runf, slot=v['slot'], needs=list(v['needs']))
         p = v['parse']
@@ -346,6 +362,7 @@ for key, t in sorted(titles.items()):
     if x and x.get('genre'): meta['genres'] = [x['genre'].lower()]
     tags = ['msx'] + (['msx2'] if 'msx1' not in t['machines'] else ['msx1'])
     tags += sorted('lang:' + l for l in t['langs'])
+    tags += sorted(t.get('hneeds', ()))
     meta['tags'] = tags
     meta['license'] = 'unknown'
     meta['source'] = sources[0]
