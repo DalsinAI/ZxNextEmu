@@ -270,8 +270,13 @@ static void traced(s256 *s)
         uint8_t *pl;
         if (a < 0x4000 || a >= 0x5800 || !(pl = planes_of(s, s->m->wr[a >> 14])))
             continue;
+        uint8_t v;
         pl += (a & 0x3fff) * 8;
-        s->trace(s->trace_user, a, zx_peek(s->m, a), (uint16_t)(pl[0] | pl[1] << 8));
+        v = zx_peek(s->m, a);
+        /* A constant reaches every plane alike, so planes 0 and 1 both equal
+           the byte; that is no tag (and a real source at 0xVVVV holding V
+           cannot be told from it, so it is dropped too). */
+        s->trace(s->trace_user, a, v, pl[0] == v && pl[1] == v ? 0 : (uint16_t)(pl[0] | pl[1] << 8));
         pl[0] = pl[1] = 0;
     }
 }
@@ -760,6 +765,14 @@ void s256_start(s256 *s)
 void s256_trace(s256 *s, s256_trace_fn fn, void *user)
 {
     int slot, i;
+    if (!fn && s->trace) {
+        /* Tracing off: planes back to plain copies of RAM, tags gone. */
+        for (slot = 0; slot < 4; slot++) {
+            uint8_t *pl = planes_of(s, s->m->rd[slot]);
+            if (pl)
+                expand(pl, s->m->rd[slot]);
+        }
+    }
     s->trace = fn;
     s->trace_user = user;
     if (!fn)
