@@ -57,7 +57,7 @@ for folder in sorted(os.listdir(root)):
             tid = '%s-%d' % (b, n); n += 1
         used.add(tid)
         tdir = os.path.join(OUT, tid)
-        shutil.rmtree(tdir, ignore_errors=True)   # ours from an earlier run, or nothing
+        shelve(tdir)   # ours from an earlier run, kept until this build has files
         fdir = os.path.join(tdir, 'files')
         os.makedirs(fdir, exist_ok=True)
         open(os.path.join(tdir, DMARK), 'w').close()
@@ -78,8 +78,8 @@ for folder in sorted(os.listdir(root)):
                     shutil.move(os.path.join(r, f), os.path.join(fdir, dst))
                     got.append('files/' + dst)
             shutil.rmtree(tmp, ignore_errors=True)
+        settle(tdir, bool(got))
         if not got:
-            shutil.rmtree(tdir, ignore_errors=True)
             continue
         machines, hneeds = hw(folder + ' ' + ' '.join(srcs) + ' ' + ' '.join(got))
         runs = []
@@ -99,6 +99,8 @@ for folder in sorted(os.listdir(root)):
                 for g in bykind[e]:
                     run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
+                    if h and ((h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'])):
+                        continue   # a known bad dump, or a mapper the cartridge core cannot bank
                     if h:
                         run['mapper'] = h['mapper']
                         run['files'] = [mark_mapper(tdir, g, h['mapper'])]

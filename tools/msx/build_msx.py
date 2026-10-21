@@ -10,6 +10,10 @@ TODAY = datetime.date.today().isoformat()
 FH = 'https://download.file-hunter.com/'
 MSX1 = ['msx1', 'msx1eu', 'msx2', 'msx2eu']
 MSX2 = ['msx2', 'msx2eu']
+LANG_WORDS = {'english': 'en', 'en': 'en', 'jp': 'ja', 'ja': 'ja', 'japanese': 'ja', 'spanish': 'es', 'es': 'es',
+              'dutch': 'nl', 'nl': 'nl', 'portuguese': 'pt', 'pt': 'pt', 'brazilian': 'pt', 'french': 'fr', 'fr': 'fr',
+              'german': 'de', 'de': 'de', 'italian': 'it', 'it': 'it', 'arabic': 'ar', 'ar': 'ar', 'korean': 'ko',
+              'ko': 'ko', 'russian': 'ru', 'ru': 'ru', 'finnish': 'fi', 'greek': 'el', 'swedish': 'sv', 'polish': 'pl'}
 LANGS = {'ja', 'jp', 'en', 'es', 'nl', 'pt', 'fr', 'de', 'it', 'ar', 'ko', 'ru', 'fi', 'el', 'sv', 'pl', 'br', 'ca', 'en-ja', 'ja-en', 'en-jp', 'jp-en'}
 # Not .dmk (a track container, the disk drive takes flat sectors) or .cas/.tsx (no MSX tape slot yet).
 RUNNABLE = {'.rom', '.mx1', '.mx2', '.dsk', '.di1', '.di2', '.bin', '.com', '.bas', '.ldr', '.hdd', '.img', '.vhd'}
@@ -78,6 +82,34 @@ MAPPER_MARK = {'ascii8': '[ascii8]', 'ascii16': '[ascii16]', 'konami': '[konami]
                'normal': '[plain]', 'mirrored': '[plain]', 'plain': '[plain]'}
 
 
+def mapper_ok(mapper):
+    """Whether src/msx/cart.c can bank a ROM openMSX lists with this mapper: the four megaROM types,
+    or a plain ROM of 64K or less at any page (Mirrored, Page23, 0x4000, 16kB, ...)."""
+    k = re.sub(r'[^a-z0-9]', '', (mapper or 'normal').lower())
+    return k in MAPPER_MARK or bool(re.fullmatch(r'mirrored\w*|page\d+|0x[0-9a-f]+|(8|16|32)kb|rom', k))
+
+
+def shelve(tdir):
+    """Move an earlier build aside while a title is rebuilt; settle() then drops or restores it."""
+    old = os.path.join(os.path.dirname(tdir), '.old-' + os.path.basename(tdir))
+    if os.path.exists(old) and not os.path.exists(tdir):   # a build cut off last time: start from that copy
+        os.rename(old, tdir)
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(tdir):
+        os.rename(tdir, old)
+
+
+def settle(tdir, ok):
+    """Keep the new build when it got files; otherwise put the earlier one back (a damaged download)."""
+    old = os.path.join(os.path.dirname(tdir), '.old-' + os.path.basename(tdir))
+    if ok:
+        shutil.rmtree(old, ignore_errors=True)
+    else:
+        shutil.rmtree(tdir, ignore_errors=True)
+        if os.path.exists(old):
+            os.rename(old, tdir)
+
+
 def mark_mapper(tdir, path, mapper):
     """Rename a ROM so the core picks the mapper openMSX knows it by; returns its new path."""
     m = MAPPER_MARK.get(re.sub(r'[^a-z0-9]', '', (mapper or '').lower()))
@@ -100,6 +132,9 @@ def parse(base, typ):
     flags = re.findall(r'\[([^\]]*)\]', rest)
     year = next((p for p in parens if re.fullmatch(r'(19|20)[0-9x]{2}', p)), None)
     lang = next((p for p in parens if p.lower() in LANGS), None)
+    if not lang:   # ROM names also write it in brackets: [English], [Jp]
+        lang = next((LANG_WORDS[f.lower()] for f in flags if f.lower() in LANG_WORDS), None)
+        flags = [f for f in flags if f.lower() not in LANG_WORDS]
     part = [p for p in parens if re.match(r'(disk|tape|side|disc|part) ', p, re.I) or re.fullmatch(r'side [ab]', p, re.I)]
     others = [p for p in parens if p not in part and p != year and p != lang and p.strip() not in ('', '-')]
     lang = lang and {'jp': 'ja', 'en-jp': 'en-ja', 'jp-en': 'ja-en'}.get(lang.lower(), lang.lower())   # the archive writes (jp)
@@ -283,12 +318,12 @@ for key, t in sorted(titles.items()):
     if only and key not in only:
         continue
     tdir = os.path.join(OUT, tid)
-    shutil.rmtree(tdir, ignore_errors=True)   # ours from an earlier run, or nothing
+    shelve(tdir)   # ours from an earlier run, kept until this build has files
     os.makedirs(tdir)
     open(os.path.join(tdir, MARK), 'w').close()
     fdir = os.path.join(tdir, 'files')
     os.makedirs(fdir, exist_ok=True)
-    runs, allfiles, sdbhit, sources = [], [], None, []
+    runs, allfiles, sdbhit, sources, unrun = [], [], None, [], []
     vs = sorted(t['variants'].values(), key=lambda v: (TYPE_RANK[v['typ']], variant_rank(v['parse']), v['srcs'][0]))
     for v in vs:
         got = []
@@ -340,6 +375,11 @@ for key, t in sorted(titles.items()):
                 h = sdb.get(sha1(os.path.join(tdir, g)))
                 if h:
                     sdbhit = sdbhit or h
+                    # A known bad dump, or a mapper the cartridge core cannot bank, stays in files/ only.
+                    if (h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper']):
+                        unrun.append('%s (openMSX: %s)' % (os.path.basename(g), 'bad dump' if (h.get('status') or '').lower() == 'bad' else h['mapper'] + ' mapper'))
+                        run = None
+                        break
                     run['mapper'] = h['mapper']
                     new = mark_mapper(tdir, g, h['mapper'])
                     runf[i] = new
@@ -347,11 +387,13 @@ for key, t in sorted(titles.items()):
                     if h.get('status'):
                         notes.append('openMSX: ' + h['status'] + (' - ' + h['remark'] if h.get('remark') else ''))
                     break
+        if run is None:
+            continue
         if notes:
             run['notes'] = '; '.join(notes)
         runs.append(run)
+    settle(tdir, bool(allfiles))
     if not allfiles:
-        shutil.rmtree(tdir, ignore_errors=True)
         continue
     year = (x and x.get('year') and str(x['year']).isdigit() and int(x['year'])) or (sdbhit and sdbhit['year'] and sdbhit['year'].isdigit() and int(sdbhit['year'])) or (t['years'] and min(t['years'])) or None
     pub = (x and x.get('publisher') not in (None, 'unknown') and x['publisher']) or (sdbhit and sdbhit['company']) or (t['pubs'] and t['pubs'][0]) or None
@@ -391,6 +433,8 @@ for key, t in sorted(titles.items()):
     about.append('Runs, best first:')
     for r in runs:
         about.append('- %s on %s (%s)%s' % (', '.join(os.path.basename(f) for f in r['files'][:4]), ', '.join(r['machines']), r['slot'], (': ' + r['notes']) if r.get('notes') else ''))
+    if unrun:
+        about += ['', 'In files/ without a run: ' + ', '.join(unrun) + '.']
     about += ['', 'Files from download.file-hunter.com (The File Hunter MSX archive), %s.' % TODAY]
     with open(os.path.join(tdir, 'about.md'), 'w') as f:
         f.write('\n'.join(about) + '\n')
