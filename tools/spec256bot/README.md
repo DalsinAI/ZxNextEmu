@@ -8,7 +8,7 @@ ZX Cradle, ZX-Poly and EmuZWin load.
 
     make build/s256trace
     B=tools/spec256bot/bot.py
-    python3 $B trace JETPAC.SNA work/          # play it for 5 minutes, traced
+    python3 $B trace JETPAC.SNA work/          # play it for 5 minutes, traced (.z80 works too)
     python3 $B sheet work/                     # sprites -> work/sheet.png
     python3 $B ai work/ --title "Jetpac"       # Claude -> work/plan.json
     python3 $B emit work/ JETPAC.SNA out/      # out/JETPAC.SNA .GFX .CFG .B00
@@ -34,8 +34,10 @@ A byte counts as graphics if it reaches the screen unchanged (loaded, ORed
 or XORed onto blank screen). The tracer also records the attribute of the
 cell at the end of the frame, which byte was drawn on the row below or above
 (the sprite's width and whether it is stored upside down), and which byte
-was drawn to its left (where its rows start). Keys and the Kempston
-joystick are pressed at random so the game gets played.
+was drawn to its left (where its rows start, or, for sprites stored a
+column at a time, how tall a column is). Keys and the Kempston joystick are
+pressed at random so the game gets played: mostly the usual game keys, one
+press in four any key, so a Y/N question gets answered.
 
 **Group.** Nearby drawn bytes with the same width make one sprite.
 `sheet.png` shows them all in the colour the game used.
@@ -46,8 +48,10 @@ what it is, colour ramps by pixel row (a helmet over a suit over flames) and
 a shading style: `bevel` (lit top left, dark bottom right), `gradient`
 (light to dark down the band) or `flat`. The ramps are the Spec256
 palette's: 17 rich ones (fire, skin, slate...), the Spectrum's own colours,
-and `ink`, greys the picture mixes with the cell's ink (UpColorsMixed=8),
-for graphics the game draws in different colours, like the font.
+and `ink`, exactly the colour the game gives that spot (colour 0xFF), for
+graphics the game draws in different colours, like the font. Under a
+background 0xFF can't be the game's ink, so `ink` graphics then take the
+colour the game mostly drew them in, shaded.
 
 **Background.** In the same answer Claude designs a background from
 three gameplay screenshots: a kind (starfield, nebula, sky, hills, cave,
