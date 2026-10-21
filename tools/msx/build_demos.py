@@ -11,12 +11,8 @@ SLOTS = {'.rom': ('cart1', []), '.mx1': ('cart1', []), '.mx2': ('cart1', []), '.
 
 def hw(text):
     t = text.lower()
-    needs = []
-    if 'v9990' in t or 'gfx9000' in t: needs.append('v9990')
-    if 'v9968' in t: needs.append('v9968')
-    if 'turbo' in t and 'r' in t and re.search(r'turbo[ -]?r', t): needs.append('turbor')
-    if 'msx2+' in t or 'msx2plus' in t: needs.append('msx2plus')
-    machines = MSX1 if re.search(r'msx ?1\b|tms9918|tms99|\.mx1\b', t) else MSX2   # .mx1: an MSX1 cartridge
+    needs = hw_needs(t)
+    machines = MSX1 if re.search(r'msx ?1\b|tms9918|tms99', t) else MSX2
     return machines, needs
 
 
@@ -57,15 +53,16 @@ for folder in sorted(os.listdir(root)):
             tid = '%s-%d' % (b, n); n += 1
         used.add(tid)
         tdir = os.path.join(OUT, tid)
-        shelve(tdir)   # ours from an earlier run, kept until this build has files
+        had = shelve(tdir)   # ours from an earlier run, kept until this build has files
         fdir = os.path.join(tdir, 'files')
         os.makedirs(fdir, exist_ok=True)
         open(os.path.join(tdir, DMARK), 'w').close()
-        got = []
+        got, failed = [], []
         for s in srcs:
             tmp = os.path.join(tdir, '.x')
             shutil.rmtree(tmp, ignore_errors=True)
             if not unpack(os.path.join(fdirp, s), tmp):
+                failed.append(s)
                 continue
             for r, _, fs in os.walk(tmp):
                 for f in sorted(fs):
@@ -78,8 +75,14 @@ for folder in sorted(os.listdir(root)):
                     shutil.move(os.path.join(r, f), os.path.join(fdir, dst))
                     got.append('files/' + dst)
             shutil.rmtree(tmp, ignore_errors=True)
-        settle(tdir, bool(got))
-        if not got:
+        ok = bool(got) and not (failed and had)   # a disk missing: keep the earlier, complete build
+        settle(tdir, ok)
+        if not ok:
+            try:   # the earlier build is back: it stays in the index
+                j = json.load(open(os.path.join(tdir, 'title.json')))
+                index.append({'id': tid, 'name': j.get('name'), 'runs': len(j.get('runs', []))})
+            except (OSError, ValueError):
+                pass
             continue
         machines, hneeds = hw(folder + ' ' + ' '.join(srcs) + ' ' + ' '.join(got))
         runs = []
@@ -97,7 +100,9 @@ for folder in sorted(os.listdir(root)):
             # Hardware no emulated MSX has (V9990, V9968, turbo R, MSX2+): files only, no run.
             if slot == 'cart1' and not hneeds:
                 for g in bykind[e]:
-                    run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd)
+                    # .mx1 is an MSX1 cartridge and .mx2 an MSX2 one, whatever the rest of the group is
+                    mach = MSX1 if e == '.mx1' else MSX2 if e == '.mx2' else machines
+                    run = dict(platform='msx', machines=mach, files=[g], slot=slot, needs=nd)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
                     if h and ((h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'], os.path.join(tdir, g))):
                         continue   # a known bad dump, or a mapper the cartridge core cannot bank

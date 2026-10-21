@@ -123,12 +123,14 @@ def mapper_ok(mapper, path):
 
 
 def shelve(tdir):
-    """Move an earlier build aside while a title is rebuilt; settle() then drops or restores it."""
+    """Move an earlier build aside while a title is rebuilt; settle() then drops or restores it.
+    Returns whether there was one."""
     old = os.path.join(os.path.dirname(tdir), '.old-' + os.path.basename(tdir))
     if os.path.exists(old):   # a build cut off last time: the copy set aside is the good one
         shutil.rmtree(tdir, ignore_errors=True)
     elif os.path.exists(tdir):
         os.rename(tdir, old)
+    return os.path.exists(old)
 
 
 def settle(tdir, ok):
@@ -164,9 +166,10 @@ def parse(base, typ):
     flags = re.findall(r'\[([^\]]*)\]', rest)
     year = next((p for p in parens if re.fullmatch(r'(19|20)[0-9x]{2}', p)), None)
     lang = next((p for p in parens if p.lower() in LANGS), None)
-    if not lang:   # ROM names also write it in brackets: [English], [Jp]
-        lang = next((LANG_WORDS[f.lower()] for f in flags if f.lower() in LANG_WORDS), None)
-        flags = [f for f in flags if f.lower() not in LANG_WORDS]
+    if not lang:   # ROM names also write it in brackets: [English], [Jp], [Portuguese Only], [English Version]
+        word = lambda f: re.sub(r'\s+(only|version|translation|translated)$', '', f.strip().lower())
+        lang = next((LANG_WORDS[word(f)] for f in flags if word(f) in LANG_WORDS), None)
+        flags = [f for f in flags if word(f) not in LANG_WORDS]
     part = [p for p in parens if re.match(r'(disk|tape|side|disc|part) ', p, re.I) or re.fullmatch(r'side [ab]', p, re.I)]
     others = [p for p in parens if p not in part and p != year and p != lang and p.strip() not in ('', '-')]
     lang = lang and {'jp': 'ja', 'en-jp': 'en-ja', 'jp-en': 'ja-en'}.get(lang.lower(), lang.lower())   # the archive writes (jp)
@@ -270,6 +273,10 @@ def hw_needs(text):
     if 'v9968' in t: needs.append('v9968')
     if re.search(r'turbo[ -]?r', t): needs.append('turbor')
     if 'msx2+' in t or 'msx2plus' in t: needs.append('msx2plus')
+    # Sound chips no emulated MSX has: OPL4 (Moonsound), Y8950 (MSX-Audio), YM2413 (MSX-Music, FM-PAC).
+    if 'moonsound' in t or 'opl4' in t: needs.append('moonsound')
+    if re.search(r'msx[ -]?audio|y8950', t): needs.append('msx-audio')
+    if re.search(r'msx[ -]?music|fm[ -]?pac|ym2413|\bopll\b', t): needs.append('msx-music')
     return needs
 
 
@@ -293,6 +300,8 @@ for folder, (typ, machines, slot, needs) in SRC.items():
         continue
     for fn in sorted(os.listdir(d)):
         if fn.endswith('.part'):
+            continue
+        if re.fullmatch(r'msx\dgames?\.\w+', fn, re.I):   # the whole folder as one archive, and its list
             continue
         p = parse(fn, typ)
         if is_bad(p['flags']):
@@ -350,12 +359,12 @@ for key, t in sorted(titles.items()):
     if only and key not in only:
         continue
     tdir = os.path.join(OUT, tid)
-    shelve(tdir)   # ours from an earlier run, kept until this build has files
+    had = shelve(tdir)   # ours from an earlier run, kept until this build has files
     os.makedirs(tdir)
     open(os.path.join(tdir, MARK), 'w').close()
     fdir = os.path.join(tdir, 'files')
     os.makedirs(fdir, exist_ok=True)
-    runs, allfiles, sdbhit, sources, unrun = [], [], None, [], []
+    runs, allfiles, sdbhit, sources, unrun, failed = [], [], None, [], [], []
     vs = sorted(t['variants'].values(), key=lambda v: (TYPE_RANK[v['typ']], variant_rank(v['parse']), v['srcs'][0]))
     for v in vs:
         got = []
@@ -365,6 +374,7 @@ for key, t in sorted(titles.items()):
             tmp = os.path.join(tdir, '.x')
             shutil.rmtree(tmp, ignore_errors=True)
             if not unpack(sp, tmp):
+                failed.append(src)
                 continue
             for root, _, fs in os.walk(tmp):
                 for f in sorted(fs):
@@ -395,7 +405,9 @@ for key, t in sorted(titles.items()):
             t.setdefault('hneeds', set()).update(hn)
             continue
         runf = [g for g in got if os.path.splitext(g)[1].lower() in RUNNABLE] or got
-        run = dict(platform='msx', machines=v['machines'], files=runf, slot=v['slot'], needs=list(v['needs']))
+        # "[MSX1 Only]" in the name: not on the MSX2s the MSX1 folder otherwise lists
+        mach = [m for m in v['machines'] if m.startswith('msx1')] if any(re.fullmatch(r'msx ?1 only', f, re.I) for f in v['parse']['flags']) else v['machines']
+        run = dict(platform='msx', machines=mach, files=runf, slot=v['slot'], needs=list(v['needs']))
         p = v['parse']
         notes = []
         if p['flags']:
@@ -424,8 +436,16 @@ for key, t in sorted(titles.items()):
         if notes:
             run['notes'] = '; '.join(notes)
         runs.append(run)
-    settle(tdir, bool(allfiles))
-    if not allfiles:
+    # A title missing a variant keeps its earlier, complete build; with none, what unpacked is filed.
+    ok = bool(allfiles) and not (failed and had)
+    settle(tdir, ok)
+    if not ok:
+        try:   # the earlier build is back: it stays in the index
+            j = json.load(open(os.path.join(tdir, 'title.json')))
+            index.append({'id': tid, 'name': j.get('name'), 'machines': sorted({m for r in j.get('runs', []) for m in r.get('machines', [])}),
+                          'runs': len(j.get('runs', [])), 'screens': len(j.get('screens', []))})
+        except (OSError, ValueError):
+            pass
         continue
     year = (x and x.get('year') and str(x['year']).isdigit() and int(x['year'])) or (sdbhit and sdbhit['year'] and sdbhit['year'].isdigit() and int(sdbhit['year'])) or (t['years'] and min(t['years'])) or None
     pub = (x and x.get('publisher') not in (None, 'unknown') and x['publisher']) or (sdbhit and sdbhit['company']) or (t['pubs'] and t['pubs'][0]) or None
