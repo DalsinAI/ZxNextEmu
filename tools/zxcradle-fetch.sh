@@ -15,6 +15,8 @@
 #          msx       MSX1/MSX2 games and demos (file-hunter.com)
 #          symbos    SymbOS and its apps for Next and MSX2 (symbos.de)
 #          spec256   256-colour Spectrum games (GitHub Spec256-Games)
+#          reviews   ratings and reviews for every title in the library, translated
+#                    to English, into reviews.json next to each title.json
 #          onedrive  your own OneDrive Spectrum folder (asks for the share link once,
 #                    keeps it in TARGET/.onedrive-link, never in the repo)
 #
@@ -24,7 +26,7 @@
 # A log of failures goes to TARGET/fetch.log.
 #
 # Environment: LIMIT=N (titles per section, for a trial run), WORKERS=4,
-# MAX_RELEASES=3 (zxart.ee releases kept per title).
+# MAX_RELEASES=0 (zxart.ee versions kept per title; 0 keeps them all).
 #
 # Needs bash, curl and python3 (standard library only). 7z or unar, if
 # installed, also unpack .rar/.7z/.lzh archives; without them those stay packed.
@@ -70,10 +72,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 LIB = sys.argv[1]
 TITLES = os.path.join(LIB, 'titles')
-SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256']
+SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'onedrive', 'spectrum', 'clones', 'sam', 'mb03', 'vtrd', 'msx', 'symbos', 'spec256', 'reviews']
 LIMIT = int(os.environ.get('LIMIT') or 0)
 WORKERS = int(os.environ.get('WORKERS') or 4)
-MAX_REL = int(os.environ.get('MAX_RELEASES') or 3)
+MAX_REL = int(os.environ.get('MAX_RELEASES') or 0)
 TODAY = datetime.date.today().isoformat()
 UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 LOCK = threading.Lock()
@@ -445,23 +447,41 @@ def zx_title(lib, p, rels, hw):
     if not rels:
         return None
     rels.sort(key=lambda r: (r.get('releaseType') != 'original', -(r.get('year') or 0)))
-    rels = rels[:MAX_REL]
+    rels = rels[:MAX_REL or None]
     name = html.unescape(p['title']).strip()
     charset = 'ru' if set(p.get('language') or []) & {'ru', 'ua', 'by'} or hw in ZX_HW['clones'] else None
     sam = hw == 'samcoupe'
     sid = lib.claim(name, '-sam' if sam else '', 'zxart', p['id'])
     tdir = os.path.join(TITLES, sid)
-    runs, nfiles = [], 0
+    runs, nfiles, versions, vids = [], 0, [], set()
+    plang = (p.get('language') or ['en'])[0]
     for r in rels:
+        lang = (r.get('language') or [plang])[0] if isinstance(r.get('language'), list) else (r.get('language') or plang)
+        vid = {'original': 'orig'}.get(r.get('releaseType'), slug(r.get('releaseType') or 'release'))
+        if lang and lang != 'en':
+            vid += '-' + lang
+        base, n = vid, 2
+        while vid in vids:
+            vid, n = f'{base}-{n}', n + 1
+        vids.add(vid)
+        rpubs = [NAMES[str(i)] for i in r.get('publishersIds', []) if str(i) in NAMES]
+        versions.append({'id': vid, 'label': ', '.join(x for x in (r.get('releaseType') or 'release', r.get('version'),
+                                                                  '/'.join(r.get('releaseFormat') or []), str(r.get('year') or '')) if x),
+                         'year': r.get('year') or None, 'language': lang or None, 'authors': [],
+                         'publisher': rpubs[0] if rpubs else None,
+                         'source': f'https://zxart.ee/eng/software/?id={p["id"]}', 'ids': {'zxart_release': r['id']},
+                         'notes': safe_name(r['fileName'])})
         hwr = r.get('hardwareRequired') or []
         mach = [m for h in hwr for m in HW_MACH.get(h, [])] or HW_MACH.get(hw) or FAM48
         needs = [HW_NEEDS[h] for h in hwr if h in HW_NEEDS] or ([HW_NEEDS[hw]] if hw in HW_NEEDS and not hwr else [])
         likes = [HW_LIKES[h] for h in hwr if h in HW_LIKES]
-        files = get_files(tdir, r['file'], r['fileName'], charset, sub=f"{r['id']}-{safe_name(r['fileName']).split('.')[0]}")
+        files = get_files(tdir, r['file'], r['fileName'], charset, sub=vid)
         nfiles += len(files)
-        runs += group_runs([run_table(f, mach, 'sam-coupe' if sam or 'sam' in mach else 'zx-spectrum', needs, likes,
-                                      ' '.join(x for x in (r.get('releaseType'), r.get('version')) if x) or None)
-                            for f in files])
+        vruns = group_runs([run_table(f, mach, 'sam-coupe' if sam or 'sam' in mach else 'zx-spectrum', needs, likes,
+                                      versions[-1]['label']) for f in files])
+        for x in vruns:
+            x['version'] = vid
+        runs += vruns
     if not nfiles:
         return None
     if not runs:
@@ -481,7 +501,7 @@ def zx_title(lib, p, rels, hw):
          'tags': [hw], 'summary': desc.split('\n')[0][:200] or None,
          'license': LIC.get(p.get('legalStatus'), 'unknown'), 'source': url,
          'sources': [url] + ([f'https://spectrumcomputing.co.uk/entry/{ids["zxdb"]}'] if 'zxdb' in ids else []),
-         'ids': ids, 'runs': runs, 'compat': {},
+         'ids': ids, 'runs': runs, 'compat': {}, 'versions': versions,
          'screens': get_screens(tdir, p.get('imagesUrls') or [])}
     t = {k: v for k, v in t.items() if v not in (None, [], '')} | {'runs': runs}
     lib.finish(sid, t, f'# {name}\n\n{desc}\n\nFrom {url}' if desc else None)
@@ -492,12 +512,20 @@ def zxart(lib, section):
     for hw in ZX_HW[section]:
         start, made, total = 0, 0, None
         while True:
-            try:
-                j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:{start}/limit:100/order:id,asc/filter:zxProdHardware={hw};')
-            except Exception as e:
-                say(f'  zxart.ee {hw}: {e}; skipping the rest of {hw}')
-                log('zxart', hw, start, e)
-                break
+            j = None
+            for lim in (100, 20, 5, 1):
+                try:
+                    j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:{start}/limit:{lim}/order:id,asc/filter:zxProdHardware={hw};')
+                    break
+                except Exception as e:
+                    log('zxart', hw, start, lim, e)
+            if j is None:
+                if total is None or start + 1 >= total:
+                    say(f'  zxart.ee {hw}: page {start} keeps failing; skipping the rest of {hw}')
+                    break
+                say(f'  zxart.ee {hw}: title {start} keeps failing on their server; skipping just that one')
+                start += 1
+                continue
             total = j.get('totalAmount') or 0
             prods = j['responseData'].get('zxProd') or []
             if start == 0:
@@ -519,7 +547,7 @@ def zxart(lib, section):
                             rels[r['id']] = r
                     except Exception as e:
                         log('zxart releases', e)
-                zx_names(todo)
+                zx_names(todo + list(rels.values()))
                 batch(todo, lambda p: zx_title(lib, p, [rels[i] for i in p.get('releasesIds', []) if i in rels], hw),
                       f'{hw} {start}/{total}', len(todo))
                 made += len(todo)
@@ -916,6 +944,198 @@ def onedrive(lib):
     lib.__init__()
 
 
+# ---------------------------------------------------------------- ratings and reviews
+# reviews.json next to each title.json: user ratings and comments from zxart.ee,
+# user score and full magazine review transcripts from Spectrum Computing
+# (ZXDB/ZXSR). Anything not in English is translated, keeping the original.
+# Refreshed when older than REVIEWS_DAYS (default 30).
+
+SC = 'https://spectrumcomputing.co.uk'
+REVIEWS_DAYS = int(os.environ.get('REVIEWS_DAYS') or 30)
+
+
+def translate(text):
+    """Returns (english, source language). Uses Google's free translate endpoint; on failure keeps the text."""
+    if not text or not text.strip():
+        return text, None
+    out, lang = [], None
+    chunks, cur = [], ''
+    for para in text.split('\n'):
+        if len(cur) + len(para) > 4000 and cur:
+            chunks.append(cur)
+            cur = ''
+        cur += para + '\n'
+    chunks.append(cur)
+    try:
+        for c in chunks:
+            q = urllib.parse.urlencode({'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't', 'q': c})
+            j = json.loads(fetch('https://translate.googleapis.com/translate_a/single', data=q.encode(),
+                                 headers={'Content-Type': 'application/x-www-form-urlencoded'}, tries=3))
+            out.append(''.join(seg[0] for seg in j[0] if seg and seg[0]))
+            lang = lang or j[2]
+        return ''.join(out).strip(), lang
+    except Exception as e:
+        log('translate', e)
+        return text, None
+
+
+def english(text, lang=None):
+    """Fields for a review text: text in English, original and translated flag."""
+    if not text:
+        return {'language': lang, 'text': None, 'original': None, 'translated': False}
+    if lang == 'en':
+        return {'language': 'en', 'text': text, 'original': None, 'translated': False}
+    tr, src = translate(text)
+    if not src or src == 'en' or tr == text:
+        return {'language': src or lang, 'text': text, 'original': None, 'translated': False}
+    return {'language': src, 'text': tr, 'original': text, 'translated': True}
+
+
+def plain(h):
+    h = re.sub(r'<br\s*/?>', '\n', h or '')
+    return html.unescape(re.sub(r'<[^>]+>', '', h)).strip()
+
+
+def score_of(s):
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:%|/\s*(\d+))', s or '')
+    if not m:
+        return None, None
+    return float(m.group(1)), float(m.group(2) or 100)
+
+
+def sc_reviews(zxdb):
+    """User score and magazine reviews from Spectrum Computing for one ZXDB entry."""
+    ratings, reviews = [], []
+    url = f'{SC}/entry/{zxdb}'
+    page = fetch(url).decode('utf-8', 'replace')
+    w = re.search(r'Score \(weighted\): </b></div><div[^>]*>([\d.]+)', page)
+    v = re.search(r'Total votes: </b></div><div[^>]*>(\d+)', page)
+    if w:
+        ratings.append({'site': 'spectrumcomputing', 'url': url, 'score': float(w.group(1)), 'scale': 10,
+                        'votes': int(v.group(1)) if v else None, 'version': None})
+    i = page.find('>Magazine Reviews<')
+    refs = []
+    if i > 0:
+        blk = page[i:page.find('panel panel-primary', i)]
+        for row in blk.split('<div class="row zxdb_stripes">')[1:]:
+            mag = plain(re.search(r'<b><a[^>]*>(.*?)</a></b>', row, re.S).group(1)) if '<b><a' in row else None
+            iss = re.search(r'Issue: </b>\s*<a[^>]*>(.*?)<span', row, re.S)
+            pdf = re.search(r'href="([^"]+)"[^>]*>\(VIEW\)', row) or re.search(r'href="([^"]+\.pdf)"', row)
+            typ = re.search(r'Article Type: </b>(.*?)</div>', row, re.S)
+            sc = re.search(r'Score: </b>(.*?)</div>', row, re.S)
+            refs.append({'magazine': mag, 'issue': plain(iss.group(1)) if iss else None, 'url': pdf.group(1) if pdf else url,
+                         'type': plain(typ.group(1)) if typ else None, 'score': plain(sc.group(1)) if sc else None})
+    texts = {}
+    if 'zxsr.php?id=' in page:
+        zp = fetch(f'{SC}/zxsr.php?id={zxdb}').decode('utf-8', 'replace')
+        for m in re.finditer(r'<div class="panel-heading p_white">(.*?)</div><div class="panel-body"><div class="panel-default">'
+                             r'(.*?)<hr>(.*?)</div></div></div>', zp, re.S):
+            head, body, foot = plain(m.group(1)).replace('\xa0', ' '), m.group(2), m.group(3)
+            sc = re.search(r'Overall</th><td>(.*?)</td>', foot, re.S)
+            texts[head] = (plain(body), plain(sc.group(1)) if sc else None)
+    used = set()
+    for r in refs:
+        if r['type'] and not r['type'].startswith('Review'):
+            continue
+        key = next((h for h in texts if h not in used and r['magazine'] and r['magazine'].split(' (')[0].lower() in h.lower()
+                    and (r['issue'] or '').split(' ')[0].lstrip('#') in h), None)
+        text, tscore = texts.get(key, (None, None))
+        if key:
+            used.add(key)
+        score, scale = score_of(r['score'] or tscore)
+        date = re.search(r'\((\d{4}-\d{2}-\d{2})\)', key or '')
+        who = re.search(r'Reviewer:\s*([^\n]+)', text or '')
+        reviews.append({'site': 'spectrumcomputing', 'url': r['url'], 'author': who.group(1).strip() if who else None,
+                        'date': date.group(1) if date else None, 'score': score, 'scale': scale, 'version': None,
+                        'title': ' '.join(x for x in (r['magazine'], r['issue']) if x) or None} | english(text))
+    for h, (text, tscore) in texts.items():
+        if h not in used:
+            score, scale = score_of(tscore)
+            date = re.search(r'\((\d{4}-\d{2}-\d{2})\)', h)
+            reviews.append({'site': 'spectrumcomputing', 'url': f'{SC}/zxsr.php?id={zxdb}', 'author': None,
+                            'date': date.group(1) if date else None, 'score': score, 'scale': scale, 'version': None,
+                            'title': h} | english(text))
+    return ratings, reviews
+
+
+def zxart_reviews(zid, prod):
+    ratings, reviews = [], []
+    url = f'https://zxart.ee/eng/software/?id={zid}'
+    if prod and prod.get('votesAmount'):
+        ratings.append({'site': 'zxart', 'url': url, 'score': float(prod.get('votes') or 0), 'scale': 5,
+                        'votes': int(prod['votesAmount']), 'version': None})
+    try:
+        cs = json.loads(fetch(f'https://zxart.ee/comments-data/id:{zid}/?lang=eng'))
+    except Exception as e:
+        log('zxart comments', zid, e)
+        cs = []
+    stack = list(cs or [])
+    while stack:
+        c = stack.pop(0)
+        stack += c.get('children') or []
+        orig = (c.get('originalContent') or plain(c.get('content'))).strip()
+        if not orig:
+            continue
+        d = re.match(r'(\d\d)\.(\d\d)\.(\d{4})', c.get('date') or '')
+        base = {'site': 'zxart', 'url': url, 'author': (c.get('author') or {}).get('name'),
+                'date': f'{d.group(3)}-{d.group(2)}-{d.group(1)}' if d else None, 'score': None, 'scale': None,
+                'version': None, 'title': None}
+        if c.get('translated'):
+            reviews.append(base | {'language': None, 'text': c['translated'].strip(), 'original': orig, 'translated': True})
+        else:
+            reviews.append(base | english(orig))
+    return ratings, reviews
+
+
+def reviews(lib):
+    todo = []
+    for t in sorted(os.listdir(TITLES)):
+        d = os.path.join(TITLES, t)
+        try:
+            j = json.load(open(os.path.join(d, 'title.json'), encoding='utf-8'))
+        except Exception:
+            continue
+        ids = j.get('ids') or {}
+        if not (ids.get('zxart') or ids.get('zxdb')):
+            continue
+        rf = os.path.join(d, 'reviews.json')
+        if os.path.exists(rf) and time.time() - os.path.getmtime(rf) < REVIEWS_DAYS * 86400:
+            continue
+        todo.append((t, ids))
+    say(f'Ratings and reviews: {len(todo)} titles to check')
+    if LIMIT:
+        todo = todo[:LIMIT]
+    prods = {}
+    zids = [str(i['zxart']) for _, i in todo if i.get('zxart')]
+    for k in range(0, len(zids), 50):
+        try:
+            j = fetch_json(f'{ZX}/types:zxProd/export:zxProd/start:0/limit:50/filter:zxProdId={",".join(zids[k:k + 50])};')
+            for p in j['responseData'].get('zxProd') or []:
+                prods[str(p['id'])] = p
+        except Exception as e:
+            log('zxart votes', e)
+
+    def one(item):
+        t, ids = item
+        ratings, revs = [], []
+        if ids.get('zxart'):
+            a, b = zxart_reviews(ids['zxart'], prods.get(str(ids['zxart'])))
+            ratings += a
+            revs += b
+        if ids.get('zxdb'):
+            a, b = sc_reviews(ids['zxdb'])
+            ratings += a
+            revs += b
+        out = {'format': 1, 'title': t, 'updated': TODAY, 'ratings': ratings, 'reviews': revs}
+        rf = os.path.join(TITLES, t, 'reviews.json')
+        with open(rf + '.part', 'w', encoding='utf-8') as f:
+            json.dump(out, f, indent=2, ensure_ascii=False)
+        os.replace(rf + '.part', rf)
+        n = sum(1 for r in revs if r.get('translated'))
+        return f'{t}: {len(ratings)} ratings, {len(revs)} reviews' + (f' ({n} translated)' if n else '')
+    batch(todo, one, 'reviews')
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -931,7 +1151,7 @@ def main():
                     worldofsam(lib)
                 if s == 'mb03':
                     mb03_site(lib)
-            elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive'):
+            elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'reviews'):
                 globals()[s](lib)
             else:
                 say(f'  unknown section {s}')
