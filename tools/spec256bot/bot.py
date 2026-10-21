@@ -17,6 +17,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -214,6 +215,10 @@ def cmd_sheet(a):
     mem, trace = load(a.work)
     sprites = find_sprites(mem, trace)
     json.dump(sprites, open(os.path.join(a.work, "sprites.json"), "w"))
+    plan = os.path.join(a.work, "plan.json")
+    if os.path.exists(plan):
+        os.remove(plan)  # its sprite ids belonged to the old sheet; run ai again
+        print(f"removed the old {plan}; run ai again for the new sprites")
     draw_sheet(mem, sprites, os.path.join(a.work, "sheet.png"))
     print(f"{len(sprites)} sprites, {sum(len(s['drawn']) for s in sprites)} bytes -> {a.work}/sheet.png")
 
@@ -413,6 +418,11 @@ def cmd_emit(a):
 
     name = os.path.splitext(os.path.basename(a.snapshot))[0].upper()
     os.makedirs(a.out, exist_ok=True)
+    # zxrun -g loads every Spectrum or Spec256 file in the folder, so clear out an earlier package first.
+    for f in os.listdir(a.out):
+        old = os.path.join(a.out, f)
+        if re.search(r"\.(sna|z80|gf[x0-9ab]|b00|cfg|pal)$", f, re.I) and not os.path.samefile(old, a.snapshot):
+            os.remove(old)
     shutil.copyfile(a.snapshot, os.path.join(a.out, name + ".SNA"))
 
     def page(base):
@@ -430,8 +440,6 @@ def cmd_emit(a):
     if any(addr < 0x4000 for addr in colours):
         with open(gfb, "wb") as f:
             f.write(page(0))
-    elif os.path.exists(gfb):
-        os.remove(gfb)              # left from an earlier run that coloured the ROM
     with open(os.path.join(a.out, name + ".CFG"), "w") as f:
         f.write("UpColorsMixed=8\r\n")
     print(f"coloured {len(colours)} bytes -> {a.out}/{name}.GFX")
