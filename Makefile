@@ -94,7 +94,7 @@ WASM_SRC = $(ZXM_SRC) $(CORE_SRC) src/zx/zx.c src/zx/keys.c src/zx/ay.c src/zx/t
            src/next/next.c src/next/uart.c src/next/video.c src/next/dma.c src/next/sd.c src/next/bootrom.c
 WASM_EXPORTS = zxm_lookup zxm_machine zxm_size zxm_create zxm_destroy zxm_info_of zxm_reset \
            zxm_run_frame zxm_framebuffer zxm_audio zxm_input zxm_type zxm_typing \
-           zxm_media_insert zxm_media_eject zxm_state_size zxm_state_save zxm_state_load \
+           zxm_media_insert zxm_media_eject zxm_media_active zxm_state_size zxm_state_save zxm_state_load \
            zxm_debugger malloc free
 
 wasm: $(BUILD)/zxcore.wasm

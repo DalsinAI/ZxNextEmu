@@ -1,16 +1,29 @@
 // ZX Cradle runtime page: one machine, its screen, sound, keyboard and media.
-// The machine itself runs in worker.js.
+// The machine itself runs in worker.js; kept media live in IndexedDB.
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
 const ctx = canvas.getContext('2d');
+const frameCanvas = new OffscreenCanvas(320, 256);
+const frameCtx = frameCanvas.getContext('2d');
 const worker = new Worker('worker.js');
 
-let machineId = new URLSearchParams(location.search).get('m') || 'zx48';
+const prefs = loadPrefs();
+let machines = [];
+let machineId = new URLSearchParams(location.search).get('m') || prefs.machine || 'zx48';
 let running = false;
 let fbW = 320, fbH = 256;
 let pending = null;            // latest frame not yet drawn
-let audio = null;              // AudioContext once the user has interacted
+let audio = null, gain = null; // sound, once the user has interacted
+let lastSnapshot = null;       // library id of the last saved snapshot
+let soundState = 'Starts when you click the screen';
+
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem('zxc-prefs')) || {}; } catch { return {}; }
+}
+function savePrefs() {
+  try { localStorage.setItem('zxc-prefs', JSON.stringify(prefs)); } catch {}
+}
 
 // ---- worker messages ----------------------------------------------------
 
@@ -18,35 +31,25 @@ function send(cmd, data = {}, transfer = []) {
   worker.postMessage({ cmd, ...data }, transfer);
 }
 
-worker.onmessage = e => {
+worker.onmessage = async e => {
   const msg = e.data;
   switch (msg.type) {
-  case 'ready': {
-    const sel = $('machine');
-    for (const mc of msg.machines) {
-      const o = document.createElement('option');
-      o.value = mc.id;
-      o.textContent = mc.name;
-      if (mc.id === 'next') {
-        o.disabled = true;
-        o.textContent += ' (needs its SD card: coming next)';
-      }
-      sel.append(o);
-    }
-    if (!msg.machines.some(mc => mc.id === machineId && mc.id !== 'next')) machineId = 'zx48';
-    sel.value = machineId;
+  case 'ready':
+    machines = msg.machines;
+    buildMachineMenu();
+    if (!machines.some(mc => mc.id === machineId && mc.id !== 'next')) machineId = 'zx48';
     create(machineId);
     break;
-  }
   case 'created':
     fbW = msg.fbW;
     fbH = msg.fbH;
-    canvas.width = fbW;
-    canvas.height = fbH;
+    frameCanvas.width = fbW;
+    frameCanvas.height = fbH;
     fit();
-    resetSlots();
-    $('restore').disabled = true;
-    $('saved-note').textContent = 'No snapshot saved yet.';
+    setSlot(null);
+    lastSnapshot = null;
+    updateSnapshotItem();
+    showStatus();
     send('start');
     break;
   case 'frame':
@@ -54,19 +57,31 @@ worker.onmessage = e => {
     break;
   case 'state':
     running = msg.running;
-    $('run').textContent = running ? 'Pause' : 'Start';
+    $('run').setAttribute('aria-label', running ? 'Pause' : 'Start');
+    $('run').title = running ? 'Pause' : 'Start';
+    $('run-icon').innerHTML = running ? '<path d="M5.5 3.5v9M10.5 3.5v9"/>' : '<path d="M4.5 3l8 5-8 5z"/>';
+    $('step').disabled = running;
+    $('led-run').classList.toggle('on', running);
     setChip(running ? 'running' : 'paused');
     break;
+  case 'status':
+    $('led-tape').classList.toggle('on', msg.tape);
+    $('st-fps').textContent = `${msg.fps.toFixed(1)} frames/s`;
+    $('st-frames').textContent = msg.frames.toLocaleString();
+    break;
   case 'media':
-    setSlot(msg.slot, msg.name);
+    setSlot(msg.name);
     break;
-  case 'saved':
-    $('restore').disabled = false;
-    $('saved-note').textContent = `Snapshot saved at ${new Date().toLocaleTimeString()} (${Math.round(msg.bytes / 1024)} KB).`;
+  case 'saved': {
+    let id = null;
+    try { id = await libAdd({ name: msg.name, kind: 'state', machine: machineId, bytes: msg.bytes }); } catch {
+      showError('This browser is not keeping files for this page, so the snapshot could not be kept.');
+    }
+    lastSnapshot = id;
+    updateSnapshotItem(id != null ? msg.name : null);
+    renderLibrary();
     break;
-  case 'restored':
-    $('saved-note').textContent = `Snapshot restored at ${new Date().toLocaleTimeString()}.`;
-    break;
+  }
   case 'error':
     showError(msg.message);
     break;
@@ -75,30 +90,73 @@ worker.onmessage = e => {
 
 function create(id) {
   machineId = id;
+  prefs.machine = id;
+  savePrefs();
   setChip('starting');
   hideError();
+  const mc = machines.find(m => m.id === id);
+  $('machine-name').textContent = mc ? mc.name : id;
+  $('media-machine').textContent = mc ? mc.name : id;
+  for (const b of document.querySelectorAll('#machine-list .pop-item'))
+    b.classList.toggle('current', b.dataset.id === id);
   history.replaceState(null, '', `?m=${id}`);
   send('create', { id, roms: 'roms.json' });
+  renderLibrary();
+}
+
+function buildMachineMenu() {
+  const list = $('machine-list');
+  list.textContent = '';
+  for (const mc of machines) {
+    const b = document.createElement('button');
+    b.className = 'pop-item';
+    b.dataset.id = mc.id;
+    b.innerHTML = '<svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7"/></svg><span></span><small></small>';
+    b.querySelector('span').textContent = mc.name;
+    if (mc.id === 'next') {
+      b.disabled = true;
+      b.querySelector('small').textContent = 'SD card next';
+    } else {
+      b.querySelector('small').textContent = mc.id;
+    }
+    b.addEventListener('click', () => { closeMenus(); if (mc.id !== machineId) create(mc.id); canvas.focus(); });
+    list.append(b);
+  }
 }
 
 // ---- screen -------------------------------------------------------------
 
-// Largest integer scale of the 320x256 picture that fits. A Next frame is
-// 640 wide with half-width pixels, so it is shown at the same size.
-function fit() {
-  const area = $('screen-area');
-  const maxW = area.clientWidth;
-  const maxH = window.innerHeight - 56 - 120;
-  const s = Math.max(1, Math.min(Math.floor(maxW / 320), Math.floor(maxH / 256)));
-  canvas.style.width = `${320 * s}px`;
-  canvas.style.height = `${256 * s}px`;
+// The picture is 320x256 including the border (a Next frame is 640 wide with
+// half-width pixels and shows at the same size). Without the border it is
+// the 256x192 paper. Scale 0 fits the window, smoothing off, whole pixels.
+function view() {
+  const border = prefs.border !== false;
+  return border ? { x: 0, y: 0, w: 320, h: 256 } : { x: 32, y: 32, w: 256, h: 192 };
 }
-window.addEventListener('resize', fit);
+
+function fit() {
+  const v = view();
+  const stage = $('stage');
+  const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 56;
+  const best = Math.max(1, Math.min(Math.floor(maxW / v.w), Math.floor(maxH / v.h)));
+  const s = prefs.scale ? Math.min(prefs.scale, best) : best;
+  canvas.width = v.w * (fbW / 320);
+  canvas.height = v.h;
+  canvas.style.width = `${v.w * s}px`;
+  canvas.style.height = `${v.h * s}px`;
+  $('scale-readout').textContent = prefs.scale ? `${s}×` : `Fit ${s}×`;
+  for (const b of document.querySelectorAll('#scale-seg button'))
+    b.setAttribute('aria-pressed', String(Number(b.dataset.scale) === (prefs.scale || 0)));
+  $('border').setAttribute('aria-pressed', String(prefs.border !== false));
+  $('border-state').textContent = prefs.border !== false ? 'Shown' : 'Hidden';
+}
+new ResizeObserver(fit).observe($('stage'));
 
 function draw() {
   if (pending) {
-    const img = new ImageData(new Uint8ClampedArray(pending.pixels), pending.w, pending.h);
-    ctx.putImageData(img, 0, 0);
+    frameCtx.putImageData(new ImageData(new Uint8ClampedArray(pending.pixels), pending.w, pending.h), 0, 0);
+    const v = view(), k = fbW / 320;
+    ctx.drawImage(frameCanvas, v.x * k, v.y, v.w * k, v.h, 0, 0, canvas.width, canvas.height);
     pending = null;
   }
   requestAnimationFrame(draw);
@@ -120,13 +178,122 @@ function setChip(state) {
   chip.innerHTML = `<b>${letter}</b>${word}`;
 }
 
+let errorTimer = 0;
 function showError(text) {
   const el = $('error');
   el.textContent = text;
   el.hidden = false;
+  clearTimeout(errorTimer);
+  errorTimer = setTimeout(hideError, 8000);
   if (!running) setChip('failed');
 }
 function hideError() { $('error').hidden = true; }
+
+function showStatus() {
+  const mc = machines.find(m => m.id === machineId);
+  $('st-machine').textContent = mc ? `${mc.name} (${mc.id})` : machineId;
+  $('st-cpu').textContent = ['zx48', 'pentagon', 'next'].includes(machineId) ? 'Z80 at 3.5 MHz' : 'Z80 at 3.5469 MHz';
+  $('st-roms').textContent = mc && mc.roms.length ? mc.roms.join(', ') : 'none';
+  $('st-sound').textContent = soundState;
+}
+
+// ---- menus and drawers ----------------------------------------------------
+
+const menus = [['volume-btn', 'volume-pop'], ['machine-btn', 'machine-pop'], ['power-btn', 'power-pop'],
+  ['screen-btn', 'screen-pop'], ['input-btn', 'input-pop'], ['debug-btn', 'debug-pop']];
+
+function closeMenus(except) {
+  for (const [b, p] of menus) {
+    if (p === except) continue;
+    $(p).hidden = true;
+    $(b).setAttribute('aria-expanded', 'false');
+  }
+}
+for (const [b, p] of menus) {
+  $(b).addEventListener('click', e => {
+    e.stopPropagation();
+    const open = $(p).hidden;
+    closeMenus(p);
+    $(p).hidden = !open;
+    $(b).setAttribute('aria-expanded', String(open));
+  });
+  $(p).addEventListener('click', e => e.stopPropagation());
+}
+document.addEventListener('click', () => closeMenus());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.activeElement !== canvas) {
+    closeMenus();
+    $('media-drawer').hidden = $('status-drawer').hidden = true;
+    $('media-btn').setAttribute('aria-pressed', 'false');
+  }
+});
+
+function toggleDrawer(id, open) {
+  const d = $(id);
+  const show = open ?? d.hidden;
+  $('media-drawer').hidden = $('status-drawer').hidden = true;
+  d.hidden = !show;
+  $('media-btn').setAttribute('aria-pressed', String(id === 'media-drawer' && show));
+  if (show && id === 'status-drawer') showStatus();
+}
+$('media-btn').addEventListener('click', e => { e.stopPropagation(); closeMenus(); toggleDrawer('media-drawer'); });
+$('media-close').addEventListener('click', () => toggleDrawer('media-drawer', false));
+$('status-btn').addEventListener('click', () => { closeMenus(); toggleDrawer('status-drawer', true); });
+$('status-close').addEventListener('click', () => toggleDrawer('status-drawer', false));
+for (const d of ['media-drawer', 'status-drawer']) $(d).addEventListener('click', e => e.stopPropagation());
+
+// ---- controls -------------------------------------------------------------
+
+$('run').addEventListener('click', e => { e.stopPropagation(); startAudio(); send(running ? 'stop' : 'start'); });
+$('reset').addEventListener('click', () => { closeMenus(); send('reset', { power: false }); canvas.focus(); });
+$('power').addEventListener('click', () => { closeMenus(); send('reset', { power: true }); canvas.focus(); });
+$('save').addEventListener('click', () => {
+  closeMenus();
+  const mc = machines.find(m => m.id === machineId);
+  const when = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  send('save', { name: `${mc ? mc.name : machineId}, ${when}` });
+});
+$('quick-restore').addEventListener('click', async () => {
+  closeMenus();
+  if (lastSnapshot != null) await useItem(await libGet(lastSnapshot));
+  canvas.focus();
+});
+function updateSnapshotItem(name) {
+  $('quick-restore').disabled = lastSnapshot == null;
+  $('last-snap').textContent = name ? name.replace(/^.*, /, '') : 'None yet';
+}
+$('step').addEventListener('click', () => send('step'));
+
+for (const b of document.querySelectorAll('#scale-seg button'))
+  b.addEventListener('click', () => { prefs.scale = Number(b.dataset.scale); savePrefs(); fit(); });
+$('border').addEventListener('click', () => { prefs.border = prefs.border === false; savePrefs(); fit(); });
+$('fullscreen').addEventListener('click', async () => {
+  closeMenus();
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch { showError('This window does not allow full screen.'); }
+  canvas.focus();
+});
+function applyTheme() {
+  const theme = prefs.theme || 'dark';
+  document.documentElement.dataset.theme = theme;
+  $('theme-state').textContent = theme === 'light' ? 'Paper' : 'Case';
+}
+$('theme').addEventListener('click', () => { prefs.theme = prefs.theme === 'light' ? 'dark' : 'light'; savePrefs(); applyTheme(); });
+applyTheme();
+
+function applyJoystick() {
+  $('joystick').setAttribute('aria-pressed', String(!!prefs.joystick));
+  $('joystick-state').textContent = prefs.joystick ? 'Kempston' : 'Cursor keys';
+}
+$('joystick').addEventListener('click', () => { prefs.joystick = !prefs.joystick; savePrefs(); applyJoystick(); releaseAll(); });
+applyJoystick();
+$('type-btn').addEventListener('click', () => {
+  closeMenus();
+  send('type', { text: machineId === 'zx48' ? 'j""\n' : '\n' });
+  canvas.focus();
+});
 
 // ---- keyboard -------------------------------------------------------------
 
@@ -162,7 +329,7 @@ const MIN_HOLD_MS = 45;
 let joy = 0;
 
 function press(code) {
-  if ($('joystick').checked && code in joymap) {
+  if (prefs.joystick && code in joymap) {
     joy |= joymap[code];
     send('kempston', { bits: joy });
     return true;
@@ -211,7 +378,7 @@ function releaseAll() {
 }
 
 canvas.addEventListener('keydown', e => {
-  if (e.metaKey) return;
+  if (e.metaKey || e.key === 'F11') return;
   startAudio();
   if (press(e.code)) e.preventDefault();
 });
@@ -225,69 +392,150 @@ canvas.addEventListener('pointerdown', () => { canvas.focus(); startAudio(); });
 // ---- sound ----------------------------------------------------------------
 
 async function startAudio() {
-  if (audio || !$('sound').checked) return;
+  if (audio) { if (audio.state === 'suspended') audio.resume(); return; }
   try {
     audio = new AudioContext({ sampleRate: 44100 });
     await audio.audioWorklet.addModule('audio.js');
     const node = new AudioWorkletNode(audio, 'zx-sound', { outputChannelCount: [2] });
-    node.connect(audio.destination);
+    gain = audio.createGain();
+    node.connect(gain).connect(audio.destination);
+    applyVolume();
     send('audio', { port: node.port }, [node.port]);
+    soundState = 'On, 44.1 kHz stereo';
   } catch (err) {
     audio = null;
+    soundState = 'Off: this browser would not start it';
     showError(`Sound could not start: ${err.message}`);
   }
+  showStatus();
 }
-$('sound').addEventListener('change', () => {
-  if (!audio) { startAudio(); return; }
-  if ($('sound').checked) audio.resume(); else audio.suspend();
-});
-
-// ---- controls -------------------------------------------------------------
-
-$('machine').addEventListener('change', e => create(e.target.value));
-$('run').addEventListener('click', () => { startAudio(); send(running ? 'stop' : 'start'); });
-$('reset').addEventListener('click', () => { send('reset', { power: false }); canvas.focus(); });
-$('power').addEventListener('click', () => { send('reset', { power: true }); resetSlots(true); canvas.focus(); });
-$('save').addEventListener('click', () => send('save'));
-$('restore').addEventListener('click', () => { send('restore'); canvas.focus(); });
-$('light').addEventListener('change', e => {
-  document.documentElement.dataset.theme = e.target.checked ? 'light' : 'dark';
-  try { localStorage.setItem('zxc-theme', document.documentElement.dataset.theme); } catch {}
-});
-try {
-  const t = localStorage.getItem('zxc-theme');
-  if (t) { document.documentElement.dataset.theme = t; $('light').checked = t === 'light'; }
-} catch {}
-
-// ---- media ----------------------------------------------------------------
-
-function setSlot(slot, name) {
-  const row = $(`slot-${slot}`);
-  if (!row) return;
-  row.classList.toggle('zxc-slot--empty', !name);
-  row.querySelector('.zxc-slot__file').textContent = name || 'Empty';
-  row.querySelector('.zxc-slot__file').title = name || '';
+function applyVolume() {
+  const v = prefs.volume ?? 80;
+  $('volume').value = v;
+  $('volume-value').textContent = `${v}%`;
+  $('vol-wave').style.display = v ? '' : 'none';
+  if (gain) gain.gain.value = (v / 100) ** 2;
 }
-function resetSlots(keepTape = false) {
-  if (!keepTape) setSlot('tape', null);
-  setSlot('snapshot', null);
+$('volume').addEventListener('input', e => { prefs.volume = Number(e.target.value); savePrefs(); startAudio(); applyVolume(); });
+applyVolume();
+
+// ---- kept media (IndexedDB) -----------------------------------------------
+
+let dbp = null;
+function db() {
+  dbp ??= new Promise((resolve, reject) => {
+    const r = indexedDB.open('zx-cradle', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('media', { keyPath: 'id', autoIncrement: true });
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+  return dbp;
+}
+function tx(mode, fn) {
+  return db().then(d => new Promise((resolve, reject) => {
+    const t = d.transaction('media', mode);
+    const req = fn(t.objectStore('media'));
+    t.oncomplete = () => resolve(req?.result);
+    t.onerror = () => reject(t.error);
+  }));
+}
+const libAdd = item => tx('readwrite', s => s.add({ ...item, size: item.bytes.byteLength, added: Date.now() }));
+const libGet = id => tx('readonly', s => s.get(id));
+const libDelete = id => tx('readwrite', s => s.delete(id));
+const libAll = () => tx('readonly', s => s.getAll());
+
+function kindOf(name) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.tap') || n.endsWith('.tzx')) return 'tape';
+  if (n.endsWith('.sna') || n.endsWith('.z80')) return 'snapshot';
+  return null;
 }
 
-async function loadFile(file) {
+const icons = {
+  tape: '<rect x="1.5" y="3.5" width="13" height="9"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/>',
+  snapshot: '<rect x="2.5" y="1.5" width="11" height="13"/><path d="M5 5.5h6M5 8h6"/>',
+  state: '<rect x="1.5" y="4.5" width="13" height="9"/><path d="M5.5 4.5l1-2h3l1 2"/><circle cx="8" cy="9" r="2.5"/>',
+};
+const kindWords = { tape: 'Tape', snapshot: 'Snapshot file', state: 'Saved state' };
+
+function sizeText(n) {
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+async function renderLibrary() {
+  let items = [];
+  try { items = await libAll(); } catch {
+    $('library-note').textContent = 'This browser is not keeping files for this page, so media lasts until you close it.';
+  }
+  const list = $('library');
+  list.textContent = '';
+  items.sort((a, b) => b.added - a.added);
+  const mc = machines.find(m => m.id === machineId);
+  for (const it of items) {
+    if (it.kind === 'state' && it.machine !== machineId) continue;
+    const li = document.createElement('li');
+    li.innerHTML = `<svg viewBox="0 0 16 16">${icons[it.kind]}</svg><div class="lib-name"><b></b><small></small></div><div class="lib-actions"><button class="zxc-btn small use"></button><button class="zxc-btn small remove">Remove</button></div>`;
+    li.querySelector('b').textContent = it.name;
+    li.querySelector('b').title = it.name;
+    li.querySelector('small').textContent = `${kindWords[it.kind]} · ${sizeText(it.size)}`;
+    const use = li.querySelector('.use');
+    use.textContent = it.kind === 'tape' ? 'Insert' : it.kind === 'state' ? 'Restore' : 'Load';
+    use.addEventListener('click', async () => { await useItem(await libGet(it.id)); canvas.focus(); });
+    li.querySelector('.remove').addEventListener('click', async () => {
+      await libDelete(it.id);
+      if (lastSnapshot === it.id) { lastSnapshot = null; updateSnapshotItem(); }
+      renderLibrary();
+    });
+    list.append(li);
+  }
+  if (!list.children.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = `Nothing kept yet. Add a tape or a snapshot, or save the ${mc ? mc.name : 'machine'} from the Power menu.`;
+    list.append(li);
+  }
+}
+
+async function useItem(it) {
+  if (!it) return;
   hideError();
   startAudio();
-  const bytes = await file.arrayBuffer();
-  send('load', { name: file.name, bytes, id: machineId, autostart: $('autostart').checked }, [bytes]);
+  const bytes = it.bytes.slice(0);
+  if (it.kind === 'state') {
+    send('restore', { name: it.name, bytes }, [bytes]);
+  } else {
+    send('load', { name: it.name, bytes, id: machineId, autostart: $('autostart').checked }, [bytes]);
+  }
   if (!running) send('start');
+}
+
+// Keep each file, then load the last one.
+async function addFiles(files) {
+  hideError();
+  let last = null;
+  for (const f of files) {
+    const kind = kindOf(f.name);
+    if (!kind) { showError(`${f.name}: ZX Cradle keeps .tap, .tzx, .sna and .z80 files.`); continue; }
+    const bytes = await f.arrayBuffer();
+    let id = null;
+    try { id = await libAdd({ name: f.name, kind, bytes }); } catch {}
+    last = id != null ? await libGet(id) : { name: f.name, kind, bytes };
+  }
+  renderLibrary();
+  if (last) await useItem(last);
   canvas.focus();
 }
 
-for (const b of document.querySelectorAll('[data-insert]'))
-  b.addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', e => {
-  if (e.target.files[0]) loadFile(e.target.files[0]);
-  e.target.value = '';
-});
+function setSlot(name) {
+  const row = $('slot-tape');
+  row.classList.toggle('zxc-slot--empty', !name);
+  row.querySelector('.zxc-slot__file').textContent = name || 'Empty';
+  row.querySelector('.zxc-slot__file').title = name || '';
+  $('eject-tape').disabled = !name;
+}
+$('eject-tape').addEventListener('click', () => send('eject', { slot: 'tape' }));
+$('add-media').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
 
 let dragDepth = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('drop').hidden = false; });
@@ -297,8 +545,7 @@ window.addEventListener('drop', e => {
   e.preventDefault();
   dragDepth = 0;
   $('drop').hidden = true;
-  const f = e.dataTransfer.files[0];
-  if (f) loadFile(f);
+  if (e.dataTransfer.files.length) addFiles([...e.dataTransfer.files]);
 });
 
 // ---- go -------------------------------------------------------------------
