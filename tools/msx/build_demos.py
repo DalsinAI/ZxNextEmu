@@ -35,16 +35,20 @@ used = set()     # ids given out in this run; an earlier run's folders are rebui
 index = []
 for folder in sorted(os.listdir(root)):
     fdirp = os.path.join(root, folder)
-    files = sorted(f for f in os.listdir(fdirp) if not f.endswith('.part'))
+    have = set(os.listdir(fdirp))
+    # get.sh leaves "<name>.part" when its last try fails: a failed source, unless the whole file is there
+    files = sorted(f for f in have if not (f.endswith('.part') and f[:-5] in have))
     sets = {}
-    # A folder of many archives holds separate demos; the disks of one demo share a name
-    # once the part marker ("(Disk 1 of 2)", "[Disk 2]", "Disk 3") is taken out.
-    split = len(files) > 4
+    # A folder holds one demo, or separate ones; the disks of one demo share a name once the part
+    # marker ("(Disk 1 of 2)", "[Disk 2]", "Disk 3") is taken out.
     for f in files:
-        k = PART.sub('', re.sub(r'\.\w+$', '', f)).strip() if split else folder
+        k = PART.sub('', re.sub(r'\.\w+$', '', re.sub(r'\.part$', '', f))).strip()
         sets.setdefault(k, []).append(f)
+    split = len(sets) > 1
+    if not split:
+        sets = {folder: files}
     for name0, srcs in sets.items():
-        p = parse(srcs[0], 'ROM') if split else parse(folder, 'ROM')
+        p = parse(re.sub(r'\.part$', '', srcs[0]), 'ROM') if split else parse(folder, 'ROM')
         name = re.sub(r'ASCII(8|16)$', '', p['title']).strip() if split else folder
         name = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', name) if split and ' ' not in name else name
         tid = 'msx-demo-' + slug(name)
@@ -59,6 +63,9 @@ for folder in sorted(os.listdir(root)):
         open(os.path.join(tdir, DMARK), 'w').close()
         got, failed = [], []
         for s in srcs:
+            if s.endswith('.part'):   # a download cut off: keep the earlier build
+                failed.append(s)
+                continue
             tmp = os.path.join(tdir, '.x')
             shutil.rmtree(tmp, ignore_errors=True)
             if not unpack(os.path.join(fdirp, s), tmp):
@@ -76,8 +83,8 @@ for folder in sorted(os.listdir(root)):
                     got.append('files/' + dst)
             shutil.rmtree(tmp, ignore_errors=True)
         ok = bool(got) and not (failed and had)   # a disk missing: keep the earlier, complete build
-        settle(tdir, ok)
         if not ok:
+            settle(tdir, False)
             try:   # the earlier build is back: it stays in the index
                 j = json.load(open(os.path.join(tdir, 'title.json')))
                 index.append({'id': tid, 'name': j.get('name'), 'runs': len(j.get('runs', []))})
@@ -102,6 +109,9 @@ for folder in sorted(os.listdir(root)):
                 for g in bykind[e]:
                     # .mx1 is an MSX1 cartridge and .mx2 an MSX2 one, whatever the rest of the group is
                     mach = MSX1 if e == '.mx1' else MSX2 if e == '.mx2' else machines
+                    mach = hz_machines(name0 + ' ' + g, mach)   # "-50Hz", "(NTSC)"
+                    if not mach:
+                        continue
                     run = dict(platform='msx', machines=mach, files=[g], slot=slot, needs=nd)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
                     if h and ((h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'], os.path.join(tdir, g))):
@@ -139,6 +149,7 @@ for folder in sorted(os.listdir(root)):
         json.dump(meta, open(os.path.join(tdir, 'title.json'), 'w'), indent=2, ensure_ascii=False)
         with open(os.path.join(tdir, 'about.md'), 'w') as f:
             f.write('# %s\n\nMSX demo from download.file-hunter.com, Demos/%s.\n' % (name, folder))
+        settle(tdir, True)   # the earlier build goes only once this one is complete
         index.append({'id': tid, 'name': name, 'runs': len(runs)})
 # A titles folder this builder made that no longer comes out of the archive (a game gone, or a
 # renamed slug) is stale; only folders carrying the marker are touched.
