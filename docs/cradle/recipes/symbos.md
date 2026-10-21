@@ -124,8 +124,12 @@ with a stopped clock.
 
 ## `symbos-msx2`
 
-This waits for the MSX2 machine being built in the "MSX1 and MSX2 machines"
-thread. The recipe needs this from it:
+The MSX2 machine is in draft PR #11: machine `msx2` (`msx2eu` for 50 Hz),
+a 1 MB mapper, slots `cart1`, `cart2`, `disk0`, `disk1` (`.dsk`) and `ide0`,
+`ide1` (hard disk images). Its ROMs, in order, are `cbios_main_msx2.rom`,
+`cbios_sub.rom`, `cbios_logo_msx2.rom` and `disk.rom`. The recipe uses
+`msx2eu` with Nextor's Sunrise IDE ROM as `disk.rom` and the SymbOS hard disk
+image in `ide0`. The table is what SymbOS needs from the machine:
 
 | Part | Needed | Notes |
 | --- | --- | --- |
@@ -136,12 +140,12 @@ thread. The recipe needs this from it:
 | Mouse | MSX mouse on joystick port 1 (read through PSG registers 14 and 15) | SymbOS drives the MSX mouse directly. |
 | Clock | RP5C01 RTC | Standard on MSX2; the same wall-clock input as N2. |
 | Sound | PSG (AY-3-8910); OPLL and SCC optional | |
-| BIOS | an MSX2 BIOS, MSX2 sub-ROM and a disk ROM | The machines' own ROMs are not redistributable. C-BIOS is, but has no disk ROM and may not be enough for Nextor and SymbOS. The recipe asks for user ROMs by checksum unless the MSX thread finds a free set that boots SymbOS. |
+| BIOS | C-BIOS main, sub-ROM and logo ROM, plus `disk.rom` | C-BIOS is redistributable. `disk.rom` is Nextor's Sunrise IDE ROM, fetched like SymbOS (or supplied by the user). If SymbOS does not boot on C-BIOS, the recipe asks for a real MSX2 BIOS by checksum (main 32 KB, sub 16 KB, no logo ROM). To check once the image boots. |
 
 ### Media
 
 - **First version, image-backed.** The SymbOS 4.0 MSX hard disk image goes
-  in the IDE slot as an image-backed medium (`image =
+  in `ide0` as an image-backed medium (`image =
   "fetch:symbos-4.0-msx-hd/<file>"`, `write = "overlay"`). This needs nothing
   new in storage and is exactly what real users boot.
 - **Later, folder-backed.** A folder-backed **FAT16** volume (Nextor does not
@@ -157,8 +161,8 @@ the Next.
 
 | # | Where | Change |
 | --- | --- | --- |
-| M1 | MSX thread | The MSX2 machine with the parts in the table above, and its `zxm_info` slots: `ide.0` (or the chosen interface), `cart.1`, `cart.2` |
-| M2 | runtime (JS) | FAT16 in the folder-backed volume builder |
+| M1 | MSX thread | The MSX2 machine (PR #11): check that the V9938 command engine, MSX mouse and RP5C01 are there, and boot the SymbOS 4.0 hard disk image in `ide0` |
+| M2 | MSX thread and runtime (JS) | Folder-backed FAT16 (host folders come up as FAT32 today, which Nextor cannot boot); planned in PR #11's follow-up |
 | M3 | runtime (JS) | A PC key map for the MSX matrix, and pointer lock for the MSX mouse (shared with N6) |
 | M4 | [../storage.md](../storage.md) | Add the MSX to the `ide` row and FAT16 as a folder-backed format |
 
@@ -170,8 +174,8 @@ the Next.
    checksum, layered media, first-boot snapshot. Phase 2 of
    [../design.md](../design.md#phases), after folder-backed SD.
 3. `symbos-next`, usable with a stopped clock; then N1 and N2 for the clock.
-4. `symbos-msx2` with the hard disk image once the MSX2 machine boots
-   Nextor; then the folder-backed FAT16 card.
+4. `symbos-msx2` with the hard disk image in `ide0` once PR #11 boots
+   Nextor from it; then the folder-backed FAT16 card.
 
 ## Sources
 
