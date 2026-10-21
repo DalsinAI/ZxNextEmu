@@ -104,6 +104,10 @@ typedef struct zx {
 
     struct zxn *next;      /* ZX Spectrum Next state (ZX_NEXT only) */
     struct s256 *s256;     /* Spec256 shadow CPUs, or NULL (not owned) */
+
+    /* An interface on the expansion port (expansion.h), or NULL. */
+    struct zx_exp *exp;
+    uint8_t div_map;       /* its divMMC memory is paged in at 0000-3FFF */
 } zx;
 
 /* Create a machine from its ROM images: roms[i] is 16K for each name
@@ -133,12 +137,16 @@ int zx_load_z80(zx *m, const uint8_t *data, size_t len);
 /* Release memory owned by the machine (the Next allocates its RAM). */
 void zx_free(zx *m);
 
-/* Attach an SD card (Next only), slot 0 or 1. The machine closes the
- * device when it is replaced or the machine is freed. */
+/* Attach an SD card (the Next, or a classic machine's divMMC), slot 0 or
+ * 1. The machine closes the device when it is replaced or the machine is
+ * freed. */
 struct zx_blockdev;
 int zx_attach_sd_dev(zx *m, int slot, struct zx_blockdev *bd);
 /* Host side (files.c): an image file or a folder, see storage/blockdev.h. */
 int zx_attach_sd(zx *m, int slot, const char *path);
+/* Host side (files.c): plug "divmmc" or "mb03" (expansion.h) into a
+ * classic machine, with the 8K esxDOS ROM read from rom_path. */
+int zx_attach_interface(zx *m, const char *name, const char *rom_path);
 
 /* Full machine state, media contents excepted (they stay attached). Load
  * into a machine of the same model built by the same core; returns 0 on

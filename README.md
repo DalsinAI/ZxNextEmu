@@ -17,7 +17,9 @@ build/zxrun -m 128 -f 500 -s shot.ppm game.tap
 ```
 
 `zxrun` options: `-m` model (`next`, `48`, `128`, `plus2`, `plus2a`, `plus3`,
-`pentagon`), `-c` SD card for the Next (a folder or an image file), `-p`
+`pentagon`), `-i` an interface for a classic model (`divmmc` or `mb03`)
+with its esxDOS ROM (`-e`), `-c` SD card for the Next or the interface (a
+folder or an image file), `-p`
 a folder for the Next's Raspberry Pi, `-f` frames to run, `-t` text to type (after `-d` frames),
 `-s` screenshot (PPM), `-w` audio (WAV), and a `.sna`, `.z80`, `.tap` or
 `.tzx` file to load. Tapes load instantly through the ROM when they use the
@@ -43,6 +45,32 @@ dot (such as `.git`) are hidden from the Next and left alone. Each machine
 gets its own folder, the way Amiga Cradle gives each machine its own
 storage. `-c` also accepts a raw image file, and `tools/mksd.sh` builds one
 from a folder.
+
+### The MB03+ Ultimate and divMMC
+
+The classic models can take an interface on the expansion port. `divmmc`
+is a divMMC running esxDOS from an SD card. `mb03` is the
+[MB03+ Ultimate](https://sites.google.com/view/mb03plus/ulimate), which
+fits these so far:
+
+- a divMMC with 512K RAM and two SD cards
+- TurboSound: three AYs, which also gives a 48K an AY
+- SpecDrum, Covox and SounDrive DACs
+- a Kempston mouse
+- the Timex second screen and hi-colour modes
+
+The board's ULA+ is the machine's own, since every classic model has ULA+.
+Both interfaces need the 8K esxDOS ROM, and the card is a folder, as on the
+Next:
+
+```sh
+build/zxrun -m 128 -i mb03 -e esxmmc.bin -c sd-folder -f 800 -d 450 -t '.ls
+'
+```
+
+esxDOS's `SYS/` and `BIN/` go in the folder. Use the ones that match the
+ROM's version; tests/README.md says where to get a matching set. What the
+Spectrum saves (`SAVE *"name"`) lands in the folder.
 
 ### Wifi
 
@@ -124,6 +152,7 @@ timing-sensitive loaders behave as on the hardware.
 | Raspberry Pi | NextPi's supervisor shell on UART 1, files in a host folder: `.pisend`, `.piver`, `.piput`, `.piget` work; the nextpi-* players are not there yet |
 | Spec256 | 256-colour games: shadow CPUs on bit-planes, backgrounds, CFG settings; 48K and 128K. The 30 games of the Spec256-Games collection that have a snapshot all run |
 | ULA+ | 64-colour palette on every classic model (`make ulaplus`); the Next has it too |
+| MB03+ Ultimate / divMMC | on the classic models: divMMC + esxDOS on folder SD cards, TurboSound, SpecDrum/Covox/SounDrive, Kempston mouse, Timex second screen and hi-colour. Still to come: General Sound, SAA1099, SID, GigaScreen, Radastan, Timex hi-res, MBIDE/CF, RTC, the board's config registers |
 | Browser | `make serve`: the ZX Cradle page, every classic model with sound, keyboard, tapes and snapshots |
 | Machine state | complete save and load for every machine (`zxm_state_save`) |
 | WebAssembly core | `zxcore.wasm`, the zxm interface, identical output to native |
@@ -139,6 +168,8 @@ timing-sensitive loaders behave as on the hardware.
 | ESP8266 over UART 0: AT commands, baud change, TCP to a local echo server | all pass (`make esp`) |
 | NextZXOS's Pi tools against the emulated NextPi (needs the tbblue software) | all pass (`make nextpi TBBLUE=...`) |
 | Every machine: save state, run on, load, run again; same pictures and sound | all pass (`make state`; `ZXM_SPEC256=game-folder` for a Spec256 game) |
+| Expansion interfaces: divMMC paging and automap, TurboSound, DACs, mouse, Timex screens | all pass (`make mb03`) |
+| esxDOS 0.8.9 on an MB03+ (48K, 128K, +3, Pentagon): boot, `SAVE *` into the SD folder | all pass (`make esxdos`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 

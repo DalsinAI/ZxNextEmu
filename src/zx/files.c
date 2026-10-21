@@ -5,10 +5,12 @@
  * unchanged; native front ends link this file as well.
  */
 #include "zx.h"
+#include "expansion.h"
 #include "../next/next.h"
 #include "../storage/blockdev.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static int load_rom(uint8_t *dst, const char *dir, const char *name)
 {
@@ -49,8 +51,6 @@ int zx_init(zx *m, zx_model model, const char *roms_dir)
 int zx_attach_sd(zx *m, int slot, const char *path)
 {
     zx_blockdev *bd;
-    if (m->model != ZX_NEXT)
-        return -1;
     if ((bd = zx_bd_open(path)) == NULL)
         return -1;
     if (zx_attach_sd_dev(m, slot, bd)) {
@@ -58,6 +58,31 @@ int zx_attach_sd(zx *m, int slot, const char *path)
         return -1;
     }
     return 0;
+}
+
+int zx_attach_interface(zx *m, const char *name, const char *rom_path)
+{
+    static uint8_t rom[0x2000];
+    uint32_t features;
+    FILE *fp;
+    size_t n;
+    if (!strcmp(name, "divmmc"))
+        features = ZX_EXP_DIVMMC;
+    else if (!strcmp(name, "mb03"))
+        features = ZX_EXP_MB03;
+    else
+        return -1;
+    if (!rom_path || !(fp = fopen(rom_path, "rb"))) {
+        fprintf(stderr, "zx: cannot open the esxDOS ROM %s\n", rom_path ? rom_path : "(none)");
+        return -1;
+    }
+    n = fread(rom, 1, sizeof rom, fp);
+    fclose(fp);
+    if (n != sizeof rom) {
+        fprintf(stderr, "zx: %s is not an 8K esxDOS ROM\n", rom_path);
+        return -1;
+    }
+    return zx_exp_attach(m, features, rom, n);
 }
 
 int nx_load_bootrom(zx *m, const char *path)
