@@ -272,7 +272,7 @@ function buildMachineMenu() {
 
 // ---- ROMs the user adds ---------------------------------------------------
 
-// Machines whose ROMs are not shipped (Scorpion, ATM Turbo, Oric) can be
+// Machines whose ROMs are not shipped (Scorpion, ATM Turbo) can be
 // turned on with the user's own ROM files. They are kept in this browser.
 let romFor = null;
 function romDialog(id) {

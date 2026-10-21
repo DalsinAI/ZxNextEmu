@@ -47,10 +47,11 @@ struct zxm_family {
     int (*media_active)(const zxm *m, const zxm_slot *slot);
     /* Optional: how far through its medium a slot is, 0 to 100, or -1. */
     int (*media_progress)(const zxm *m, const zxm_slot *slot);
+    /* Optional: the picture's width now, when an interface can change it. */
+    int (*fb_width)(const zxm *m);
 };
 
 extern const zxm_family zxm_family_zx;     /* zxm_zx.c: Spectrums and the Next */
-extern const zxm_family zxm_family_oric;   /* zxm_oric.c: Oric-1 and Atmos */
 extern const zxm_family zxm_family_sam;    /* zxm_sam.c: SAM Coupé */
 extern const zxm_family zxm_family_msx;    /* zxm_msx.c: MSX1 and MSX2 */
 

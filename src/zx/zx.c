@@ -52,7 +52,7 @@ int zx_model_from_name(const char *name, zx_model *out)
 static int is_plus3(const zx *m) { return m->model == ZX_PLUS2A || m->model == ZX_PLUS3; }
 static int has_ay(const zx *m) { return m->model != ZX_48K; }
 /* An interface's TurboSound takes over the AY ports. */
-static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && (m->exp->features & ZX_EXP_TURBOSOUND)); }
+static int own_ay(const zx *m) { return has_ay(m) && !(m->exp && zx_exp_turbosound(m->exp)); }
 static int is_atm(const zx *m) { return m->model == ZX_ATM2; }
 
 /* Absolute time in T-states, for the disk controller. */
@@ -90,19 +90,12 @@ static inline uint32_t contention(const zx *m, uint32_t t)
 #define CHUNKS_PER_LINE (ZX_SCREEN_W / 8)
 #define CHUNKS (CHUNKS_PER_LINE * ZX_SCREEN_H)
 
-static const uint16_t zx_colour[16] = {
+const uint16_t zx_colours[16] = {
     /* RGB333: normal intensity 5, bright 7. Index = BRIGHT<<3 | GRB */
     0x000, 0x005, 0x140, 0x145, 0x028, 0x02d, 0x168, 0x16d,
     0x000, 0x007, 0x1c0, 0x1c7, 0x038, 0x03f, 0x1f8, 0x1ff,
 };
-
-/* ULA+ palette entry (GGGRRRBB) to RGB333; the missing low blue bit is the
- * OR of the other two, as the ULAplus specification says. */
-static inline uint16_t ulaplus_colour(uint8_t v)
-{
-    uint16_t g = v >> 5, r = (v >> 2) & 7, b = v & 3;
-    return (uint16_t)(r << 6 | g << 3 | b << 1 | ((b >> 1) | (b & 1)));
-}
+#define zx_colour zx_colours
 
 static inline int32_t chunk_t(const zx *m, uint32_t c)
 {
@@ -110,41 +103,52 @@ static inline int32_t chunk_t(const zx *m, uint32_t c)
     return (int32_t)m->tm->paper_t + (y - ZX_BORDER_Y) * (int32_t)m->tm->line_t + cx * 4 - ZX_BORDER_X / 2;
 }
 
+void zx_ula_chunk(const zx *m, uint8_t bits, uint8_t attr, uint16_t px[8])
+{
+    uint16_t ink, paper;
+    int i;
+    if (m->ulaplus_mode & 1) {
+        /* ULA+: FLASH and BRIGHT pick one of four 16-colour CLUTs. */
+        const uint8_t *clut = &m->ulaplus_pal[(attr >> 6) * 16];
+        ink = ulaplus_colour(clut[attr & 7]);
+        paper = ulaplus_colour(clut[8 + ((attr >> 3) & 7)]);
+    } else {
+        ink = zx_colour[(attr & 7) | ((attr & 0x40) >> 3)];
+        paper = zx_colour[((attr >> 3) & 7) | ((attr & 0x40) >> 3)];
+        if ((attr & 0x80) && (m->frames & 16))
+            bits = (uint8_t)~bits;
+    }
+    for (i = 0; i < 8; i++)
+        px[i] = (bits & (0x80 >> i)) ? ink : paper;
+}
+
 static void draw_chunk(zx *m, uint32_t c)
 {
     int y = (int)(c / CHUNKS_PER_LINE), cx = (int)(c % CHUNKS_PER_LINE), i;
     uint16_t *px = &m->screen[y][cx * 8];
     int row = y - ZX_BORDER_Y, col = cx - ZX_BORDER_X / 8;
+    /* With an interface's 640-wide picture (the MB03+'s Timex hi-res) every
+     * pixel is drawn twice, unless the interface draws the chunk itself. */
+    uint16_t *wide = m->wide ? m->wide + (size_t)y * ZX_SCREEN_W * 2 + (size_t)cx * 16 : NULL;
 
+    if (m->exp && zx_exp_draw(m, row, col, px, wide))
+        return;
     if (row >= 0 && row < 192 && col >= 0 && col < 32) {
         const uint8_t *scr = m->ram[m->screen_page];
         uint32_t po = ((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col;
         uint32_t ao = 6144 + (row >> 3) * 32 + col;
-        uint8_t bits, attr;
-        uint16_t ink, paper;
         if (m->exp)
             zx_exp_screen(m->exp, &po, &ao);
-        bits = scr[po];
-        attr = scr[ao];
-        if (m->ulaplus_mode & 1) {
-            /* ULA+: FLASH and BRIGHT pick one of four 16-colour CLUTs. */
-            const uint8_t *clut = &m->ulaplus_pal[(attr >> 6) * 16];
-            ink = ulaplus_colour(clut[attr & 7]);
-            paper = ulaplus_colour(clut[8 + ((attr >> 3) & 7)]);
-        } else {
-            ink = zx_colour[(attr & 7) | ((attr & 0x40) >> 3)];
-            paper = zx_colour[((attr >> 3) & 7) | ((attr & 0x40) >> 3)];
-            if ((attr & 0x80) && (m->frames & 16))
-                bits = (uint8_t)~bits;
-        }
-        for (i = 0; i < 8; i++)
-            px[i] = (bits & (0x80 >> i)) ? ink : paper;
+        zx_ula_chunk(m, scr[po], scr[ao], px);
     } else {
         uint16_t b = (m->ulaplus_mode & 1) ? ulaplus_colour(m->ulaplus_pal[8 + m->border])
                                             : zx_colour[m->border];
         for (i = 0; i < 8; i++)
             px[i] = b;
     }
+    if (wide)
+        for (i = 0; i < 8; i++)
+            wide[2 * i] = wide[2 * i + 1] = px[i];
 }
 
 /* ---- ATM Turbo 2+ video ------------------------------------------------------
@@ -240,7 +244,7 @@ static uint16_t atm_colour(uint8_t raw)
 static void video_update(zx *m, uint32_t upto)
 {
     while (m->video_chunk < CHUNKS && chunk_t(m, m->video_chunk) <= (int32_t)upto) {
-        if (m->wide)
+        if (is_atm(m))
             draw_chunk_atm(m, m->video_chunk);
         else
             draw_chunk(m, m->video_chunk);
@@ -278,9 +282,14 @@ static uint8_t floating_bus(const zx *m, uint32_t t)
 
 static void audio_accumulate(zx *m, uint32_t dt)
 {
-    int32_t level = (m->speaker ? BEEP_EAR : 0) + (m->mic ? BEEP_MIC : 0) + (m->ear_in ? BEEP_MIC : 0);
+    int32_t level = 0;
+    /* an MB03+ can mute the beeper and the tape input (m_zxi_001) */
+    if (!m->exp || zx_exp_on(m->exp, ZX_EXP_ALL, ZXI_BEEPER))
+        level += (m->speaker ? BEEP_EAR : 0) + (m->mic ? BEEP_MIC : 0);
+    if (!m->exp || zx_exp_on(m->exp, ZX_EXP_ALL, ZXI_TAPEIN))
+        level += m->ear_in ? BEEP_MIC : 0;
     m->beeper_acc += level * (int32_t)dt;
-    if (has_ay(m)) {
+    if (own_ay(m)) {
         /* The AY is clocked at CPU/2. */
         m->ay_half += dt;
         ay_run(&m->ay, m->ay_half >> 1);
@@ -311,7 +320,7 @@ static void audio_update(zx *m, uint32_t upto)
 
         beep = m->beeper_acc / (int32_t)span;
         m->beeper_acc = 0;
-        if (has_ay(m))
+        if (own_ay(m))
             ay_take(&m->ay, ay);
         /* ACB stereo, as on the Next and most 128K add-ons. */
         l = beep / 2 + (ay[0] + ay[1] / 2) / 4;
@@ -569,8 +578,11 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
         return (m->ulaplus_reg & 0xc0) == 0x40 ? m->ulaplus_mode
                                                 : m->ulaplus_pal[m->ulaplus_reg & 63];
     }
-    if (m->exp && zx_exp_io_read(m, port, &v))
-        return v;
+    if (m->exp) {
+        audio_update(m, m->t);   /* the General Sound catches up first */
+        if (zx_exp_io_read(m, port, &v))
+            return v;
+    }
     if ((port & 0xe0) == 0) { /* Kempston on port 0x1F */
         v = m->kempston;
         /* The Scorpion's joystick port also shows the Beta's INTRQ and
