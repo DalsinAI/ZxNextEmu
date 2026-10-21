@@ -82,20 +82,52 @@ MAPPER_MARK = {'ascii8': '[ascii8]', 'ascii16': '[ascii16]', 'konami': '[konami]
                'normal': '[plain]', 'mirrored': '[plain]', 'plain': '[plain]'}
 
 
-def mapper_ok(mapper):
-    """Whether src/msx/cart.c can bank a ROM openMSX lists with this mapper: the four megaROM types,
-    or a plain ROM of 64K or less at any page (Mirrored, Page23, 0x4000, 16kB, ...)."""
+def plain_base(path):
+    """Where src/msx/cart.c::cart_load() puts a plain ROM, by the same rules."""
+    d = open(path, 'rb').read(0x10001)
+    size = 0x2000
+    while size < len(d):
+        size <<= 1
+    h = d + b'\xff' * (size - len(d))
+    if size >= 0x10000:
+        return 0x0000
+    if h[:2] == b'AB':
+        init, text = h[2] | h[3] << 8, h[8] | h[9] << 8
+        if not init and text >= 0x8000:
+            return 0x8000
+        if size <= 0x4000 and 0x8000 <= init < 0xc000:
+            return 0x8000
+        if init and init < 0x4000 and size <= 0x8000:
+            return 0x0000
+        return 0x4000
+    if size == 0x8000 and h[0x4000:0x4002] == b'AB':
+        return 0x0000
+    return 0x4000
+
+
+def mapper_ok(mapper, path):
+    """Whether src/msx/cart.c can run a ROM openMSX lists with this mapper: the four megaROM types, a
+    plain ROM it places by its header (Mirrored, 16kB, ...), or one openMSX puts at a fixed address
+    (Page12, 0x4000, ...) only where cart.c would put it there too."""
     k = re.sub(r'[^a-z0-9]', '', (mapper or 'normal').lower())
-    return k in MAPPER_MARK or bool(re.fullmatch(r'mirrored\w*|page\d+|0x[0-9a-f]+|(8|16|32)kb|rom', k))
+    if k in MAPPER_MARK or re.fullmatch(r'mirrored|(8|16|32)kb|rom', k):
+        return True
+    m = re.fullmatch(r'page(\d)\d*|0x([0-9a-f]+)', k)
+    if not m:
+        return False
+    want = int(m.group(1)) * 0x4000 if m.group(1) else int(m.group(2), 16)
+    try:
+        return plain_base(path) == want
+    except OSError:
+        return False
 
 
 def shelve(tdir):
     """Move an earlier build aside while a title is rebuilt; settle() then drops or restores it."""
     old = os.path.join(os.path.dirname(tdir), '.old-' + os.path.basename(tdir))
-    if os.path.exists(old) and not os.path.exists(tdir):   # a build cut off last time: start from that copy
-        os.rename(old, tdir)
-    shutil.rmtree(old, ignore_errors=True)
-    if os.path.exists(tdir):
+    if os.path.exists(old):   # a build cut off last time: the copy set aside is the good one
+        shutil.rmtree(tdir, ignore_errors=True)
+    elif os.path.exists(tdir):
         os.rename(tdir, old)
 
 
@@ -376,7 +408,7 @@ for key, t in sorted(titles.items()):
                 if h:
                     sdbhit = sdbhit or h
                     # A known bad dump, or a mapper the cartridge core cannot bank, stays in files/ only.
-                    if (h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper']):
+                    if (h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'], os.path.join(tdir, g)):
                         unrun.append('%s (openMSX: %s)' % (os.path.basename(g), 'bad dump' if (h.get('status') or '').lower() == 'bad' else h['mapper'] + ' mapper'))
                         run = None
                         break

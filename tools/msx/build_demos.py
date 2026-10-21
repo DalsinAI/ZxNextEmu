@@ -16,7 +16,7 @@ def hw(text):
     if 'v9968' in t: needs.append('v9968')
     if 'turbo' in t and 'r' in t and re.search(r'turbo[ -]?r', t): needs.append('turbor')
     if 'msx2+' in t or 'msx2plus' in t: needs.append('msx2plus')
-    machines = MSX1 if re.search(r'msx ?1\b|tms9918|tms99', t) else MSX2
+    machines = MSX1 if re.search(r'msx ?1\b|tms9918|tms99|\.mx1\b', t) else MSX2   # .mx1: an MSX1 cartridge
     return machines, needs
 
 
@@ -99,7 +99,7 @@ for folder in sorted(os.listdir(root)):
                 for g in bykind[e]:
                     run = dict(platform='msx', machines=machines, files=[g], slot=slot, needs=nd)
                     h = sdb.get(sha1(os.path.join(tdir, g)))
-                    if h and ((h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'])):
+                    if h and ((h.get('status') or '').lower() == 'bad' or not mapper_ok(h['mapper'], os.path.join(tdir, g))):
                         continue   # a known bad dump, or a mapper the cartridge core cannot bank
                     if h:
                         run['mapper'] = h['mapper']
