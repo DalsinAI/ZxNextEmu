@@ -4,8 +4,9 @@
 import sys, os, re, json, shutil
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build_msx.py')).read().split('# ---- collect variants')[0])
 
+# .di1/.di2 are the two halves of one disk and go in one run. No .cas: the MSX has no tape slot yet.
 SLOTS = {'.rom': ('cart1', []), '.mx1': ('cart1', []), '.mx2': ('cart1', []), '.dsk': ('disk0', ['msx-disk']),
-         '.di1': ('disk0', ['msx-disk']), '.cas': ('tape', ['msx-tape'])}
+         '.di1': ('disk0', ['msx-disk']), '.di2': ('disk0', ['msx-disk'])}
 
 
 def hw(text):
@@ -21,7 +22,19 @@ def hw(text):
 
 root = os.path.join(DL, 'Demos')
 os.makedirs(OUT, exist_ok=True)
-used = set(os.listdir(OUT))
+DMARK = '.build_demos'
+
+
+def ours_demo(tdir):
+    if os.path.exists(os.path.join(tdir, DMARK)):
+        return True
+    try:
+        return 'MSX demo from download.file-hunter.com' in open(os.path.join(tdir, 'about.md')).read()
+    except OSError:
+        return False
+
+
+used = set()     # ids given out in this run; an earlier run's folders are rebuilt, not doubled
 index = []
 for folder in sorted(os.listdir(root)):
     fdirp = os.path.join(root, folder)
@@ -37,12 +50,14 @@ for folder in sorted(os.listdir(root)):
         name = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', name) if split and ' ' not in name else name
         tid = 'msx-demo-' + slug(name)
         b, n = tid, 2
-        while tid in used:
+        while tid in used or (os.path.exists(os.path.join(OUT, tid)) and not ours_demo(os.path.join(OUT, tid))):
             tid = '%s-%d' % (b, n); n += 1
         used.add(tid)
         tdir = os.path.join(OUT, tid)
+        shutil.rmtree(tdir, ignore_errors=True)   # ours from an earlier run, or nothing
         fdir = os.path.join(tdir, 'files')
         os.makedirs(fdir, exist_ok=True)
+        open(os.path.join(tdir, DMARK), 'w').close()
         got = []
         for s in srcs:
             tmp = os.path.join(tdir, '.x')
@@ -69,8 +84,10 @@ for folder in sorted(os.listdir(root)):
         for g in got:
             e = os.path.splitext(g)[1].lower()
             if e in SLOTS:
-                bykind.setdefault(e, []).append(g)
-        for e in ('.rom', '.mx2', '.mx1', '.dsk', '.di1', '.cas'):
+                bykind.setdefault('.di1' if e == '.di2' else e, []).append(g)
+        if '.di1' in bykind:
+            bykind['.di1'].sort(key=lambda g: (os.path.splitext(g)[0], g.lower().endswith('.di2')))
+        for e in ('.rom', '.mx2', '.mx1', '.dsk', '.di1'):
             if e not in bykind:
                 continue
             slot, nd = SLOTS[e]

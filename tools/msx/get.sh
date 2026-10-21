@@ -8,3 +8,4 @@ for i in 1 2 3 4; do
   sleep $((i*2))
 done
 echo "FAIL $2" >&2
+exit 1

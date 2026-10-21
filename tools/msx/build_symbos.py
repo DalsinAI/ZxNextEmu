@@ -93,7 +93,7 @@ for a in json.load(open(os.path.join(SYM, 'apps.json'))):
             'genres': [CAT[genre]] if genre else [], 'tags': ['symbos', 'symbos-app'] + ([add.lower()] if add else []),
             'summary': short, 'license': 'freeware',
             'source': 'http://www.symbos.de/appinfo.htm?' + aid,
-            'sources': ['http://www.symbos.de/appinfo.htm?' + aid, 'http://www.symbos.de/download/apps/' + os.path.basename(z)] + ([url] if url else []),
+            'sources': ['http://www.symbos.de/appinfo.htm?' + aid, 'http://www.symbos.de/download/apps/' + re.sub(r'[ \'"()/\\]', '', name) + '.zip'] + ([url] if url else []),
             'added': TODAY, 'ids': {'symbos': aid}, 'runs': runs, 'compat': {}}
     if shots:
         meta['screens'] = shots
@@ -133,9 +133,8 @@ for tid, name, remote, local, machines, slot, needs, text in systems:
     index.append(tid)
 man = os.path.join(osdir, 'SymbOS-40-Manual.pdf')
 if os.path.exists(man):
-    os.makedirs(os.path.join(OUT, 'symbos-next', 'files'), exist_ok=True)
     for t in ('symbos-next', 'symbos-msx'):
-        if os.path.isdir(os.path.join(OUT, t)):
+        if os.path.exists(os.path.join(OUT, t, 'title.json')):   # only titles actually built above
             shutil.copy(man, os.path.join(OUT, t, 'SymbOS-40-Manual.pdf'))
 
 fh = os.path.join(FHDL, 'OS', 'SymbOS')

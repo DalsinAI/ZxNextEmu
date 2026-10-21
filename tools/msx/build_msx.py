@@ -11,7 +11,8 @@ FH = 'https://download.file-hunter.com/'
 MSX1 = ['msx1', 'msx1eu', 'msx2', 'msx2eu']
 MSX2 = ['msx2', 'msx2eu']
 LANGS = {'ja', 'en', 'es', 'nl', 'pt', 'fr', 'de', 'it', 'ar', 'ko', 'ru', 'fi', 'el', 'sv', 'pl', 'br', 'ca', 'en-ja', 'ja-en'}
-RUNNABLE = {'.rom', '.mx1', '.mx2', '.dsk', '.cas', '.di1', '.di2', '.bin', '.com', '.bas', '.ldr', '.hdd', '.img', '.vhd', '.dmk', '.tsx'}
+# Not .dmk (a track container, the disk drive takes flat sectors) or .cas/.tsx (no MSX tape slot yet).
+RUNNABLE = {'.rom', '.mx1', '.mx2', '.dsk', '.di1', '.di2', '.bin', '.com', '.bas', '.ldr', '.hdd', '.img', '.vhd'}
 TYPE_RANK = {'ROM': 0, 'DSK': 1, 'HDD': 2, 'BIN': 3, 'CAS': 4}
 
 # ---- metadata sources --------------------------------------------------------
@@ -54,7 +55,8 @@ for sw in ET.parse(os.path.join(META, 'softwaredb.xml')).getroot().iter('softwar
 def parse(base, typ):
     """Split a file-hunter / TOSEC name into title, year, publisher, lang, part, flags."""
     b = re.sub(r'\.(zip|lzh|7z|rar)$', '', base, flags=re.I)
-    i = min([x for x in (b.find(' ('), b.find(' [')) if x >= 0] or [len(b)])
+    m = re.search(r'\s*[(\[]', b)    # the first ( or [, with or without a space before it
+    i = m.start() if m and m.start() > 0 else len(b)
     title, rest = b[:i].strip(), b[i:]
     parens = re.findall(r'\(([^()]*)\)', rest)
     flags = re.findall(r'\[([^\]]*)\]', rest)
@@ -94,7 +96,11 @@ def unpack(path, dest):
     os.makedirs(dest, exist_ok=True)
     low = path.lower()
     try:
-        if low.endswith('.zip') and zipfile.is_zipfile(path):
+        if low.endswith(('.zip', '.lzh', '.lha', '.7z', '.rar')) and os.path.getsize(path) == 0:
+            raise ValueError('empty file')
+        if low.endswith('.zip') and not zipfile.is_zipfile(path):
+            raise ValueError('not a zip (truncated, or an error page)')
+        if low.endswith('.zip'):
             with zipfile.ZipFile(path) as z:
                 for m in z.infolist():
                     if m.is_dir():
@@ -148,12 +154,10 @@ def safe(n):
 SRC = {  # folder -> (type, machines, slot, needs)
     'Games/MSX1/ROM': ('ROM', MSX1, 'cart1', []),
     'Games/MSX1/DSK': ('DSK', MSX1, 'disk0', ['msx-disk']),
-    'Games/MSX1/CAS': ('CAS', MSX1, 'tape', ['msx-tape']),
     'Games/MSX1/MSX-Binaries': ('BIN', MSX1, 'ide0', ['nextor']),
     'Games/MSX1/HDD': ('HDD', MSX1, 'ide0', ['nextor']),
     'Games/MSX2/ROM': ('ROM', MSX2, 'cart1', []),
     'Games/MSX2/DSK': ('DSK', MSX2, 'disk0', ['msx-disk']),
-    'Games/MSX2/CAS': ('CAS', MSX2, 'tape', ['msx-tape']),
     'Games/MSX2/MSX-Binaries': ('BIN', MSX2, 'ide0', ['nextor']),
     'Games/MSX2/Harddisk': ('HDD', MSX2, 'ide0', ['nextor']),
 }
@@ -182,7 +186,7 @@ for folder, (typ, machines, slot, needs) in SRC.items():
             t['pubs'].append(p['pub'])
         if p['lang']:
             t['langs'].add(p['lang'])
-        vkey = typ + '|' + folder + '|' + re.sub(r'\((disk|tape|side|disc|part) [^)]*\)', '', fn, flags=re.I)
+        vkey = typ + '|' + folder + '|' + re.sub(r'[(\[](disk|tape|side|disc|part) [^)\]]*[)\]]', '', fn, flags=re.I)
         v = t['variants'].setdefault(vkey, dict(typ=typ, folder=folder, machines=machines, slot=slot, needs=needs, parse=p, srcs=[]))
         v['srcs'].append(fn)
 
@@ -191,7 +195,20 @@ print('titles', len(titles), 'variants', sum(len(t['variants']) for t in titles.
 # ---- write titles ---------------------------------------------------------------
 
 os.makedirs(OUT, exist_ok=True)
-used = set(os.listdir(OUT))
+MARK = '.build_msx'
+
+
+def ours(tdir):
+    """A folder an earlier run of this builder wrote, safe to rebuild in place."""
+    if os.path.exists(os.path.join(tdir, MARK)):
+        return True
+    try:
+        return 'The File Hunter MSX archive' in open(os.path.join(tdir, 'about.md')).read()
+    except OSError:
+        return False
+
+
+used = set()     # ids given out in this run; an earlier run's folders are rebuilt, not doubled
 index = []
 only = set(sys.argv[4].split(',')) if len(sys.argv) > 4 else None
 for key, t in sorted(titles.items()):
@@ -203,12 +220,15 @@ for key, t in sorted(titles.items()):
     tid = 'msx-' + slug(name)
     base = tid
     n = 2
-    while tid in used:
+    while tid in used or (os.path.exists(os.path.join(OUT, tid)) and not ours(os.path.join(OUT, tid))):
         tid = '%s-%d' % (base, n); n += 1
     used.add(tid)
     if only and key not in only:
         continue
     tdir = os.path.join(OUT, tid)
+    shutil.rmtree(tdir, ignore_errors=True)   # ours from an earlier run, or nothing
+    os.makedirs(tdir)
+    open(os.path.join(tdir, MARK), 'w').close()
     fdir = os.path.join(tdir, 'files')
     os.makedirs(fdir, exist_ok=True)
     runs, allfiles, sdbhit, sources = [], [], None, []
