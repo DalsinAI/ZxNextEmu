@@ -99,12 +99,20 @@ async function create(id, romsUrl) {
   // zxm_rom_set: four pointers, then four lengths.
   const set = x.malloc(32);
   u8().fill(0, set, set + 32);
+  const optional = dv().getUint32(info + 44, true);   // zxm_info.rom_optional
   for (let r = dv().getUint32(info + 28, true), k = 0; ; k++) {
     const np = dv().getUint32(r + 4 * k, true);
     if (!np) break;
     const name = readCstr(np);
-    const bytes = await romFile(romsUrl, name);
-    dv().setUint32(set + 4 * k, copyIn(bytes), true);
+    let bytes;
+    try {
+      bytes = await romFile(romsUrl, name);
+    } catch (e) {
+      if (optional >> k & 1) continue;   // the Pentagon without TR-DOS
+      throw e;
+    }
+    const ptr = copyIn(bytes);   // may grow memory: take the view after
+    dv().setUint32(set + 4 * k, ptr, true);
     dv().setUint32(set + 16 + 4 * k, bytes.length, true);
   }
   m = x.malloc(x.zxm_size(info));

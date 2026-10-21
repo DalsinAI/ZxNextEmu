@@ -1,8 +1,9 @@
 # ZxNextEmu
 
 A ZX Spectrum Next (TBBlue) emulator that is timed to the T-state, with the
-classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3 and Pentagon 128,
-and the 6502-based Oric-1 and Oric Atmos.
+classic Spectrums along for the ride: 48K, 128K, +2, +2A, +3, the Russian
+clones Pentagon 128, Scorpion ZS-256 and ATM Turbo 2+ with their Beta 128
+disk drives, and the 6502-based Oric-1 and Oric Atmos.
 
 Written in portable C99 and built with GCC 16.2.0-open3
 ([DalsinAI/openamigagcc](https://github.com/DalsinAI/openamigagcc)) for
@@ -18,12 +19,13 @@ build/zxrun -m 128 -f 500 -s shot.ppm game.tap
 ```
 
 `zxrun` options: `-m` model (`next`, `48`, `128`, `plus2`, `plus2a`, `plus3`,
-`pentagon`), `-i` an interface for a classic model (`divmmc` or `mb03`)
+`pentagon`, `scorpion`, `atm2`), `-i` an interface for a classic model (`divmmc` or `mb03`)
 with its esxDOS ROM (`-e`), `-c` SD card for the Next or the interface (a
 folder or an image file), `-p`
 a folder for the Next's Raspberry Pi, `-f` frames to run, `-t` text to type (after `-d` frames),
 `-s` screenshot (PPM), `-w` audio (WAV), and a `.sna`, `.z80`, `.tap` or
-`.tzx` file to load. Tapes load instantly through the ROM when they use the
+`.tzx` file to load, or a `.trd` or `.scl` disk for drive A of the Beta 128
+machines (their ROMs are not in the repository: see `roms/README.md`). Tapes load instantly through the ROM when they use the
 standard loader, and play in real time for custom loaders.
 
 ### The Spectrum Next and its SD card
@@ -129,8 +131,8 @@ next.
 
 `src/core/zxm.h` is the one interface every machine offers: look a machine
 up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-up by id (`zx48`, `zx128`, `plus2`, `plus2a`, `plus3`, `pentagon`, `next`,
-`spec256`, `oric1`, `atmos`, `sam`, `msx1`, `msx1eu`, `msx2`, `msx2eu`),
+`scorpion`, `atm2`, `spec256`, `oric1`, `atmos`, `sam`, `msx1`, `msx1eu`, `msx2`,
+`msx2eu`),
 create it from ROM images, run it a frame at a time, read the picture and
 sound out of it, send it input, insert media, and save or load its complete
 state. The core does no file I/O: ROMs, tapes and snapshots come in as
@@ -202,6 +204,9 @@ mid-frame changes land where they do on the hardware.
 | 6502 core | done: every opcode, documented and not, cycle by cycle on the bus; NMOS decimal mode; interrupt polling on the last cycle but one |
 | Oric-1 / Atmos | ULA (text, HIRES, serial attributes, double height, blink, 50/60 Hz), 6522 VIA, AY through the VIA, 8x8 keyboard, `.tap` tape (fast ROM load + real signal). Checked with a test ROM; the real BASIC ROMs still to be tried. Microdisc not yet |
 | SAM Coupé | boots ROM 3.0 to BASIC and SAMDOS from disk. 512K paging, ASIC screen modes 1 to 4 with the CLUT, memory and ASIC port contention, line and frame interrupts, light pen and attribute ports, SAA1099, beeper, keyboard, two VL1772 drives in real time (MGT, SAD, DSK, EDSK), tape. Still to come: mouse, external memory, mode-change artefacts |
+| Beta 128 (TR-DOS) | WD1793 on raw tracks, timed to the byte (seeks, rotation, DRQ per byte); .trd images written back, .scl read; Pentagon, Scorpion, ATM |
+| Scorpion ZS-256 | 256K, port 1FFD, service ROM, even-T M1 fetches |
+| ATM Turbo 2+ | 1024K, xxF7 windows, xx77 modes: EGA 320x200x16, hi-res multicolour, 80-column text, 7 MHz turbo, palette. The text font is the ROM's character set, not the real chargen |
 | Spectrum Next | boots NextZXOS to its menu. Built from the official FPGA sources: memory, ports, nextregs, ULA / LoRes / Timex / tilemap / layer 2 / sprites and the mixer, copper, DMA, CTC, IM2, divMMC automap, AY x3, DACs, both UARTs, Kempston mouse, ESP8266 wifi, Raspberry Pi (NextPi). Still to come: multiface, Pi audio |
 | SD card | a host folder seen as a live FAT32 card, or an image file |
 | Wifi | ESP8266 with the AT firmware on UART 0, connecting through the host: NextZXOS's `.http` fetches files |
@@ -231,6 +236,7 @@ mid-frame changes land where they do on the hardware.
 | esxDOS 0.8.9 on an MB03+ (48K, 128K, +3, Pentagon): boot, `SAVE *` into the SD folder | all pass (`make esxdos`) |
 | zxcore.wasm under Node gives the same output as the native core | all pass (`make wasmtest`) |
 | SAM Coupé: BOOT SAMDOS from an MGT, SAVE from BASIC and read the bytes back from the image, SAA1099 pitch | all pass (`make sam`) |
+| TR-DOS on Pentagon, Scorpion and ATM: load, save, catalogue, format (needs the clones' ROMs) | all pass (`make beta`) |
 | RAXOFT z80test 1.2a (z80full, z80doc, z80flags, z80memptr) on the emulated 48K | all pass |
 
 The test programs are downloaded into `tests-data/`, see
