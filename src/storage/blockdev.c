@@ -78,3 +78,13 @@ zx_blockdev *zx_bd_open(const char *path)
         return zx_bd_open_folder(path, 0);
     return zx_bd_open_image(path);
 }
+
+zx_blockdev *zx_bd_open16(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st))
+        return NULL;
+    if (S_ISDIR(st.st_mode))
+        return zx_bd_open_folder16(path, 0);
+    return zx_bd_open_image(path);
+}

@@ -132,7 +132,8 @@ static int insert(zxm *m, const char *arg)
     media.name = path;
     if (s->kind == ZXM_SLOT_SD || s->kind == ZXM_SLOT_DISK || s->kind == ZXM_SLOT_HARDDISK) {
         media.kind = ZXM_MEDIA_BLOCKS;
-        media.blocks = zx_bd_open(path);
+        /* hard disks are FAT16 folders: Nextor and the like do not read FAT32 */
+        media.blocks = s->kind == ZXM_SLOT_HARDDISK ? zx_bd_open16(path) : zx_bd_open(path);
         if (!media.blocks) {
             fprintf(stderr, "cannot open %s\n", path);
             return -1;
