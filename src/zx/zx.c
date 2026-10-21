@@ -70,6 +70,14 @@ static const uint16_t zx_colour[16] = {
     0x000, 0x007, 0x1c0, 0x1c7, 0x038, 0x03f, 0x1f8, 0x1ff,
 };
 
+/* ULA+ palette entry (GGGRRRBB) to RGB333; the missing low blue bit is the
+ * OR of the other two, as the ULAplus specification says. */
+static inline uint16_t ulaplus_colour(uint8_t v)
+{
+    uint16_t g = v >> 5, r = (v >> 2) & 7, b = v & 3;
+    return (uint16_t)(r << 6 | g << 3 | b << 1 | ((b >> 1) | (b & 1)));
+}
+
 static inline int32_t chunk_t(const zx *m, uint32_t c)
 {
     int32_t y = (int32_t)(c / CHUNKS_PER_LINE), cx = (int32_t)(c % CHUNKS_PER_LINE);
@@ -86,14 +94,23 @@ static void draw_chunk(zx *m, uint32_t c)
         const uint8_t *scr = m->ram[m->screen_page];
         uint8_t bits = scr[((row & 0xc0) << 5) | ((row & 7) << 8) | ((row & 0x38) << 2) | col];
         uint8_t attr = scr[6144 + (row >> 3) * 32 + col];
-        uint16_t ink = zx_colour[(attr & 7) | ((attr & 0x40) >> 3)];
-        uint16_t paper = zx_colour[((attr >> 3) & 7) | ((attr & 0x40) >> 3)];
-        if ((attr & 0x80) && (m->frames & 16))
-            bits = (uint8_t)~bits;
+        uint16_t ink, paper;
+        if (m->ulaplus_mode & 1) {
+            /* ULA+: FLASH and BRIGHT pick one of four 16-colour CLUTs. */
+            const uint8_t *clut = &m->ulaplus_pal[(attr >> 6) * 16];
+            ink = ulaplus_colour(clut[attr & 7]);
+            paper = ulaplus_colour(clut[8 + ((attr >> 3) & 7)]);
+        } else {
+            ink = zx_colour[(attr & 7) | ((attr & 0x40) >> 3)];
+            paper = zx_colour[((attr >> 3) & 7) | ((attr & 0x40) >> 3)];
+            if ((attr & 0x80) && (m->frames & 16))
+                bits = (uint8_t)~bits;
+        }
         for (i = 0; i < 8; i++)
             px[i] = (bits & (0x80 >> i)) ? ink : paper;
     } else {
-        uint16_t b = zx_colour[m->border];
+        uint16_t b = (m->ulaplus_mode & 1) ? ulaplus_colour(m->ulaplus_pal[8 + m->border])
+                                            : zx_colour[m->border];
         for (i = 0; i < 8; i++)
             px[i] = b;
     }
@@ -336,6 +353,10 @@ static uint8_t b_io_read(void *ctx, uint16_t port)
             v |= 0x40;
         return v;
     }
+    if (port == 0xff3b) {           /* ULA+ data */
+        return (m->ulaplus_reg & 0xc0) == 0x40 ? m->ulaplus_mode
+                                                : m->ulaplus_pal[m->ulaplus_reg & 63];
+    }
     if ((port & 0xe0) == 0) { /* Kempston on port 0x1F */
         v = m->kempston;
         have = 1;
@@ -364,6 +385,18 @@ static void b_io_write(void *ctx, uint16_t port, uint8_t v)
         m->border = v & 7;
         m->speaker = (v >> 4) & 1;
         m->mic = (v >> 3) & 1;
+    }
+    if (port == 0xbf3b) {           /* ULA+ register select */
+        m->ulaplus_reg = v;
+        return;
+    }
+    if (port == 0xff3b) {           /* ULA+ data */
+        video_update(m, m->t);
+        if ((m->ulaplus_reg & 0xc0) == 0)
+            m->ulaplus_pal[m->ulaplus_reg & 63] = v;
+        else if ((m->ulaplus_reg & 0xc0) == 0x40)
+            m->ulaplus_mode = v;
+        return;
     }
     if (m->model == ZX_48K)
         return;
@@ -585,6 +618,7 @@ void zx_reset(zx *m)
     m->paging_locked = m->model == ZX_48K;
     update_paging(m);
     m->border = 7;
+    m->ulaplus_reg = m->ulaplus_mode = 0;
     for (i = 0; i < 8; i++)
         m->keys[i] = 0x1f;
     ay_reset(&m->ay);
