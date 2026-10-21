@@ -75,7 +75,8 @@ echo
 PY="$(mktemp -t zxcradle-fetch.XXXXXX.py)"
 trap 'rm -f "$PY"' EXIT
 cat > "$PY" <<'PYEOF'
-import sys, os, re, json, html, time, zipfile, shutil, subprocess, threading, datetime, urllib.request, urllib.parse, urllib.error, http.cookiejar
+import sys, os, re, io, json, html, time, hashlib, zipfile, shutil, subprocess, threading, datetime, urllib.request, urllib.parse, urllib.error, http.cookiejar
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
 LIB = sys.argv[1]
@@ -965,18 +966,210 @@ def vtrd(lib):
 # ---------------------------------------------------------------- MSX (file-hunter.com)
 
 FH = 'https://download.file-hunter.com/'
+OPENMSX_DB = 'https://raw.githubusercontent.com/openMSX/openMSX/master/share/softwaredb.xml'
+GMSX = 'https://www.generation-msx.nl/software/-/-/'
 # No CAS folders: the MSX machines have no tape slot yet.
 FH_DIRS = {'Games/MSX1/ROM': 'cart1', 'Games/MSX1/DSK': 'disk0', 'Games/MSX1/MSX-Binaries': 'disk0',
            'Games/MSX1/HDD': 'ide0', 'Games/MSX2/ROM': 'cart1', 'Games/MSX2/DSK': 'disk0',
            'Games/MSX2/MSX-Binaries': 'disk0', 'Games/MSX2/Harddisk': 'ide0', 'Demos': 'disk0'}
 FH_MACH = {'msx1': ['msx1', 'msx1eu', 'msx2', 'msx2eu'], 'msx2': ['msx2', 'msx2eu']}
+MSX_LANGS = {'ja', 'en', 'es', 'nl', 'pt', 'fr', 'de', 'it', 'ar', 'ko', 'ru', 'fi', 'el', 'sv', 'pl', 'br', 'ca'}
+MSX_META = {}
 
 
 def msx_name(fn):
+    """The old one-name-per-file key, kept so titles filed by earlier runs are recognised."""
     n = re.sub(r'\.[a-z0-9]{2,4}$', '', fn, flags=re.I)
     n = re.sub(r'\s*[\(\[].*$', '', n).strip()
     m = re.match(r'(.*), (The|A|An)$', n)
     return f'{m.group(2)} {m.group(1)}' if m else n
+
+
+def msx_parse(fn, rom, games):
+    """Title, year, publisher and language from a file-hunter name. Disk and tape names are TOSEC style,
+    'Title (1986)(Publisher)(es)(Disk 1 of 2)[a]'; ROM names are 'Title - Publisher (1986) [notes] [id]'
+    or 'Title (1986) Publisher [notes]'."""
+    b = re.sub(r'\.[a-z0-9]{2,4}$', '', fn, flags=re.I)
+    i = min([x for x in (b.find(' ('), b.find(' [')) if x >= 0] or [len(b)])
+    title, rest = b[:i].strip(), b[i:]
+    parens = re.findall(r'\(([^()]*)\)', rest)
+    year = next((p for p in parens if re.fullmatch(r'(19|20)\d\d', p)), None)
+    lang = next((p.lower() for p in parens if p.lower() in MSX_LANGS), None)
+    other = [p for p in parens if p not in (year, lang) and p.lower() != lang and p.strip() not in ('', '-', '19xx')
+             and not re.match(r'(disk|tape|side|disc|part) ', p, re.I)]
+    pub = other[0] if other else None
+    if rom:
+        m = re.match(r'^\s*\((?:\d{4}|19xx)?\)\s*([^\[(]+)', rest)
+        if m and not pub:
+            pub = m.group(1).strip()
+        if ' - ' in title and not pub and norm(title) not in games:
+            title, pub = title.rsplit(' - ', 1)
+    m = re.match(r'(.*), (The|A|An|El|La|Le|Les|Los|De|Het|Die|Der|O|Il)$', title)
+    if m:
+        title = f'{m.group(2)} {m.group(1)}'
+    return {'title': title, 'year': int(year) if year else None, 'pub': pub, 'lang': lang}
+
+
+def xlsx_sheets(z):
+    """{sheet name: path in the zip} and the shared strings of an .xlsx, with the standard library only."""
+    ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+          'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
+    rels = {r.get('Id'): r.get('Target') for r in ET.fromstring(z.read('xl/_rels/workbook.xml.rels'))}
+    sheets = {}
+    for s in ET.fromstring(z.read('xl/workbook.xml')).iter('{%s}sheet' % ns['m']):
+        t = rels[s.get('{%s}id' % ns['r'])]
+        sheets[s.get('name')] = t.lstrip('/') if t.startswith('/') else 'xl/' + t
+    strings = []
+    if 'xl/sharedStrings.xml' in z.namelist():
+        for si in ET.fromstring(z.read('xl/sharedStrings.xml')).iter('{%s}si' % ns['m']):
+            strings.append(''.join(t.text or '' for t in si.iter('{%s}t' % ns['m'])))
+    return sheets, strings, ns
+
+
+def xlsx_cells(z, path, strings, ns, col=None):
+    """{row: {column letter: text}} for one sheet."""
+    out = {}
+    for c in ET.fromstring(z.read(path)).iter('{%s}c' % ns['m']):
+        m = re.match(r'([A-Z]+)(\d+)', c.get('r') or '')
+        if not m or (col and m.group(1) != col):
+            continue
+        v = c.find('{%s}v' % ns['m'])
+        if v is None or v.text is None:
+            isv = c.find('{%s}is' % ns['m'])
+            txt = ''.join(t.text or '' for t in isv.iter('{%s}t' % ns['m'])) if isv is not None else None
+        else:
+            txt = strings[int(v.text)] if c.get('t') == 's' else v.text
+        if txt is not None:
+            out.setdefault(int(m.group(2)), {})[m.group(1)] = txt
+    return out
+
+
+def rel_target(base, target):
+    return os.path.normpath(os.path.join(os.path.dirname(base), target)).replace(os.sep, '/')
+
+
+def msx_sheet(data):
+    """file-hunter's 'MSX Games with Pictures' spreadsheet: {norm(name): row} from the Games sheet, and
+    {norm(name): [image path in the zip]} from the picture sheets, where each picture sits under a label
+    'Name [DSK] (file.png)' in column A."""
+    z = zipfile.ZipFile(io.BytesIO(data))
+    sheets, strings, ns = xlsx_sheets(z)
+    games = {}
+    cols = ['name', 'genre', 'year', 'developer', 'publisher', 'company', 'type', 'model']
+    for r, row in sorted(xlsx_cells(z, sheets['Games'], strings, ns).items()):
+        if r > 1 and row.get('A'):
+            games.setdefault(norm(row['A']), {k: row.get(c) for k, c in zip(cols, 'ABCDEFGH')})
+    pics = {}
+    xdr = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
+    a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+    for name, path in sheets.items():
+        if name == 'Games':
+            continue
+        labels = {r: row['A'] for r, row in xlsx_cells(z, path, strings, ns, 'A').items()
+                  if re.match(r'.* \[\w+\] \(.*\)$', row['A'])}
+        relp = rel_target(path, '_rels/' + os.path.basename(path) + '.rels')
+        if not labels or relp not in z.namelist():
+            continue
+        for d in ET.fromstring(z.read(relp)):
+            if not d.get('Type', '').endswith('/drawing'):
+                continue
+            dpath = rel_target(path, d.get('Target'))
+            drels = rel_target(dpath, '_rels/' + os.path.basename(dpath) + '.rels')
+            media = {r.get('Id'): rel_target(dpath, r.get('Target')) for r in ET.fromstring(z.read(drels))} if drels in z.namelist() else {}
+            for anchor in ET.fromstring(z.read(dpath)):
+                frm, blip = anchor.find('{%s}from/{%s}row' % (xdr, xdr)), anchor.find('.//{%s}blip' % a)
+                if frm is None or blip is None:
+                    continue
+                row = int(frm.text) + 1
+                above = [k for k in labels if k <= row + 1]
+                img = media.get(blip.get('{%s}embed' % ns['r']))
+                if above and img:
+                    pics.setdefault(norm(re.sub(r' \[\w+\] \(.*\)$', '', labels[max(above)])), []).append(img)
+    return games, pics, z
+
+
+def msx_meta():
+    """Loaded once, before the workers start; either source may be missing, and titles are filed without it."""
+    if MSX_META:
+        return MSX_META
+    sdb = {}
+    try:
+        for sw in ET.fromstring(fetch(OPENMSX_DB)).iter('software'):
+            for rom in sw.iter('rom'):
+                sdb[rom.get('sha1')] = {'title': sw.get('title'), 'company': sw.get('company'), 'year': sw.get('year'),
+                                        'genmsx': sw.get('genmsxid'), 'mapper': rom.get('type'), 'status': rom.get('status')}
+    except Exception as e:
+        log('openMSX softwaredb', e)
+    games, pics, z = {}, {}, None
+    try:
+        games, pics, z = msx_sheet(fetch(FH + 'Archive/MSX Games with Pictures.xlsx', timeout=900))
+    except Exception as e:
+        log('file-hunter games spreadsheet', e)
+    MSX_META.update(sdb=sdb, games=games, pics=pics, zip=z)
+    say(f'MSX metadata: {len(sdb)} ROMs (openMSX), {len(games)} games and {len(pics)} pictured (file-hunter)')
+    return MSX_META
+
+
+def sha1_of(path):
+    h = hashlib.sha1()
+    with open(path, 'rb') as f:
+        for c in iter(lambda: f.read(1 << 20), b''):
+            h.update(c)
+    return h.hexdigest()
+
+
+def msx_fill(tdir, t, parsed, meta):
+    """Year, publisher, companies, genres, ids, ROM mappers and screenshots for one MSX title."""
+    sdb, game = meta['sdb'], meta['games'].get(norm(t['name']))
+    hit = None
+    for r in t.get('runs') or []:
+        if r.get('slot') == 'cart1':
+            h = sdb.get(sha1_of(os.path.join(tdir, r['files'][0])))
+            if h:
+                r['mapper'] = h['mapper']
+                hit = hit or h
+    num = lambda v: int(v) if v and str(v).isdigit() else None
+    years = [y for y in (num(game and game.get('year')), num(hit and hit['year'])) if y] + sorted(p['year'] for p in parsed if p['year'])
+    if years:
+        t['year'] = years[0]
+    known = lambda v: v and v.strip() and v.strip().lower() not in ('unknown', '-', '?')
+    pub = next((v for v in ((game or {}).get('publisher'), hit and hit['company'], *(p['pub'] for p in parsed)) if known(v)), None)
+    dev = (game or {}).get('developer') if known((game or {}).get('developer')) else None
+    if pub:
+        t['publisher'] = pub.strip()
+    companies = ([{'name': dev.strip(), 'role': 'developer'}] if dev else []) + ([{'name': pub.strip(), 'role': 'publisher'}] if pub else [])
+    if companies:
+        t['companies'] = companies
+        if dev:
+            t['authors'] = [dev.strip()]
+    if game and known(game.get('genre')):
+        t['genres'] = [game['genre'].strip().lower()]
+    langs = sorted({p['lang'] for p in parsed if p['lang']})
+    t['tags'] = sorted(set(t.get('tags') or []) | {'lang:' + l for l in langs})
+    if hit and hit.get('genmsx'):
+        t.setdefault('ids', {})['genmsx'] = int(hit['genmsx'])
+    if not t.get('screens'):
+        shots = []
+        for i, img in enumerate((meta['pics'].get(norm(t['name'])) or [])[:3]):
+            rel = f'screens/{i + 1}{os.path.splitext(img)[1].lower() or ".png"}'
+            os.makedirs(os.path.join(tdir, 'screens'), exist_ok=True)
+            with LOCK:   # one shared zip
+                data = meta['zip'].read(img)
+            with open(os.path.join(tdir, rel), 'wb') as f:
+                f.write(data)
+            shots.append({'file': rel, 'caption': 'file-hunter.com games list'})
+        if not shots and hit and hit.get('genmsx'):
+            try:
+                page = fetch(GMSX + hit['genmsx'] + '/').decode('utf-8', 'replace')
+                urls = []
+                for k in ('game', 'title', 'loading'):
+                    urls += [u for u in re.findall(r'https://images\.generation-msx\.nl/software_%s/[0-9a-f]+\.png' % k, page) if u not in urls]
+                shots = get_screens(tdir, urls, {u: 'Generation MSX' for u in urls})
+            except Exception as e:
+                log('generation-msx', hit['genmsx'], e)
+        if shots:
+            t['screens'] = shots
+    return t
 
 
 def msx(lib):
@@ -984,33 +1177,61 @@ def msx(lib):
         listing = fetch(FH + 'allfiles.txt').decode('utf-8-sig', 'replace')
     except Exception as e:
         raise RuntimeError(f'file-hunter.com list: {e}')
-    groups = {}
+    meta = msx_meta()
+    groups, demo_dirs = {}, {}
     for line in listing.splitlines():
         p = line.strip().replace('\\', '/')
         d = next((k for k in FH_DIRS if p.startswith(k + '/')), None)
-        if not d or '[b]' in p or '/WAV' in p.upper() or 'MSX2+' in p or re.search(r'turbo[ -]?r\b', p, re.I) and not re.search(r'\b(no|not for|without|non)[ -]+turbo[ -]?r', p, re.I):
+        if not d or re.search(r'\[b\d*[\] ]', p) or '/WAV' in p.upper() or 'MSX2+' in p or re.search(r'turbo[ -]?r\b', p, re.I) and not re.search(r'\b(no|not for|without|non)[ -]+turbo[ -]?r', p, re.I):
+            continue
+        if d == 'Demos':
+            demo_dirs.setdefault(p.split('/')[1], []).append(p)
             continue
         fn = p.rsplit('/', 1)[-1]
-        demo = d == 'Demos'
         gen = 'msx2' if 'MSX2' in p else 'msx1'
-        name = msx_name(fn)
-        key = ('msx-demo-' if demo else 'msx-') + slug(name)
-        g = groups.setdefault(key, {'name': name, 'demo': demo, 'files': []})
-        g['files'].append((d, p, gen))
+        parsed = msx_parse(fn, d.endswith('/ROM'), meta['games'])
+        if d.endswith('MSX-Binaries'):   # 8.3 archive names
+            parsed['title'] = re.sub(r'\.[a-z0-9]{2,4}$', '', fn, flags=re.I)
+        key = 'msx-' + slug(parsed['title'])
+        g = groups.setdefault(key, {'name': parsed['title'], 'demo': False, 'files': [], 'old': set()})
+        g['files'].append((d, p, gen, parsed))
+        g['old'].add('msx-' + slug(msx_name(fn)))
+    for folder, ps in demo_dirs.items():
+        # A folder of a few files is one demo (its disks, or its versions); a big folder is a collection, a demo per file.
+        each = len(ps) > 4 and not any(re.search(r'disk \d', x, re.I) for x in ps)
+        for p in ps:
+            fn = p.rsplit('/', 1)[-1]
+            name = msx_parse(fn, True, {})['title'] if each else folder
+            key = 'msx-demo-' + slug(name)
+            g = groups.setdefault(key, {'name': name, 'demo': True, 'files': [], 'old': set()})
+            g['files'].append(('Demos', p, 'msx2', msx_parse(fn, True, {})))
+            g['old'].add('msx-demo-' + slug(msx_name(fn)))
     if not groups:   # an error page or a changed layout: the archive is never empty
         raise RuntimeError('file-hunter.com list had no MSX titles in it')
     say(f'file-hunter.com MSX: {len(groups)} titles')
-    todo = [(k, g) for k, g in groups.items() if not lib.has('filehunter', k)]
+    todo, refill = [], []
+    for k, g in groups.items():
+        done = [lib.ids[('filehunter', o)] for o in ({k} | g['old']) if lib.has('filehunter', o)]
+        if not done:
+            todo.append((k, g))
+        else:   # filed by an earlier run: add what that run did not write
+            refill += [(sid, g) for sid in sorted(set(done))]
     order = list(FH_DIRS)
+
+    def rank(f):
+        d, p, gen, parsed = f
+        flags = ' '.join(re.findall(r'\[([^\]]*)\]', p)).lower()
+        alt = bool(re.search(r'(^| )a\d*( |$)', flags)) + ('hack' in flags) + ('tr ' in flags or 'transl' in flags)
+        return (order.index(d), alt - ('goodmsx' in flags or 'original' in flags), p)
 
     def one(kg):
         key, g = kg
-        sid = lib.claim(key, '', 'filehunter', key)
+        sid = lib.claim(g['name'], '', 'filehunter', key)
         tdir = os.path.join(TITLES, sid)
         runs, n = [], 0
-        for d, p, gen in sorted(g['files'], key=lambda x: order.index(x[0])):
+        for d, p, gen, parsed in sorted(g['files'], key=rank):
             slot = FH_DIRS[d]
-            # Each folder's file in its own directory: Games/MSX1/ROM/Foo.zip and Games/MSX2/ROM/Foo.zip both come.
+            # Each file in its own directory: Games/MSX1/ROM/Foo.zip and Games/MSX2/ROM/Foo.zip both come.
             fn = p.rsplit('/', 1)[-1]
             files = get_files(tdir, FH + p, fn, sub=slug(d) + '-' + re.sub(r'(\.[a-z0-9]{2,4})+$', '', fn, flags=re.I))
             if not files:
@@ -1022,22 +1243,39 @@ def msx(lib):
             # Only cartridges get runs, one per ROM (a slot takes one file): floppy and hard disk slots
             # take block media the player cannot make yet.
             if slot == 'cart1':
+                notes = ' '.join(f'[{x}]' for x in re.findall(r'\[([^\]]*)\]', fn) if not x.isdigit())
                 # .mx2 is an MSX2 cartridge, whichever folder it came from
                 runs += [{'platform': 'msx', 'machines': FH_MACH['msx2' if f.lower().endswith('.mx2') else gen], 'files': [f], 'slot': slot, 'needs': [],
-                          'notes': d.split('/')[-1]} for f in keep if f.lower().endswith(('.rom', '.mx1', '.mx2'))]
+                          'notes': (d.split('/')[-1] + ' ' + notes).strip()} for f in keep if f.lower().endswith(('.rom', '.mx1', '.mx2'))]
         if not n:
             return None
         src = FH + g['files'][0][1]
         tt = {'name': g['name'], 'kind': 'demo' if g['demo'] else 'game', 'tags': ['msx'], 'license': 'unknown',
-              'source': 'https://www.file-hunter.com/', 'sources': [src], 'ids': {'filehunter': key}, 'runs': runs}
-        lib.finish(sid, tt)
+              'source': 'https://www.file-hunter.com/', 'sources': [FH + f[1] for f in g['files']], 'ids': {'filehunter': key}, 'runs': runs}
+        lib.finish(sid, msx_fill(tdir, tt, [f[3] for f in g['files']], meta))
         return f'{g["name"]} ({n} files)'
+
+    def again(sg):
+        sid, g = sg
+        path = os.path.join(TITLES, sid, 'title.json')
+        try:
+            t = json.load(open(path, encoding='utf-8'))
+        except Exception:
+            return None
+        if t.get('companies') or t.get('screens') and t.get('year'):
+            return None
+        lib.finish(sid, msx_fill(os.path.join(TITLES, sid), t, [f[3] for f in g['files']], meta))
+        return f'{t.get("name")} (details added)'
+    if refill:
+        batch(refill, again, 'msx details')
     batch_or_trial(todo, one, 'msx')
 
 
 # ---------------------------------------------------------------- SymbOS (symbos.de)
 
 SY = 'http://www.symbos.de/'
+# apps.js genre numbers, as symbos.de's apps.htm names them
+SY_CATS = [None, 'utility', 'multimedia', 'game', 'network', 'desktop widget', 'system', 'programming', 'hardware', 'office']
 
 
 def js_rows(src):
@@ -1076,7 +1314,9 @@ def symbos(lib):
         else:   # left unfinished; the section is marked failed so a rerun fetches it
             with LOCK:
                 MISSED[0] += 1
-    todo = [a for a in apps if not lib.has('symbos', a[0]) and (a[7] == '0' or set(a[7]) & {'2', '7'})]
+    # System apps without flag 4 ship inside the SymbOS packages and have no zip of their own.
+    core = lambda a: a[6] == '6' and not int(a[14] or 0) & 4
+    todo = [a for a in apps if not lib.has('symbos', a[0]) and not core(a) and (a[7] == '0' or set(a[7]) & {'2', '7'})]
 
     def one(a):
         aid, name, ver, date, plats = a[0], a[1], a[2], a[3], a[7]
@@ -1091,8 +1331,10 @@ def symbos(lib):
         runs = []
         shots = [f'{SY}gfx/shots/{a[13]}{i}.gif' for i in range(1, min(3, int(a[12] or 0)) + 1)] if a[13] else []
         ym = re.search(r'(\d{4})$', date)
-        tt = {'name': name, 'kind': 'application', 'year': int(ym.group(1)) if ym else None, 'authors': [a[5]] if a[5] else [],
-              'tags': ['symbos'], 'summary': a[15] or None, 'license': 'freeware', 'source': SY, 'sources': [SY + 'apps.htm'],
+        cat = SY_CATS[int(a[6])] if str(a[6]).isdigit() and int(a[6]) < len(SY_CATS) else None
+        tt = {'name': name, 'kind': 'game' if cat == 'game' else 'utility' if cat in ('utility', 'programming', 'hardware', 'desktop widget') else 'application',
+              'year': int(ym.group(1)) if ym else None, 'authors': [x.strip() for x in a[5].split('/')] if a[5] else [],
+              'genres': [cat] if cat else [], 'tags': ['symbos'], 'summary': a[15] or None, 'license': 'freeware', 'source': SY, 'sources': [SY + 'apps.htm'],
               'ids': {'symbos': aid}, 'runs': runs, 'screens': get_screens(tdir, shots)}
         lib.finish(sid, {k: v for k, v in tt.items() if v not in (None, [])} | {'runs': runs},
                    f'# {name} {ver}\n\n{html.unescape(re.sub("<[^>]+>", " ", a[16] or ""))}\n\n'
