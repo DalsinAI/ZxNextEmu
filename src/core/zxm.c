@@ -387,6 +387,13 @@ int zxm_media_eject(zxm *m, const char *slot)
     }
 }
 
+int zxm_media_active(const zxm *m, const char *slot)
+{
+    if (!strcmp(slot, "tape"))
+        return m->m.tape && zx_tape_playing(m->m.tape);
+    return 0;
+}
+
 /* ---- state ---------------------------------------------------------------- */
 
 size_t zxm_state_size(const zxm *m)
