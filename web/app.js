@@ -4,6 +4,8 @@
 
 import { tx, runParts, romsAdded, romAdd } from './library.js';
 import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged } from './libview.js';
+import * as libview from './libview.js';
+import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, RECIPES } from './cradle.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('screen');
@@ -21,7 +23,10 @@ let pending = null;            // latest frame not yet drawn
 let audio = null, gain = null; // sound, once the user has interacted
 let lastSnapshot = null;       // library id of the last saved snapshot
 let soundState = 'Starts when you click the screen';
-let shown = 'machine';      // which view is on screen: 'library' or 'machine'
+let shown = null;              // which view is on screen: 'machine', or a Cradle view
+const CRADLE_VIEWS = ['instances', 'recipes', 'library', 'roms'];
+let instance = null;           // the instance the machine belongs to
+let pendingRestore = null;     // its saved state, restored once the machine exists
 let resumeOnReturn = false;
 let userPaused = false;        // paused with the pause button, so stay paused
 let pendingLoad = null;        // a library title to load once the machine exists
@@ -46,20 +51,31 @@ worker.onmessage = async e => {
   case 'ready':
     machines = msg.machines;
     buildMachineMenu();
-    if (!machines.some(mc => mc.id === machineId && mc.id !== 'next' && mc.available)) machineId = 'zx48';
-    create(machineId);
+    await firstInstance();
+    await initCradle({
+      machines: () => machines,
+      current: () => ({ id: instance?.id, running }),
+      start: inst => { userPaused = false; resumeOnReturn = true; startInstance(inst); showView('machine'); },
+      romDialog,
+      show: showView,
+      library: inst => { showView('library'); libview.setInstance?.(inst); },
+      renamed: async id => { if (instance?.id === id) { instance = await instanceGet(id); showName(); } },
+      error: showError,
+      onCount: n => { $('lib-readout').textContent = n; },
+    });
     initLibraryView({
       machines: () => machines,
-      runnable: id => id !== 'next' && machines.some(mc => mc.id === id && mc.available),
+      runnable: usable,
       machineName: id => machines.find(mc => mc.id === id)?.name || id,
       run: runTitle,
-      onCount: n => { $('lib-readout').textContent = n; },
-    }).then(() => showView(prefs.view || 'library'));
+      onCount: () => {},
+    }).then(() => showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'));
     break;
   case 'machines':   // the user added ROMs
     machines = msg.machines;
     buildMachineMenu();
     libraryReload();
+    cradleRefresh();
     if ($('rom-dlg').open) romDialog(romFor);
     break;
   case 'created':
@@ -72,6 +88,10 @@ worker.onmessage = async e => {
     lastSnapshot = null;
     updateSnapshotItem();
     showStatus();
+    if (pendingRestore) {
+      send('restore', { name: instance.name, bytes: pendingRestore });
+      pendingRestore = null;
+    }
     if (pendingLoad) {
       send('loadSet', pendingLoad, pendingLoad.parts.map(p => p.bytes));
       pendingLoad = null;
@@ -93,6 +113,7 @@ worker.onmessage = async e => {
     break;
   case 'state':
     running = msg.running;
+    if (running) ranSince = true;
     $('run').setAttribute('aria-label', running ? 'Pause' : 'Start');
     $('run').title = running ? 'Pause' : 'Start';
     $('run-icon').innerHTML = running ? '<path d="M5.5 3.5v9M10.5 3.5v9"/>' : '<path d="M4.5 3l8 5-8 5z"/>';
@@ -109,6 +130,10 @@ worker.onmessage = async e => {
     setSlot(msg.name);
     break;
   case 'saved': {
+    if (msg.name.startsWith('instance:')) {
+      await keepInstance(msg.name.slice(9), msg.bytes);
+      break;
+    }
     let id = null;
     try { id = await libAdd({ name: msg.name, kind: 'state', machine: machineId, bytes: msg.bytes }); } catch {
       showError('This browser is not keeping files for this page, so the snapshot could not be kept.');
@@ -124,6 +149,73 @@ worker.onmessage = async e => {
   }
 };
 
+// ---- instances --------------------------------------------------------------
+
+const usable = id => id !== 'next' && machines.some(mc => mc.id === id && mc.available);
+const nameOf = id => machines.find(mc => mc.id === id)?.name || id;
+
+// The instance to open the page on: the last one used, or one for ?m=, or a
+// new Spectrum 48K the first time.
+async function firstInstance() {
+  const all = await instanceAll().catch(() => []);
+  const want = new URLSearchParams(location.search).get('m');
+  let inst = want ? null : all.find(i => i.id === prefs.instance && usable(i.machine));
+  if (!inst && want && usable(want)) inst = await instanceFor(want);
+  inst ??= all.filter(i => usable(i.machine)).sort((a, b) => (b.lastRun || 0) - (a.lastRun || 0))[0];
+  inst ??= await instanceFor('zx48');
+  startInstance(inst);
+}
+
+// The most recently used instance of a machine, made from its recipe if
+// there is none.
+async function instanceFor(machine) {
+  const all = await instanceAll().catch(() => []);
+  const have = all.filter(i => i.machine === machine).sort((a, b) => (b.lastRun || b.created) - (a.lastRun || a.created))[0];
+  if (have) return have;
+  const r = RECIPES.find(x => x.machine === machine && !x.later);
+  return instanceMake({ name: r?.title || nameOf(machine), machine, recipe: r?.id || null });
+}
+
+// Switch the machine to an instance, keeping the one it leaves.
+function startInstance(inst) {
+  if (instance?.id === inst.id) return;
+  if (instance) keepState();
+  ranSince = false;
+  instance = inst;
+  prefs.instance = inst.id;
+  savePrefs();
+  pendingRestore = inst.state || null;
+  create(inst.machine);
+  instanceUpdate(inst.id, { lastRun: Date.now() }).catch(() => {});
+}
+
+function showName() {
+  $('machine-name').textContent = instance?.name || nameOf(machineId);
+  $('machine-name').title = `${instance?.name || ''} · ${nameOf(machineId)}`;
+}
+
+// Ask the machine for its state; 'saved' brings it back to keepInstance.
+// Only once it has run since it was restored, so a state is never replaced
+// by a machine that has not started yet.
+let ranSince = false;
+function keepState() {
+  if (!instance || !ranSince) return;
+  ranSince = false;
+  send('save', { name: `instance:${instance.id}` });
+}
+async function keepInstance(id, bytes) {
+  let thumb = null;
+  try { thumb = await frameCanvas.convertToBlob({ type: 'image/png' }); } catch {}
+  try {
+    const title = currentTitle && instance?.id === id ? { id: currentTitle.id, name: currentTitle.meta.name } : undefined;
+    await instanceUpdate(id, { state: bytes, stateSize: bytes.byteLength, thumb, lastRun: Date.now(), ...(title ? { title } : {}) });
+  } catch { /* the browser is not keeping data for this page */ }
+  if (shown !== 'machine') cradleRefresh();
+}
+// Keep the running instance now and then, and when the page goes away.
+setInterval(() => { if (running && shown === 'machine') keepState(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && shown === 'machine') keepState(); });
+
 function create(id) {
   machineId = id;
   prefs.machine = id;
@@ -131,11 +223,11 @@ function create(id) {
   setChip('starting');
   hideError();
   const mc = machines.find(m => m.id === id);
-  $('machine-name').textContent = mc ? mc.name : id;
+  showName();
   $('media-machine').textContent = mc ? mc.name : id;
   for (const b of document.querySelectorAll('#machine-list .pop-item'))
     b.classList.toggle('current', b.dataset.id === id);
-  history.replaceState(null, '', `?m=${id}`);
+  history.replaceState(null, '', location.pathname);
   send('create', { id, roms: 'roms.json' });
   renderLibrary();
 }
@@ -156,12 +248,12 @@ function buildMachineMenu() {
       b.classList.add('needs-rom');
       b.querySelector('small').textContent = 'Add ROM…';
     } else {
-      b.querySelector('small').textContent = mc.id;
+      b.querySelector('small').textContent = mc.id === machineId ? 'This one' : 'Its instance';
     }
-    b.addEventListener('click', () => {
+    b.addEventListener('click', async () => {
       closeMenus();
       if (!mc.available) return romDialog(mc.id);
-      if (mc.id !== machineId) create(mc.id);
+      if (mc.id !== machineId) startInstance(await instanceFor(mc.id));
       canvas.focus();
     });
     list.append(b);
@@ -203,8 +295,8 @@ function romDialog(id) {
     send('addRoms', { roms });
     romsChanged(roms);
   });
-  dlg.querySelector('form').addEventListener('submit', e => {
-    if (e.submitter?.value === 'start' && id !== machineId) { showView('machine'); create(id); }
+  dlg.querySelector('form').addEventListener('submit', async e => {
+    if (e.submitter?.value === 'start' && id !== machineId) { showView('machine'); startInstance(await instanceFor(id)); }
   });
   if (!dlg.open) dlg.showModal();
 }
@@ -593,20 +685,27 @@ $('add-media').addEventListener('click', () => { toggleDrawer('media-drawer', fa
 
 function showView(v) {
   if (v === shown) return;
+  const was = shown;
   shown = v;
   prefs.view = v;
+  const cradle = v !== 'machine';
+  if (cradle) prefs.cradleView = v;
   savePrefs();
   closeMenus();
-  const lib = v === 'library';
-  $('libview').hidden = !lib;
-  $('stage').hidden = lib;
-  $('lib-btn').setAttribute('aria-pressed', String(lib));
-  if (lib) {
+  $('cradle-top').hidden = !cradle;
+  $('libview').hidden = v !== 'library';
+  for (const k of ['instances', 'recipes', 'roms']) $(`${k}-view`).hidden = v !== k;
+  for (const b of document.querySelectorAll('.cradle-nav [data-view]')) b.setAttribute('aria-current', String(b.dataset.view === v));
+  $('stage').hidden = cradle;
+  $('lib-btn').setAttribute('aria-pressed', String(cradle));
+  if (v === 'library') $('lib-q').focus();
+  if (cradle && was !== 'machine') return;
+  if (cradle) {
     toggleDrawer('media-drawer', false);
     // The machine may still be starting, so stop it whatever it says now.
     resumeOnReturn = !userPaused;
     send('stop');
-    $('lib-q').focus();
+    keepState();
   } else {
     if (resumeOnReturn) send('start');
     resumeOnReturn = false;
@@ -614,10 +713,11 @@ function showView(v) {
     canvas.focus();
   }
 }
-$('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(shown === 'library' ? 'machine' : 'library'); });
+$('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(shown !== 'machine' ? 'machine' : prefs.cradleView || 'instances'); });
 
-// Run a library title: switch machine if it needs another, then load it.
-function runTitle(t, run, id) {
+// Run a library title: on this instance if it is that machine, else on the
+// machine's own instance. Then load it.
+async function runTitle(t, run, id) {
   const { parts, missing } = runParts(t, run);
   if (missing.length || !parts.length) return;
   currentTitle = t;
@@ -627,13 +727,16 @@ function runTitle(t, run, id) {
   userPaused = false;
   showView('machine');
   if (id !== machineId) {
+    const inst = await instanceFor(id);
     pendingLoad = load;
-    create(id);
+    startInstance(inst);
+    // A title replaces whatever the instance was doing, so don't restore over it.
+    pendingRestore = null;
   } else {
     send('loadSet', load, load.parts.map(p => p.bytes));
     send('start');
   }
-  $('machine-name').textContent = `${t.meta.name} · ${machines.find(mc => mc.id === id)?.name || id}`;
+  instanceUpdate(instance.id, { title: { id: t.id, name: t.meta.name } }).catch(() => {});
 }
 
 function updateShotItem() {

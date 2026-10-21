@@ -189,7 +189,7 @@ wasmtest: $(BUILD)/zxcore.wasm $(BUILD)/zxm $(ORIC_ROMS)
 
 # ---- The browser runtime: build/web is a static site (open it through any
 # web server; `make serve` uses port 7081, ZX Cradle's dev port). ----------
-WEB_FILES = web/index.html web/app.js web/app.css web/worker.js web/audio.js web/library.js web/libview.js
+WEB_FILES = web/index.html web/app.js web/app.css web/worker.js web/audio.js web/library.js web/libview.js web/cradle.js
 
 web: $(BUILD)/zxcore.wasm $(WEB_FILES)
 	mkdir -p $(BUILD)/web/cradle

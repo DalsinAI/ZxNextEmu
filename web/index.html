@@ -10,6 +10,64 @@
 </head>
 <body>
 <div class="app">
+  <!-- Cradle: the instances, recipes, library and ROMs around the machine. -->
+  <header class="cradle-top" id="cradle-top" hidden>
+    <span class="zxc-wordmark">ZX Cradle</span>
+    <nav class="cradle-nav" aria-label="Cradle sections">
+      <button data-view="instances">Instances</button>
+      <button data-view="recipes">Recipes</button>
+      <button data-view="library">Library</button>
+      <button data-view="roms">ROMs</button>
+    </nav>
+    <span class="cradle-sub">Machine manager · this browser</span>
+  </header>
+
+  <section class="cradle-view" id="instances-view" hidden aria-label="Instances">
+    <div class="cradle-tools">
+      <button class="zxc-btn zxc-btn--primary" id="inst-new">+ New instance</button>
+      <label class="lib-search">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l4 4"/></svg>
+        <input type="search" id="inst-q" placeholder="Search instances" aria-label="Search instances">
+      </label>
+      <label class="lib-sort">Sort
+        <select id="inst-sort"><option value="recent">Last run</option><option value="name">Name</option><option value="machine">Machine</option></select>
+      </label>
+    </div>
+    <div class="inst-layout">
+      <div class="inst-main">
+        <ul class="inst-grid" id="inst-grid"></ul>
+        <div class="lib-empty" id="inst-empty" hidden>
+          <i class="zxc-stripe"></i>
+          <h2>No instances yet</h2>
+          <p>An instance is a machine of your own: a name, a model and the state it was in when you left it. Make one from a recipe.</p>
+        </div>
+      </div>
+      <aside class="inst-inspector" id="inst-inspector" aria-label="Selected instance"></aside>
+    </div>
+  </section>
+
+  <section class="cradle-view" id="recipes-view" hidden aria-label="Recipes">
+    <div class="cradle-tools">
+      <label class="lib-search">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l4 4"/></svg>
+        <input type="search" id="recipe-q" placeholder="Search recipes" aria-label="Search recipes">
+      </label>
+      <p class="cradle-note">A recipe is a ready-made setup. Making an instance from one gives you a machine of your own to keep.</p>
+    </div>
+    <ul class="recipe-list" id="recipe-list"></ul>
+  </section>
+
+  <section class="cradle-view" id="roms-view" hidden aria-label="ROMs">
+    <div class="cradle-tools">
+      <p class="cradle-note">Most machines' ROMs come with ZX Cradle. For the others, add your own files: they stay in this browser.</p>
+    </div>
+    <div class="rom-wrap"><table class="rom-table">
+      <thead><tr><th>Machine</th><th>ROM files</th><th>State</th><th></th></tr></thead>
+      <tbody id="rom-rows"></tbody>
+    </table></div>
+  </section>
+  <dialog class="lib-edit" id="inst-dlg" aria-label="Instance"></dialog>
+
   <!-- The software library: everything you own to run. -->
   <section class="libview" id="libview" hidden aria-labelledby="lib-title">
     <header class="lib-top">
@@ -123,8 +181,8 @@
 
     <div class="bar-controls">
       <button class="menu-btn" id="lib-btn" aria-pressed="false">
-        <svg viewBox="0 0 16 16"><path d="M2.5 2.5h3v11h-3zM6.5 2.5h3v11h-3zM10.5 3.5l2.8-.8 2.2 10.4-2.8.8z"/></svg>
-        <span>Library</span><span class="readout" id="lib-readout">0</span>
+        <svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/><rect x="1.5" y="9.5" width="5" height="5"/><rect x="9.5" y="9.5" width="5" height="5"/></svg>
+        <span>Cradle</span><span class="readout" id="lib-readout">0</span>
       </button>
       <span class="bar-divider" aria-hidden="true"></span>
       <button class="icon-btn" id="run" aria-label="Pause" title="Pause">
