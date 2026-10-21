@@ -595,8 +595,8 @@ export function matches(t, query) {
     case 'kind': return (m.kind || 'game') === v;
     case 'needs': return (m.runs || []).some(r => (r.needs || []).includes(v));
     case 'compat': return Object.values(m.compat || {}).some(c => c.status === v);
-    case 'year': return String(m.year) === v;
-    case 'decade': return m.year && `${Math.floor(m.year / 10) * 10}s` === v;
+    case 'year': return titleYears(t).some(y => String(y) === v);
+    case 'decade': return titleYears(t).some(y => `${Math.floor(y / 10) * 10}s` === v);
     case 'genre': return (m.genres || []).some(g => g.toLowerCase().includes(v));
     case 'lang': return titleLangs(t).some(c => c === v || langName(c).toLowerCase() === v);
     case 'rating': return (ratingOf(t)?.score ?? -1) >= Number(v);
@@ -667,6 +667,11 @@ export const titleLangs = t => {
   const vs = t.meta.versions?.length ? t.meta.versions : [{}];
   return [...new Set(vs.map(v => v.language || t.meta.language || 'en'))];
 };
+// Every year a version came out in; the title's own year is the main version's.
+export const titleYears = t => [...new Set([t.meta.year, ...(t.meta.versions || []).map(v => v.year)].map(Number).filter(y => y > 0))];
+// A run that needs SymbOS is an app to copy onto a set-up that boots SymbOS,
+// not something to load into a bare machine.
+export const insideSymbos = r => (r.needs || []).includes('symbos');
 
 // ---- ratings and reviews (reviews.json) --------------------------------------
 
