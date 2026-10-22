@@ -71,8 +71,12 @@ export async function reload() {
   let kept = [];
   try { kept = await titleAll(); } catch { status('This browser is not keeping files for this page, so the library cannot be stored.'); }
   fromHost ??= await hostTitles();
+  if (!fromHost) {
+    status('Reading the library folder on this computer…');
+    setTimeout(reload, 10000);
+  } else if ($('lib-status').textContent.startsWith('Reading the library folder')) status('');
   const mine = new Set(kept.map(t => t.id));
-  titles = [...fromHost.filter(t => !mine.has(t.id)), ...kept];
+  titles = [...(fromHost || []).filter(t => !mine.has(t.id)), ...kept];
   for (const t of titles) { delete t._hay; t.meta = normalize(t.meta); }
   try { everything = localStorage.getItem('zxc-lib-everything') === '1'; } catch { /* storage off */ }
   try { favs = new Map(Object.entries(JSON.parse(localStorage.getItem('zxc-lib-favs') || '{}'))); } catch { /* storage off */ }
@@ -83,6 +87,7 @@ export async function reload() {
 }
 
 export const count = () => titles.length;
+export const findTitle = id => titles.find(t => t.id === id) || titleGet(id);
 
 function status(text) {
   const el = $('lib-status');

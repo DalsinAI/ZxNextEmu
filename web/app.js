@@ -3,7 +3,7 @@
 // saved states live in IndexedDB.
 
 import { tx, runParts, fillParts, insideSymbos, romsAdded, romAdd, offersOf } from './library.js';
-import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor } from './libview.js';
+import { initLibraryView, addFiles as libraryAdd, addShot, reload as libraryReload, romsChanged, showFor, findTitle } from './libview.js';
 import { initCradle, refresh as cradleRefresh, instanceAll, instanceGet, instanceMake, instanceUpdate, recipeFor, RECIPES } from './cradle.js';
 
 const $ = id => document.getElementById(id);
@@ -14,6 +14,11 @@ const frameCtx = frameCanvas.getContext('2d');
 const worker = new Worker('worker.js');
 
 const prefs = loadPrefs();
+// Every instance runs in a window of its own (?instance=<id>); the window
+// without one is Cradle itself, where instances are chosen but not run.
+const params = new URLSearchParams(location.search);
+const ownInstance = params.get('instance');
+const inWindow = !!ownInstance;
 let machines = [];
 let machineId = new URLSearchParams(location.search).get('m') || prefs.machine || 'zx48';
 let running = false;
@@ -54,7 +59,10 @@ worker.onmessage = async e => {
     await initCradle({
       machines: () => machines,
       current: () => ({ id: instance?.id, running }),
-      start: inst => { userPaused = false; resumeOnReturn = true; startInstance(inst); showView('machine'); },
+      start: inst => {
+        if (inst.id !== ownInstance) { openWindow(inst); return; }
+        userPaused = false; resumeOnReturn = true; startInstance(inst); showView('machine');
+      },
       romDialog,
       show: showView,
       library: inst => { libraryFor(inst); showView('library'); },
@@ -69,7 +77,16 @@ worker.onmessage = async e => {
       run: runTitle,
       current: () => machineId,
       onCount: () => {},
-    }).then(() => { libraryReady = true; libraryFor(instance); migrateMedia(); showView(CRADLE_VIEWS.includes(prefs.view) || prefs.view === 'machine' ? prefs.view : 'instances'); });
+    }).then(async () => {
+      libraryReady = true; libraryFor(instance); migrateMedia();
+      if (!inWindow) { showView(CRADLE_VIEWS.includes(prefs.view) ? prefs.view : 'instances'); return; }
+      showView('machine');
+      // Opened to run a library title: ?title=<id>&run=<n>
+      const t = params.get('title') && await findTitle(params.get('title'));
+      const run = t?.meta.runs?.[Number(params.get('run')) || 0];
+      if (run) runTitle(t, run, machineId);
+      if (params.has('title')) history.replaceState(null, '', `${location.pathname}?instance=${encodeURIComponent(ownInstance)}`);
+    });
     break;
   case 'machines':   // the user added ROMs
     machines = msg.machines;
@@ -158,6 +175,8 @@ const nameOf = id => machines.find(mc => mc.id === id)?.name || id;
 // The instance to open the page on: the last one used, or one for ?m=, or a
 // new Spectrum 48K the first time.
 async function firstInstance() {
+  const own = ownInstance && await instanceGet(ownInstance).catch(() => null);
+  if (own) { startInstance(own); document.title = `${own.name} · ZX Cradle`; return; }
   const all = await instanceAll().catch(() => []);
   const want = new URLSearchParams(location.search).get('m');
   let inst = want ? null : all.find(i => i.id === prefs.instance && usable(i.machine));
@@ -177,6 +196,16 @@ async function instanceFor(machine) {
   const fields = { name: r?.title || nameOf(machine), machine, recipe: r?.id || null };
   // Without IndexedDB the instance lasts as long as the page.
   return instanceMake(fields).catch(() => ({ id: `${machine}-here`, ...fields, notes: '', created: Date.now(), lastRun: null, state: null, stateSize: 0, thumb: null, title: null }));
+}
+
+// Open an instance in its own window, or bring that window to the front.
+// extra: more search parameters, such as a library title to run there.
+function openWindow(inst, extra = {}) {
+  const q = new URLSearchParams({ instance: inst.id, ...extra });
+  const w = window.open(`${location.pathname}?${q}`, `zxc-${inst.id}`, 'popup,width=960,height=800');
+  if (w) { w.focus(); return true; }
+  showError('The browser blocked the new window. Allow pop-ups for this page to open instances in their own windows.');
+  return false;
 }
 
 // Switch the machine to an instance, keeping the one it leaves.
@@ -237,7 +266,7 @@ function create(id) {
   $('media-machine').textContent = mc ? mc.name : id;
   for (const b of document.querySelectorAll('#machine-list .pop-item'))
     b.classList.toggle('current', b.dataset.id === id);
-  history.replaceState(null, '', location.pathname);
+  if (!inWindow) history.replaceState(null, '', location.pathname);
   send('create', { id, roms: 'roms.json' });
   renderLibrary();
 }
@@ -716,12 +745,12 @@ $('add-media').addEventListener('click', () => { toggleDrawer('media-drawer', fa
 
 function showView(v) {
   if (v === shown) return;
+  // Cradle's own window runs no machine: the instance opens in its window.
+  if (v === 'machine' && !inWindow) { if (instance) openWindow(instance); return; }
   const was = shown;
   shown = v;
-  prefs.view = v;
   const cradle = v !== 'machine';
-  if (cradle) prefs.cradleView = v;
-  savePrefs();
+  if (!inWindow) { prefs.view = v; prefs.cradleView = v; savePrefs(); }
   closeMenus();
   $('cradle-top').hidden = !cradle;
   $('libview').hidden = v !== 'library';
@@ -751,6 +780,12 @@ $('lib-btn').addEventListener('click', e => { e.stopPropagation(); showView(show
 async function runTitle(t, run, id) {
   const { parts, missing } = runParts(t, run);
   if (missing.length || !parts.length || insideSymbos(run)) return;
+  // A title runs in its instance's window.
+  if (!inWindow || id !== machineId) {
+    const inst = await instanceFor(id);
+    const i = (t.meta.runs || []).indexOf(run);
+    if (inst.id !== ownInstance) { openWindow(inst, { title: t.id, run: String(Math.max(0, i)) }); return; }
+  }
   try { await fillParts(parts); } catch (err) { console.warn(err.message); return; }
   currentTitle = t;
   updateShotItem();
