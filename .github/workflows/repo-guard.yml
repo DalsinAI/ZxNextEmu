@@ -1,4 +1,4 @@
-# Copyright (c) 2026 AmigaChrome Team. MIT licence.
+# Copyright (c) 2026 AmiCradle Team. MIT licence.
 # Repo guard: takes tool attribution lines out of PR descriptions, issues,
 # comments and reviews as soon as they are posted or edited, and fails any
 # push whose commit messages carry them or whose commits aren't SacredTrees'.
@@ -62,7 +62,7 @@ jobs:
               // drop a rule or blank lines left dangling at the end
               while (out.length && /^\s*(---+|\*\*\*+|___+)?\s*$/.test(out[out.length - 1])) out.pop();
               let s = out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\s*\n/, '');
-              return s.trim() ? s : 'Team 3';
+              return s.trim() ? s : 'AmiCradle Team';
             }
             const { owner, repo } = context.repo;
             const ev = context.eventName, p = context.payload;
