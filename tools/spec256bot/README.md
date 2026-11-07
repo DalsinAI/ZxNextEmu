@@ -2,7 +2,7 @@
 
 Colours an ordinary 48K Spectrum game for Spec256 (see
 [docs/spec256.md](../../docs/spec256.md)): it finds the game's graphics by
-watching it play, has Claude choose colours for each sprite and design a
+watching it play, has an AI model choose colours for each sprite and design a
 background, and writes the `.GFX`, `.CFG` and `.B00` files that `zxrun -g`,
 ZX Cradle, ZX-Poly and EmuZWin load.
 
@@ -10,7 +10,7 @@ ZX Cradle, ZX-Poly and EmuZWin load.
     B=tools/spec256bot/bot.py
     python3 $B trace JETPAC.SNA work/          # play it for 5 minutes, traced (.z80 works too)
     python3 $B sheet work/                     # sprites -> work/sheet.png
-    python3 $B ai work/ --title "Jetpac"       # Claude -> work/plan.json
+    python3 $B ai work/ --title "Jetpac"       # AI model -> work/plan.json
     python3 $B emit work/ JETPAC.SNA out/      # out/JETPAC.SNA .GFX .CFG .B00
     build/zxrun -g out -f 3000 -s shot.ppm
 
@@ -42,7 +42,7 @@ press in four any key, so a Y/N question gets answered.
 **Group.** Nearby drawn bytes with the same width make one sprite.
 `sheet.png` shows them all in the colour the game used.
 
-**Plan.** Claude (`claude-opus-5-5`) gets the sheet and a list of the
+**Plan.** The AI model gets the sheet and a list of the
 sprites (size, how often drawn, in which colours) and answers, per sprite,
 what it is, colour ramps by pixel row (a helmet over a suit over flames) and
 a shading style: `bevel` (lit top left, dark bottom right), `gradient`
@@ -53,12 +53,12 @@ graphics the game draws in different colours, like the font. Under a
 background 0xFF can't be the game's ink, so `ink` graphics then take the
 colour the game mostly drew them in, shaded.
 
-**Background.** In the same answer Claude designs a background from
+**Background.** In the same answer the model designs a background from
 three gameplay screenshots: a kind (starfield, nebula, sky, hills, cave,
 bricks, water, gradient or none), one to three colour ramps, a brightness
 and a seed. `background.py` paints it as `NAME.B00` (320x200, dithered,
 kept dark so the sprites stay readable), shown wherever the game leaves
-paper. Claude chooses none for games that colour the paper on purpose.
+paper. The model chooses none for games that colour the paper on purpose.
 Without a plan, games played on black paper get a starfield.
 
 **Emit.** Every set pixel of a coloured byte gets its colour, unset pixels
