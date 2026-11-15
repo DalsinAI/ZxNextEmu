@@ -2,7 +2,7 @@
 
 A background shows wherever a pixel's colour is 0, so behind everything the
 game leaves as paper. paint(spec) draws one from a short description that
-the AI model picks for the game:
+the plan gives for the game:
 
     {"kind": "nebula", "ramps": ["rose", "navy"], "brightness": 2, "seed": 7}
 

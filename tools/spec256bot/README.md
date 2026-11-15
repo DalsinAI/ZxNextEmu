@@ -2,22 +2,20 @@
 
 Colours an ordinary 48K Spectrum game for Spec256 (see
 [docs/spec256.md](../../docs/spec256.md)): it finds the game's graphics by
-watching it play, has an AI model choose colours for each sprite and design a
-background, and writes the `.GFX`, `.CFG` and `.B00` files that `zxrun -g`,
+watching it play, colours each sprite in a shaded ramp of the colour the game
+drew it in (or as a hand-written plan says), and writes the `.GFX`, `.CFG` and `.B00` files that `zxrun -g`,
 ZX Cradle, ZX-Poly and EmuZWin load.
 
     make build/s256trace
     B=tools/spec256bot/bot.py
     python3 $B trace JETPAC.SNA work/          # play it for 5 minutes, traced (.z80 works too)
     python3 $B sheet work/                     # sprites -> work/sheet.png
-    python3 $B ai work/ --title "Jetpac"       # AI model -> work/plan.json
     python3 $B emit work/ JETPAC.SNA out/      # out/JETPAC.SNA .GFX .CFG .B00
     build/zxrun -g out -f 3000 -s shot.ppm
 
-`ai` needs the `anthropic` package and an API key (`ANTHROPIC_API_KEY`).
-Without it, skip that step: `emit` then colours each sprite in the ramp of
-the colour the game drew it in. `plan.json` is plain JSON, so it can also be
-written or touched up by hand.
+`emit` colours each sprite in the ramp of the colour the game drew it in.
+To choose colours yourself, write `work/plan.json` (see **Plan** below);
+`emit` uses it when it is there.
 
 `emit` checks that it is given the snapshot `trace` played, and the same
 ROMs (`--roms`, default `roms/`), because the traced memory, ROM included,
@@ -42,8 +40,7 @@ press in four any key, so a Y/N question gets answered.
 **Group.** Nearby drawn bytes with the same width make one sprite.
 `sheet.png` shows them all in the colour the game used.
 
-**Plan.** The AI model gets the sheet and a list of the
-sprites (size, how often drawn, in which colours) and answers, per sprite,
+**Plan.** `work/plan.json` gives, per sprite id from `sheet.png`,
 what it is, colour ramps by pixel row (a helmet over a suit over flames) and
 a shading style: `bevel` (lit top left, dark bottom right), `gradient`
 (light to dark down the band) or `flat`. The ramps are the Spec256
@@ -53,12 +50,11 @@ graphics the game draws in different colours, like the font. Under a
 background 0xFF can't be the game's ink, so `ink` graphics then take the
 colour the game mostly drew them in, shaded.
 
-**Background.** In the same answer the model designs a background from
-three gameplay screenshots: a kind (starfield, nebula, sky, hills, cave,
+**Background.** The plan's `background` gives a kind (starfield, nebula, sky, hills, cave,
 bricks, water, gradient or none), one to three colour ramps, a brightness
 and a seed. `background.py` paints it as `NAME.B00` (320x200, dithered,
 kept dark so the sprites stay readable), shown wherever the game leaves
-paper. The model chooses none for games that colour the paper on purpose.
+paper. Use none for games that colour the paper on purpose.
 Without a plan, games played on black paper get a starfield.
 
 **Emit.** Every set pixel of a coloured byte gets its colour, unset pixels

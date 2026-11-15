@@ -5,16 +5,13 @@
                                             a 48K .z80 works too
     bot.py sheet  work/                     group the graphics into sprites,
                                             draw work/sheet.png
-    bot.py ai     work/ --title "Jetpac"    ask the AI model to plan the colours
-                                            (needs ANTHROPIC_API_KEY)
     bot.py emit   work/ game.sna out/       write out/NAME.SNA, .GFX, .CFG
 
-`emit` uses work/plan.json when it is there (from `ai`, or written by hand)
+`emit` uses work/plan.json when it is there (written by hand)
 and otherwise colours every sprite in the ramp of the Spectrum colour it was
 drawn in. See README.md.
 """
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -41,17 +38,6 @@ RAMPS = {
     # Greys that the picture averages with the cell's ink (UpColorsMixed=8):
     # shading in whatever colour the game gives that place on the screen.
     "ink": 248,
-}
-RAMP_LOOKS = {
-    "sky": "black to deep blue to pale sky blue", "rose": "dark red to pink",
-    "teal": "dark teal to mint", "orange": "orange to cream yellow",
-    "brown": "dark brown to peach", "purple": "plum to pale pink",
-    "navy": "navy to lavender", "lime": "moss green to lemon",
-    "fire": "red through orange to yellow", "khaki": "olive drab to cream",
-    "grey": "black to white", "skin": "tan to light skin",
-    "cyan": "turquoise to pale cyan", "green": "grass green to pale green",
-    "slate": "blue grey to pale lilac", "gold": "dark gold to pale yellow",
-    "aqua": "dark teal to bright cyan",
 }
 STYLES = ("bevel", "gradient", "flat")
 # Spectrum colour (0-7, +8 bright) to the ramp of that colour.
@@ -262,8 +248,8 @@ def cmd_sheet(a):
     json.dump(sprites, open(os.path.join(a.work, "sprites.json"), "w"))
     plan = os.path.join(a.work, "plan.json")
     if os.path.exists(plan):
-        os.remove(plan)  # its sprite ids belonged to the old sheet; run ai again
-        print(f"removed the old {plan}; run ai again for the new sprites")
+        os.remove(plan)  # its sprite ids belonged to the old sheet
+        print(f"removed the old {plan}; its sprite ids no longer match")
     draw_sheet(mem, sprites, os.path.join(a.work, "sheet.png"))
     print(f"{len(sprites)} sprites, {sum(len(s['drawn']) for s in sprites)} bytes -> {a.work}/sheet.png")
 
@@ -286,159 +272,6 @@ def default_plan(sprites):
             "sprites": [{"id": s["id"], "what": "",
                          "style": "gradient" if s["start"] < 0x4000 else "bevel",
                          "bands": [{"from_row": 0, "ramp": default_ramp(s)}]} for s in sprites]}
-
-
-PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "background": {
-            "type": "object",
-            "properties": {
-                "kind": {"type": "string", "enum": list(background.KINDS)},
-                "ramps": {"type": "array", "items": {"type": "string", "enum": background.RAMPS}},
-                "brightness": {"type": "integer", "enum": [1, 2, 3, 4]},
-                "seed": {"type": "integer"},
-                "why": {"type": "string"},
-            },
-            "required": ["kind", "ramps", "brightness", "seed", "why"],
-            "additionalProperties": False,
-        },
-        "sprites": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "integer"},
-                    "what": {"type": "string"},
-                    "style": {"type": "string", "enum": list(STYLES)},
-                    "bands": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "from_row": {"type": "integer"},
-                                "ramp": {"type": "string", "enum": list(RAMPS)},
-                            },
-                            "required": ["from_row", "ramp"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "required": ["id", "what", "style", "bands"],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["background", "sprites"],
-    "additionalProperties": False,
-}
-
-
-def ai_prompt(title, sprites):
-    looks = "\n".join(f"- {k}: {v}" for k, v in RAMP_LOOKS.items())
-    kinds = "\n".join(f"- {k}: {v}" for k, v in background.KINDS.items())
-    listing = "\n".join(
-        f"- sprite {s['id']}: {s['w'] * 8}x{s['h']} pixels, drawn {s['times']} times, "
-        f"in Spectrum ink {s['ink'] % 8}{' bright' if s['ink'] >= 8 else ''} on paper {s['paper'] % 8}"
-        + (f" ({round(100 * s['ink_share'])}% of the time; the game also uses other colours for it)"
-           if s["ink_share"] < 0.85 else "")
-        + (" (from the ROM: the Spectrum's own font, shared by all text)" if s["start"] < 0x4000 else "")
-        for s in sprites)
-    return f"""You are colouring the ZX Spectrum game "{title}" for Spec256, which gives every
-pixel its own colour from a 256-colour palette instead of one ink per 8x8 cell.
-
-The image shows every graphic the game drew while it was played, each labelled
-with its number and shown in the Spectrum ink colour the game gave it. Some
-graphics are tall strips holding several frames of animation or several
-characters of a font stacked on top of each other.
-
-For each sprite, say what it is (a few words; "unknown" is fine) and choose
-how to colour its set pixels:
-
-- bands: colour ramps by pixel row, top to bottom. The first band starts at
-  row 0; add more bands where the object changes material (a helmet over a
-  suit, flames under a rocket). For a stack of frames or font characters,
-  usually one band.
-- style: "bevel" shades each pixel lighter on its top and left edges and
-  darker on its bottom and right edges (good for solid objects), "gradient"
-  goes light to dark down each band (good for metal, flames, text), "flat"
-  uses one shade (good for thin lines and tiny sprites).
-
-Keep the game's own colour scheme recognisable: an object the game drew in
-red should stay mostly red, but pick the richer ramps where they suit the
-object better (skin for faces, fire for flames, grey or slate for metal).
-Ramps:
-{looks}
-- zx_blue, zx_red, zx_magenta, zx_green, zx_cyan, zx_yellow, zx_white: the
-  Spectrum's own colours, black up to normal brightness
-- bright_blue, bright_red, bright_magenta, bright_green, bright_cyan,
-  bright_yellow: the same up to full brightness
-- ink: exactly the ink colour the game gives that spot of the screen at the
-  time, unshaded. Use it for graphics the game draws in different colours
-  (fonts, tiles shared by several objects), so the game's colour coding
-  survives. With a background it becomes the sprite's main game colour,
-  shaded, since the background hides the game's own colouring.
-
-The sprites:
-{listing}
-
-Also design a background. The other images are screenshots of the game as
-it was played. Spec256 shows a 320x200 background wherever the game leaves
-paper, so it sits behind the whole picture. Choose one that suits the game's
-setting (space, a jungle, a castle, underwater...) and keep it dim enough
-(brightness 1 or 2 usually) that the sprites and text stay easy to see.
-Choose "none" when the game paints areas of the screen with coloured paper
-on purpose (a background would cover them). Kinds:
-{kinds}
-ramps: one to three of {", ".join(background.RAMPS)} (these start at
-black, so the background can stay dark), the main colour first (for sky and hills
-the second is the hills; for water the last is the bubbles). seed: any
-number, it varies the pattern. why: one sentence.
-
-Answer for every sprite listed."""
-
-
-def screenshots(work, most=3):
-    """The tracer's screenshots as PNGs (work/shotNNNN.png), up to `most`."""
-    shots = sorted(f for f in os.listdir(work) if f.startswith("shot") and f.endswith(".ppm"))
-    out = []
-    for f in shots[-most:]:
-        data = open(os.path.join(work, f), "rb").read()
-        parts = data.split(b"\n", 3)                # P6, size, 255, pixels
-        w, h = map(int, parts[1].split())
-        png = os.path.join(work, f[:-4] + ".png")
-        write_png(png, w, h, parts[3])
-        out.append(png)
-    return out
-
-
-def cmd_ai(a):
-    import anthropic
-
-    mem, trace = load(a.work)
-    sprites = json.load(open(os.path.join(a.work, "sprites.json")))
-    images = [os.path.join(a.work, "sheet.png")] + screenshots(a.work)
-    client = anthropic.Anthropic()
-    response = client.beta.messages.create(
-        model="claude-opus-5-5",
-        max_tokens=32000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-        output_config={"effort": "high", "format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
-        messages=[{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                         "data": base64.standard_b64encode(open(f, "rb").read()).decode()}}
-            for f in images
-        ] + [{"type": "text", "text": ai_prompt(a.title, sprites)}]}],
-    )
-    if response.stop_reason == "refusal":
-        sys.exit(f"The model declined: {response.stop_details}")
-    if response.stop_reason == "max_tokens":
-        sys.exit("the answer was cut off; try fewer sprites")
-    text = next(b.text for b in response.content if b.type == "text")
-    plan = json.loads(text)
-    json.dump(plan, open(os.path.join(a.work, "plan.json"), "w"), indent=1)
-    print(f"plan for {len(plan['sprites'])} sprites -> {a.work}/plan.json")
 
 
 # ---- colouring and output -----------------------------------------------------
@@ -570,9 +403,6 @@ def main():
     t.add_argument("--roms", default=os.path.join(ROOT, "roms"))
     s = sub.add_parser("sheet")
     s.add_argument("work")
-    i = sub.add_parser("ai")
-    i.add_argument("work")
-    i.add_argument("--title", required=True)
     e = sub.add_parser("emit")
     e.add_argument("work")
     e.add_argument("snapshot")
@@ -582,7 +412,7 @@ def main():
     e.add_argument("--fill", action="store_true",
                    help="also colour bytes inside a sprite that were never seen drawn")
     a = ap.parse_args()
-    {"trace": cmd_trace, "sheet": cmd_sheet, "ai": cmd_ai, "emit": cmd_emit}[a.cmd](a)
+    {"trace": cmd_trace, "sheet": cmd_sheet, "emit": cmd_emit}[a.cmd](a)
 
 
 if __name__ == "__main__":

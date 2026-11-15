@@ -103,7 +103,8 @@ The cost is about nine times the CPU work: 3 to 4 ms a frame in
 ## A converter for any game
 
 A first version is in [tools/spec256bot](../tools/spec256bot/README.md): steps 1
-and 2 below, with an AI model choosing the colours per sprite. On Jetpac 97% of
+and 2 below, colouring each sprite in a shaded ramp of its game colour, or as a
+hand-written plan says. On Jetpac 97% of
 the bytes it colours are ones the hand-coloured version colours too, and it
 finds about half of those (not the aliens, which the game shifts at run
 time). What follows is the full plan.
