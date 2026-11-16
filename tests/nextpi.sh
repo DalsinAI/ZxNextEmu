@@ -13,15 +13,17 @@ fail() { echo "nextpi: FAIL: $*"; exit 1; }
 
 mkdir "$T/sd" "$T/pi" "$T/pi/ram"
 (cd "$TBBLUE" && tar cf - --exclude=.git --exclude=TBBLUE.TBU .) | tar xf - -C "$T/sd"
-# a first boot asks for the video mode; answer it once
-"$ZXRUN" -m next -r "${ROMS:-roms}" -c "$T/sd" -f 900 -d 400 -t "
-          y" > /dev/null
+P='```````````````'     # each ` is a pause of 10 frames
+# A first boot asks for the video mode; answer it once. Firmware 1.46 cycles
+# the modes until ENTER, then asks "Select mode? (Y/N)"; older firmware asks
+# straight away and takes the ENTER as nothing.
+"$ZXRUN" -m next -r "${ROMS:-roms}" -c "$T/sd" -f 1200 -d 400 -t "
+$P${P}y" > /dev/null
 head -c 70000 /dev/urandom > "$T/sd/tmp/up.bin"
 head -c 40000 /dev/urandom > "$T/pi/ram/down.bin"
 head -c 3001 /dev/urandom > "$T/sd/tmp/b64.bin"
 
-P='```````````````'     # each ` is a pause of 10 frames
-"$ZXRUN" -m next -r "${ROMS:-roms}" -c "$T/sd" -p "$T/pi" -f 6500 -d 450 -t " $P""n$P.pisend -q
+"$ZXRUN" -m next -r "${ROMS:-roms}" -c "$T/sd" -p "$T/pi" -f 7100 -d 1050 -t " $P""n$P.pisend -q
 $P$P.piver -p
 $P$P.piput /tmp/up.bin
 $P$P$P$P$P$P$P$P$P$P.piget /ram/down.bin
