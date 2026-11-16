@@ -52,6 +52,17 @@ either). Put these files in this folder (or a folder given with
 `make CLONE_ROMS=dir`); a machine whose files are missing is skipped by the
 tests and refused by the frontends.
 
+The download script fetches all of them, and the esxDOS and General Sound
+ROMs below, into `~/.zxcradle/roms` (or `ZXCRADLE_ROMS`), checks each 16K
+page against the md5s here and splits the 64K files for you:
+
+    bash tools/zxcradle-fetch.sh "" roms
+
+`node host/host.mjs` reads that folder as it is; for the tests, give it with
+`make CLONE_ROMS=...` after copying this folder's ROMs in beside them. The
+esxDOS `SYS/` and `BIN/` folders that match the ROM land in
+`~/.zxcradle/roms/esxdos-0.8.9-sd`.
+
 | File | Machine | md5 |
 | --- | --- | --- |
 | `trdos.rom` | Pentagon 128 (TR-DOS 5.03 or 5.04T; optional, no disk without it) | `0c42e3b9ab8dd91ea096f1d0c07c55e5` (5.03) |

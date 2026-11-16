@@ -21,6 +21,9 @@
 #                    to English, into reviews.json next to each title.json
 #          onedrive  your own OneDrive Spectrum folder (asks for the share link once,
 #                    keeps it in TARGET/.onedrive-link, never in the repo)
+#          roms      the ROMs this repository may not ship (TR-DOS, Scorpion, ATM Turbo,
+#                    esxDOS, General Sound) into ~/.zxcradle/roms (or ZXCRADLE_ROMS),
+#                    where `node host/host.mjs` and `make CLONE_ROMS=...` find them
 #
 # Each title becomes TARGET/titles/<id>/ with title.json (format 2), about.md,
 # files/ and screens/ (see docs/cradle/titles.md). Run it again at any time:
@@ -44,8 +47,10 @@ for tool in curl python3; do
   fi
 done
 
-case "$TARGET" in
-  /run/media/*/*)   # a removable drive (its mount point itself, or a folder on it)
+case "$SECTIONS:$TARGET" in
+  roms:*)   # the ROMs go to ~/.zxcradle/roms; the drive is not needed, the log goes beside them
+    TARGET="$(dirname "${ZXCRADLE_ROMS:-$HOME/.zxcradle/roms}")" ;;
+  *:/run/media/*/*)   # a removable drive (its mount point itself, or a folder on it)
     drive="$(echo "$TARGET" | cut -d/ -f1-5)"
     mounted=yes
     if command -v mountpoint >/dev/null 2>&1; then
@@ -83,7 +88,7 @@ LIB = sys.argv[1]
 TITLES = os.path.join(LIB, 'titles')
 # zxart.ee first, so the OneDrive importer merges into its titles (by ZXDB id) instead of the
 # zxart pass doubling OneDrive's.
-SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['next', 'spectrum', 'clones', 'sam', 'mb03', 'onedrive', 'vtrd', 'msx', 'symbos', 'spec256', 'demos', 'reviews']
+SECTIONS = sys.argv[2].split(',') if sys.argv[2] != 'all' else ['roms', 'next', 'spectrum', 'clones', 'sam', 'mb03', 'onedrive', 'vtrd', 'msx', 'symbos', 'spec256', 'demos', 'reviews']
 LIMIT = int(os.environ.get('LIMIT') or 0)
 WORKERS = int(os.environ.get('WORKERS') or 4)
 MAX_REL = int(os.environ.get('MAX_RELEASES') or 0)
@@ -1921,6 +1926,69 @@ def reviews(lib):
         raise RuntimeError(f'zxart.ee ratings for {len(lost)} titles could not be fetched')
 
 
+# ---------------------------------------------------------------- roms
+
+# The ROMs the emulator needs but the repository may not carry (roms/README.md): fetched from
+# emulator projects that ship them, at fixed commits, checked by md5 and split into the 16K
+# pages the cores load. Nothing is written unless every page matches.
+ROMS_DIR = os.path.expanduser(os.environ.get('ZXCRADLE_ROMS') or '~/.zxcradle/roms')
+ZESARUX = 'https://raw.githubusercontent.com/chernandezba/zesarux/3ec9701c25dc974970d64b4d7d99337cfae865f9/src/'
+ZXEVO = 'https://raw.githubusercontent.com/tslabs/zx-evo/f0eebed4edb4f36d0e6368363376b317f5a83083/pentevo/unreal/Unreal/cfg/rom/'
+ROM_SETS = [
+    # (what, url, member of a zip or None, [(file, md5), ...] one per 16K page, or one whole file)
+    ('TR-DOS 5.03', ZESARUX + 'trdos.rom', None, [('trdos.rom', '0c42e3b9ab8dd91ea096f1d0c07c55e5')]),
+    ('Scorpion ZS-256 ROM 2.95', ZESARUX + 'scorpion_2.95.rom', None,
+     [('256s-0.rom', 'b9fda5b6a747ff037365b0e2d8c4379a'), ('256s-1.rom', 'fbca50eff4937afde90dd9e55387d9e6'),
+      ('256s-2.rom', '7cb480da76a596ef265c58038820a705'), ('256s-3.rom', '40dccd1b7f80bb211bdc299df0234084')]),
+    ('ATM Turbo 2+ v7.10', ZXEVO + 'atm2.rom', None,
+     [('atm2-0.rom', '25e7ad37544091af7b82c4727e0bfc4f'), ('atm2-1.rom', '26b2b42ffa5490275090c087b949a987'),
+      ('atm2-2.rom', 'a249565f03b98d004ee7f019570069cd'), ('atm2-3.rom', '889a717a836de65bc531fe2ff1fc6bc0')]),
+    ('esxDOS 0.8.9', 'https://www.esxdos.org/files/esxdos089.zip', 'ESXMMC.BIN',
+     [('esxmmc.bin', 'fa50b0258e52b8d72bd83cc2fb6e1013')]),
+    ('General Sound 1.05a', ZESARUX + 'gs105a.rom', None, [('gs105a.rom', '1801e94780ad2a914b070b7128d86c39')]),
+]
+
+
+def roms():
+    os.makedirs(ROMS_DIR, exist_ok=True)
+    bad = []
+    for what, url, member, files in ROM_SETS:
+        have = all(os.path.exists(os.path.join(ROMS_DIR, f)) and
+                   hashlib.md5(open(os.path.join(ROMS_DIR, f), 'rb').read()).hexdigest() == m for f, m in files)
+        if have:
+            say(f'  {what}: already there')
+            continue
+        try:
+            b = fetch(url)
+            if member:
+                z = zipfile.ZipFile(io.BytesIO(b))
+                b = z.read(member)
+                if what.startswith('esxDOS'):   # its SYS/ and BIN/ go on the SD card and must match the ROM
+                    sd = os.path.join(ROMS_DIR, 'esxdos-0.8.9-sd')
+                    for n in z.namelist():
+                        if n.upper().startswith(('SYS/', 'BIN/')) and not n.endswith('/'):
+                            os.makedirs(os.path.dirname(os.path.join(sd, n)), exist_ok=True)
+                            with open(os.path.join(sd, n), 'wb') as f:
+                                f.write(z.read(n))
+            pages = [b] if len(files) == 1 else [b[i * 16384:(i + 1) * 16384] for i in range(len(files))]
+            if len(files) > 1 and len(b) != 16384 * len(files):
+                raise RuntimeError(f'{len(b)} bytes, expected {16384 * len(files)}')
+            for (f, m), d in zip(files, pages):
+                if hashlib.md5(d).hexdigest() != m:
+                    raise RuntimeError(f'{f} does not match its md5')
+            for (f, m), d in zip(files, pages):
+                with open(os.path.join(ROMS_DIR, f), 'wb') as o:
+                    o.write(d)
+            say(f'  {what}: ' + ', '.join(f for f, m in files))
+        except Exception as e:
+            say(f'  {what}: {e}')
+            log('roms', what, e)
+            bad.append(what)
+    say(f'  ROMs are in {ROMS_DIR}')
+    if bad:
+        raise RuntimeError(', '.join(bad) + ' could not be fetched')
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -1939,6 +2007,8 @@ def main():
                     mb03_site(lib, made)
                 if broken:  # the rest was done; this marks the section as stopped so a rerun fills the gap
                     raise RuntimeError(f'zxart.ee {", ".join(broken)} could not be fetched')
+            elif s == 'roms':
+                roms()
             elif s in ('vtrd', 'msx', 'symbos', 'spec256', 'onedrive', 'demos', 'reviews'):
                 globals()[s](lib)
             else:
